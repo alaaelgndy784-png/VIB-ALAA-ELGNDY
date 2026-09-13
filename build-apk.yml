@@ -23,7 +23,7 @@ jobs:
       - name: Create debug keystore
         run: |
           keytool -genkeypair -v \
-            -keystore debug.keystore \
+            -keystore "$GITHUB_WORKSPACE/debug.keystore" \
             -storepass android \
             -alias androiddebugkey \
             -keypass android \
@@ -31,9 +31,12 @@ jobs:
             -keysize 2048 \
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
+          ls -l "$GITHUB_WORKSPACE/debug.keystore"
 
       - name: Build Debug APK
-        run: ./gradlew assembleDebug
+        env:
+          KEYSTORE_PATH: ${{ github.workspace }}/debug.keystore
+        run: ./gradlew assembleDebug --no-configuration-cache
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
