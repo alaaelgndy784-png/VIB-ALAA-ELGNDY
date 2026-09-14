@@ -526,6 +526,7 @@ fun VibMainScreen(
     if (showLogin) {
       LoginDialog(
         currentCustomer = currentCustomer,
+        isAdmin = false,
         onDismiss = { viewModel.toggleLogin(false) },
         onSaveCustomer = { name, phone, address ->
           viewModel.saveCustomerProfile(name, phone, address)
@@ -544,6 +545,7 @@ fun VibMainScreen(
     if (showAdmin) {
       AdminPanelDialog(
         isAdminLoggedIn = isAdminLoggedIn,
+        isAdmin = true,
         products = allProducts,
         adminWhatsAppNumber = adminWhatsAppNumber,
         onDismiss = { viewModel.toggleAdmin(false) },
