@@ -526,7 +526,7 @@ fun VibMainScreen(
     if (showLogin) {
       LoginDialog(
         currentCustomer = currentCustomer,
-        isAdmin = false,
+        
         onDismiss = { viewModel.toggleLogin(false) },
         onSaveCustomer = { name, phone, address ->
           viewModel.saveCustomerProfile(name, phone, address)
