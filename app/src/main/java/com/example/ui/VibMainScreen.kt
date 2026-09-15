@@ -573,7 +573,7 @@ fun VibMainScreen(
         productToEdit = productBeingEdited,
         isLoading = isLoading,
         onDismiss = { viewModel.closeAddEditProduct() },
-        key = productBeingEdited?.id,
+        
       
         
         onSaveProduct = { name, price, category, description, imageUri, customImageUrl, inStock, stockQuantity ->
