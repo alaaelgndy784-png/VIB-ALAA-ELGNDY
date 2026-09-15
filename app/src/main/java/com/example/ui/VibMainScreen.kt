@@ -545,7 +545,7 @@ fun VibMainScreen(
     if (showAdmin) {
       AdminPanelDialog(
         isAdminLoggedIn = isAdminLoggedIn,
-        isAdmin = true,
+        
         products = allProducts,
         adminWhatsAppNumber = adminWhatsAppNumber,
         onDismiss = { viewModel.toggleAdmin(false) },
