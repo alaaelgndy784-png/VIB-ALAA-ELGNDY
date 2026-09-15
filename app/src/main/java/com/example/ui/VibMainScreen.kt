@@ -573,6 +573,9 @@ fun VibMainScreen(
         productToEdit = productBeingEdited,
         isLoading = isLoading,
         onDismiss = { viewModel.closeAddEditProduct() },
+        key = productBeingEdited?.id,
+      
+        
         onSaveProduct = { name, price, category, description, imageUri, customImageUrl, inStock, stockQuantity ->
           viewModel.saveProduct(name, price, category, description, imageUri, customImageUrl, inStock, stockQuantity)
         }
