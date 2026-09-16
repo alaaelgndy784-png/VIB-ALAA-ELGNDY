@@ -443,7 +443,7 @@ fun AddEditProductDialog(
               )
             }
           },
-          enabled = !isLoading,
+          enabled = true,
           modifier = Modifier
             .fillMaxWidth()
             .height(50.dp)
