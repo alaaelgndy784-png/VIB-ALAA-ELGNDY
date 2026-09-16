@@ -117,6 +117,7 @@ fun AddEditProductDialog(
     Surface(
       modifier = modifier
         .fillMaxWidth(0.95f)
+        .fillMaxHeight(0.90f)
         .clip(RoundedCornerShape(20.dp)),
       shape = RoundedCornerShape(20.dp),
       color = BlackBackground,
