@@ -576,7 +576,7 @@ fun VibMainScreen(
 
         
       
-        isAdmin = isAdminLoggedIn,
+        
         onSaveProduct = { name, price, category, description, imageUri, customImageUrl, inStock, stockQuantity ->
           viewModel.saveProduct(name, price, category, description, imageUri, customImageUrl, inStock, stockQuantity)
         }
