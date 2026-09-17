@@ -393,7 +393,7 @@ class FirebaseRepository(val context: Context) {
 
     // 2. Upload to Firebase Storage so ALL customers see the same image
     return@withContext try {
-      withTimeoutOrNull(10000L) {
+      withTimeoutOrNull(60000L) {
         val storage = FirebaseStorage.getInstance()
         val filename = "prod_${UUID.randomUUID()}.jpg"
         val storageRef = storage.reference.child("product_images/$filename")
@@ -403,12 +403,12 @@ class FirebaseRepository(val context: Context) {
         Log.d(TAG, "Uploaded image to Firebase Storage: $downloadUrl")
         downloadUrl
       } ?: run {
-        Log.w(TAG, "Storage upload timed out, falling back to local URI")
-        internalUri.toString()
+        Log.w(TAG, "Storage upload timed out; product will not be published without its image")
+        null
       }
     } catch (e: Exception) {
-      Log.e(TAG, "Firebase Storage upload failed, falling back to local URI: ${e.message}")
-      internalUri.toString()
+      Log.e(TAG, "Firebase Storage upload failed: ${e.message}")
+      null
     }
   }
 
@@ -451,7 +451,12 @@ class FirebaseRepository(val context: Context) {
     var finalImageUrl = if (!customImageUrl.isNullOrBlank()) customImageUrl.trim() else ""
 
     if (imageUri != null) {
-      finalImageUrl = uploadImageToStorage(imageUri) ?: imageUri.toString()
+      val uploadedImageUrl = uploadImageToStorage(imageUri)
+      if (uploadedImageUrl.isNullOrBlank() || !uploadedImageUrl.startsWith("http")) {
+        Log.e(TAG, "Product image upload failed; refusing to publish an invisible product")
+        return@withContext false
+      }
+      finalImageUrl = uploadedImageUrl
     }
 
     val newProduct = Product(
