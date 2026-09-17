@@ -25,11 +25,17 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Build Debug APK
-        run: gradle assembleDebug
+      - name: Build Admin and Customer APKs
+        run: gradle assembleAdminDebug assembleCustomerDebug
 
-      - name: Upload APK
+      - name: Upload Admin APK
         uses: actions/upload-artifact@v4
         with:
-          name: VIB-ALAA-ELGNDY-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: VIB-ADMIN-APK
+          path: app/build/outputs/apk/admin/debug/app-admin-debug.apk
+
+      - name: Upload Customer APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-CUSTOMER-APK
+          path: app/build/outputs/apk/customer/debug/app-customer-debug.apk
