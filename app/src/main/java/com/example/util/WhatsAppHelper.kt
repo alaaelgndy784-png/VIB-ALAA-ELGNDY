@@ -70,7 +70,7 @@ object WhatsAppHelper {
         cleanNumber = "20$cleanNumber"
       }
 
-      val uri = Uri.parse("https://api.whatsapp.com/send?phone=$cleanNumber&text=$encodedMessage")
+      val uri = Uri.parse("https://wa.me/$cleanNumber?text=$encodedMessage")
       val intent = Intent(Intent.ACTION_VIEW, uri).apply {
         setPackage("com.whatsapp")
         flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -79,11 +79,18 @@ object WhatsAppHelper {
       try {
         context.startActivity(intent)
       } catch (_: Exception) {
-        // WhatsApp standard not installed, try WhatsApp Business or generic view intent
-        val fallbackIntent = Intent(Intent.ACTION_VIEW, uri).apply {
-          flags = Intent.FLAG_ACTIVITY_NEW_TASK
+        try {
+          val businessIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+            setPackage("com.whatsapp.w4b")
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+          }
+          context.startActivity(businessIntent)
+        } catch (_: Exception) {
+          val fallbackIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK
+          }
+          context.startActivity(fallbackIntent)
         }
-        context.startActivity(fallbackIntent)
       }
     } catch (e: Exception) {
       Toast.makeText(context, "تعذر فتح تطبيق واتساب: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
