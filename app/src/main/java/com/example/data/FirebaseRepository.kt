@@ -38,6 +38,7 @@ class FirebaseRepository(val context: Context) {
     private const val DEFAULT_FIREBASE_API_KEY = "AIzaSyASUi-6xrJDrd8NWunLvEWvD3uR08LOuLs"
     private const val DEFAULT_FIREBASE_APP_ID = "1:984952125141:android:9f0c3e79cdebbf0b6f945c"
     private const val DEFAULT_FIREBASE_STORAGE_BUCKET = "vib-alaaelgndy.firebasestorage.app"
+    private const val DEFAULT_ADMIN_WHATSAPP = "201013631323"
   }
 
   private val TAG = "FirebaseRepository"
@@ -49,7 +50,7 @@ class FirebaseRepository(val context: Context) {
   private val _currentCustomer = MutableStateFlow<Customer?>(null)
   val currentCustomer: StateFlow<Customer?> = _currentCustomer.asStateFlow()
 
-  private val _adminPhone = MutableStateFlow("201000000000")
+  private val _adminPhone = MutableStateFlow(DEFAULT_ADMIN_WHATSAPP)
   val adminPhone: StateFlow<String> = _adminPhone.asStateFlow()
 
   private val _isFirebaseConnected = MutableStateFlow(false)
@@ -59,6 +60,7 @@ class FirebaseRepository(val context: Context) {
   val isSyncing: StateFlow<Boolean> = _isSyncing.asStateFlow()
 
   private var firestoreListener: ListenerRegistration? = null
+  private var settingsListener: ListenerRegistration? = null
   private val scope = CoroutineScope(Dispatchers.IO)
 
   init {
@@ -187,13 +189,27 @@ class FirebaseRepository(val context: Context) {
   }
 
   private suspend fun loadSavedAdminPhone() = withContext(Dispatchers.IO) {
-    val phone = prefs.getString("admin_whatsapp_number", "201000000000") ?: "201000000000"
+    val phone = prefs.getString("admin_whatsapp_number", DEFAULT_ADMIN_WHATSAPP) ?: DEFAULT_ADMIN_WHATSAPP
     _adminPhone.value = phone
   }
 
   fun setAdminWhatsAppNumber(phone: String) {
-    _adminPhone.value = phone
-    prefs.edit().putString("admin_whatsapp_number", phone).apply()
+    val normalized = normalizeEgyptianWhatsApp(phone)
+    _adminPhone.value = normalized
+    prefs.edit().putString("admin_whatsapp_number", normalized).apply()
+    scope.launch {
+      if (ensureFirebaseApp()) {
+        try {
+          FirebaseFirestore.getInstance()
+            .collection("settings")
+            .document("app")
+            .set(mapOf("adminWhatsApp" to normalized), com.google.firebase.firestore.SetOptions.merge())
+            .await()
+        } catch (e: Exception) {
+          Log.w(TAG, "Could not sync admin WhatsApp number: ${e.message}")
+        }
+      }
+    }
   }
 
   private suspend fun loadCachedProducts() = withContext(Dispatchers.IO) {
@@ -298,6 +314,19 @@ class FirebaseRepository(val context: Context) {
               }
             }
           }
+
+          settingsListener?.remove()
+          settingsListener = db.collection("settings").document("app")
+            .addSnapshotListener { snapshot, error ->
+              if (error != null) {
+                Log.w(TAG, "Settings listen error: ${error.message}")
+                return@addSnapshotListener
+              }
+              val cloudPhone = snapshot?.getString("adminWhatsApp")
+              val normalized = normalizeEgyptianWhatsApp(cloudPhone ?: DEFAULT_ADMIN_WHATSAPP)
+              _adminPhone.value = normalized
+              prefs.edit().putString("admin_whatsapp_number", normalized).apply()
+            }
         }
       } catch (e: Exception) {
         Log.w(TAG, "Failed to start Firestore listener: ${e.message}")
@@ -652,5 +681,13 @@ class FirebaseRepository(val context: Context) {
       Log.w(TAG, "Failed to record order in Firestore: ${e.message}")
       false
     }
+  }
+
+  private fun normalizeEgyptianWhatsApp(phone: String): String {
+    var digits = phone.filter(Char::isDigit)
+    if (digits.startsWith("00")) digits = digits.drop(2)
+    if (digits.startsWith("0")) digits = "20${digits.drop(1)}"
+    if (!digits.startsWith("20") && digits.length == 10) digits = "20$digits"
+    return digits.ifBlank { DEFAULT_ADMIN_WHATSAPP }
   }
 }
