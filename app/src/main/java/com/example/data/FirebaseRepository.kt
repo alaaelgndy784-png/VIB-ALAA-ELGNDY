@@ -30,6 +30,16 @@ import java.util.UUID
 
 class FirebaseRepository(val context: Context) {
 
+  companion object {
+    // Default VIB Firebase project. Keeping these defaults in the app means a
+    // newly installed customer copy connects to the same catalogue immediately,
+    // without requiring the admin-only manual configuration screen.
+    private const val DEFAULT_FIREBASE_PROJECT_ID = "vib-alaaelgndy"
+    private const val DEFAULT_FIREBASE_API_KEY = "AIzaSyASUi-6xrJDrd8NWunLvEWvD3uR08LOuLs"
+    private const val DEFAULT_FIREBASE_APP_ID = "1:984952125141:android:9f0c3e79cdebbf0b6f945c"
+    private const val DEFAULT_FIREBASE_STORAGE_BUCKET = "vib-alaaelgndy.firebasestorage.app"
+  }
+
   private val TAG = "FirebaseRepository"
   private val prefs: SharedPreferences = context.getSharedPreferences("vib_alaa_prefs", Context.MODE_PRIVATE)
 
@@ -74,35 +84,34 @@ class FirebaseRepository(val context: Context) {
         return@withContext true
       }
 
-      // Check if manual credentials were saved
-      val savedProjectId = prefs.getString("firebase_project_id", null)
-      val savedApiKey = prefs.getString("firebase_api_key", null)
-      val savedAppId = prefs.getString("firebase_app_id", null)
-      val savedBucket = prefs.getString("firebase_storage_bucket", null)
+      // Prefer settings entered by the manager, otherwise use the VIB project
+      // bundled with the app so every customer device receives live updates.
+      val projectId = prefs.getString("firebase_project_id", null)
+        ?.takeIf { it.isNotBlank() }?.trim() ?: DEFAULT_FIREBASE_PROJECT_ID
+      val apiKey = prefs.getString("firebase_api_key", null)
+        ?.takeIf { it.isNotBlank() }?.trim() ?: DEFAULT_FIREBASE_API_KEY
+      val appId = prefs.getString("firebase_app_id", null)
+        ?.takeIf { it.isNotBlank() }?.trim() ?: DEFAULT_FIREBASE_APP_ID
+      val bucket = prefs.getString("firebase_storage_bucket", null)
+        ?.takeIf { it.isNotBlank() }?.trim() ?: DEFAULT_FIREBASE_STORAGE_BUCKET
 
-      if (!savedProjectId.isNullOrBlank() && !savedApiKey.isNullOrBlank() && !savedAppId.isNullOrBlank()) {
-        val optionsBuilder = FirebaseOptions.Builder()
-          .setProjectId(savedProjectId.trim())
-          .setApiKey(savedApiKey.trim())
-          .setApplicationId(savedAppId.trim())
+      val options = FirebaseOptions.Builder()
+        .setProjectId(projectId)
+        .setApiKey(apiKey)
+        .setApplicationId(appId)
+        .setStorageBucket(bucket)
+        .build()
 
-        if (!savedBucket.isNullOrBlank()) {
-          optionsBuilder.setStorageBucket(savedBucket.trim())
-        }
-
-        if (FirebaseApp.getApps(context).isEmpty()) {
-          FirebaseApp.initializeApp(context, optionsBuilder.build())
-        }
-        val isOk = isFirebaseConfigured()
-        _isFirebaseConnected.value = isOk
-        if (isOk) {
-          Log.i(TAG, "Firebase initialized with saved credentials: $savedProjectId")
-        }
-        return@withContext isOk
+      if (FirebaseApp.getApps(context).isEmpty()) {
+        FirebaseApp.initializeApp(context, options)
       }
 
-      _isFirebaseConnected.value = false
-      false
+      val isOk = isFirebaseConfigured()
+      _isFirebaseConnected.value = isOk
+      if (isOk) {
+        Log.i(TAG, "Firebase initialized for project: $projectId")
+      }
+      isOk
     } catch (e: Exception) {
       Log.w(TAG, "FirebaseApp setup error: ${e.message}")
       _isFirebaseConnected.value = false
