@@ -43,8 +43,10 @@ jobs:
           name: VIB-CUSTOMER-APK
           path: app/build/outputs/apk/customer/debug/app-customer-debug.apk
 
-      - name: Prepare Public Customer APK
-        run: cp app/build/outputs/apk/customer/debug/app-customer-debug.apk VIB-CUSTOMER.apk
+      - name: Prepare Public APKs
+        run: |
+          cp app/build/outputs/apk/customer/debug/app-customer-debug.apk VIB-CUSTOMER.apk
+          cp app/build/outputs/apk/admin/debug/app-admin-debug.apk VIB-ADMIN.apk
 
       - name: Publish Permanent Customer Download
         env:
@@ -52,3 +54,10 @@ jobs:
         run: |
           gh release view customer-latest >/dev/null 2>&1 || gh release create customer-latest --title "VIB Customer" --notes "نسخة العملاء الرسمية من تطبيق VIB"
           gh release upload customer-latest VIB-CUSTOMER.apk --clobber
+
+      - name: Publish Permanent Admin Download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view admin-latest >/dev/null 2>&1 || gh release create admin-latest --title "VIB Admin" --notes "نسخة المدير الرسمية من تطبيق VIB"
+          gh release upload admin-latest VIB-ADMIN.apk --clobber
