@@ -44,12 +44,10 @@ android {
     create("admin") {
       dimension = "audience"
       buildConfigField("Boolean", "ADMIN_FEATURES_ENABLED", "true")
-      resValue("string", "app_name", "VIB - المدير")
     }
     create("customer") {
       dimension = "audience"
       buildConfigField("Boolean", "ADMIN_FEATURES_ENABLED", "false")
-      resValue("string", "app_name", "VIB")
     }
   }
 
