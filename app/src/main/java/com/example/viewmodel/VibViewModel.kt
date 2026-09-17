@@ -320,6 +320,7 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
     viewModelScope.launch {
       _isLoading.value = true
       val existing = _productBeingEdited.value
+      var shouldClose = true
       if (existing != null) {
         val updated = existing.copy(
           name = name,
@@ -332,7 +333,7 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
         repository.updateProduct(updated, imageUri, customImageUrl)
         _statusMessage.value = "تم حفظ التعديلات في Firebase ومزامنة الصور بنجاح"
       } else {
-        repository.addProduct(
+        val success = repository.addProduct(
           name = name,
           price = price,
           category = category,
@@ -342,10 +343,15 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
           inStock = inStock,
           stockQuantity = stockQuantity
         )
-        _statusMessage.value = "تمت إضافة المنتج ونشره على السحابة بنجاح"
+        if (success) {
+          _statusMessage.value = "تم رفع المنتج والصورة بنجاح"
+        } else {
+          shouldClose = false
+          _statusMessage.value = "فشل رفع الصورة للسحابة، لم يتم نشر المنتج. تأكد من الإنترنت وحاول مرة أخرى"
+        }
       }
       _isLoading.value = false
-      closeAddEditProduct()
+      if (shouldClose) closeAddEditProduct()
     }
   }
 
