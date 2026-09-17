@@ -56,6 +56,7 @@ fun LuxuryTopAppBar(
   onCartClick: () -> Unit,
   onProfileClick: () -> Unit,
   onAdminClick: () -> Unit,
+  showAdminButton: Boolean = true,
   modifier: Modifier = Modifier
 ) {
   Surface(
@@ -132,8 +133,9 @@ fun LuxuryTopAppBar(
           verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-          // Admin Panel Button
-          IconButton(
+          // Admin Panel Button (admin build only)
+          if (showAdminButton) {
+            IconButton(
             onClick = onAdminClick,
             modifier = Modifier
               .size(38.dp)
@@ -148,6 +150,7 @@ fun LuxuryTopAppBar(
               tint = if (isAdminLoggedIn) GoldPrimary else WhitePrimary,
               modifier = Modifier.size(20.dp)
             )
+            }
           }
 
           // Customer Profile Button
