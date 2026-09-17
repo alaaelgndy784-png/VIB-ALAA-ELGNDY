@@ -70,6 +70,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.BuildConfig
 import com.example.R
 import com.example.model.SanitaryCategory
 import com.example.security.AdminSecurityManager
@@ -106,6 +107,7 @@ fun VibMainScreen(
 ) {
   val context = LocalContext.current
   val snackbarHostState = remember { SnackbarHostState() }
+  val adminFeaturesEnabled = BuildConfig.ADMIN_FEATURES_ENABLED
 
   val products by viewModel.filteredProducts.collectAsState()
   val allProducts by viewModel.allProducts.collectAsState()
@@ -174,11 +176,13 @@ fun VibMainScreen(
         LuxuryTopAppBar(
           cartCount = cartCount,
           currentCustomer = currentCustomer,
-          isAdminLoggedIn = isAdminLoggedIn,
+          isAdminLoggedIn = adminFeaturesEnabled && isAdminLoggedIn,
+          showAdminButton = adminFeaturesEnabled,
           onCartClick = { viewModel.toggleCart(true) },
           onProfileClick = { viewModel.toggleLogin(true) },
           onAdminClick = {
-            if (isAdminLoggedIn) {
+            if (!adminFeaturesEnabled) return@LuxuryTopAppBar
+            if (adminFeaturesEnabled && isAdminLoggedIn) {
               viewModel.toggleAdmin(true)
             } else {
               triggerBiometricAuth()
@@ -460,7 +464,7 @@ fun VibMainScreen(
             ProductCard(
               product = product,
               cartQuantity = quantity,
-              isAdmin = isAdminLoggedIn,
+              isAdmin = adminFeaturesEnabled && isAdminLoggedIn,
               onProductClick = { viewModel.openProductDetail(product) },
               onAddToCart = { viewModel.addToCart(product) },
               onIncreaseQuantity = { viewModel.updateCartQuantity(product.id, 1) },
@@ -482,7 +486,7 @@ fun VibMainScreen(
       ProductDetailDialog(
         product = product,
         cartQuantity = inCartQty,
-        isAdmin = isAdminLoggedIn,
+        isAdmin = adminFeaturesEnabled && isAdminLoggedIn,
         onDismiss = { viewModel.closeProductDetail() },
         onAddToCart = { viewModel.addToCart(product) },
         onEditProduct = { viewModel.openEditProduct(it) },
@@ -542,7 +546,7 @@ fun VibMainScreen(
     val isFirebaseConnected by viewModel.isFirebaseConnected.collectAsState()
     val isSyncing by viewModel.isSyncing.collectAsState()
 
-    if (showAdmin) {
+    if (adminFeaturesEnabled && showAdmin) {
       AdminPanelDialog(
         isAdminLoggedIn = isAdminLoggedIn,
         
@@ -568,7 +572,7 @@ fun VibMainScreen(
     }
 
     // Add / Edit Product Dialog (Admin)
-    if (showAddEditProduct) {
+    if (adminFeaturesEnabled && showAddEditProduct) {
       AddEditProductDialog(
         productToEdit = productBeingEdited,
         isLoading = isLoading,
@@ -584,7 +588,7 @@ fun VibMainScreen(
     }
 
     // Quick Price Adjustment Dialog (Admin)
-    productForQuickPrice?.let { prod ->
+    if (adminFeaturesEnabled) productForQuickPrice?.let { prod ->
       QuickPriceDialog(
         product = prod,
         onDismiss = { viewModel.closeQuickPrice() },
@@ -593,7 +597,7 @@ fun VibMainScreen(
     }
 
     // Quick Image Replacement Dialog (Admin)
-    productForQuickImage?.let { prod ->
+    if (adminFeaturesEnabled) productForQuickImage?.let { prod ->
       QuickImageDialog(
         product = prod,
         onDismiss = { viewModel.closeQuickImage() },
@@ -602,7 +606,7 @@ fun VibMainScreen(
     }
 
     // Quick Stock & Inventory Dialog (Admin)
-    productForQuickStock?.let { prod ->
+    if (adminFeaturesEnabled) productForQuickStock?.let { prod ->
       QuickStockDialog(
         product = prod,
         onDismiss = { viewModel.closeQuickStock() },
@@ -611,7 +615,7 @@ fun VibMainScreen(
     }
 
     // Product Deletion Confirmation Dialog (Admin)
-    productForDeleteConfirm?.let { prod ->
+    if (adminFeaturesEnabled) productForDeleteConfirm?.let { prod ->
       DeleteConfirmDialog(
         product = prod,
         onDismiss = { viewModel.closeDeleteConfirm() },
