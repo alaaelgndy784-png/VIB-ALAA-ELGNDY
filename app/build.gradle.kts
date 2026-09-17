@@ -48,7 +48,6 @@ android {
     }
     create("customer") {
       dimension = "audience"
-      applicationIdSuffix = ".customer"
       buildConfigField("Boolean", "ADMIN_FEATURES_ENABLED", "false")
       resValue("string", "app_name", "VIB")
     }
