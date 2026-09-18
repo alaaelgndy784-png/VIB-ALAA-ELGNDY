@@ -2,7 +2,9 @@ package com.example.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.util.Base64
 import android.util.Log
 import com.example.model.Customer
 import com.example.model.Order
@@ -24,6 +26,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
@@ -383,33 +386,61 @@ class FirebaseRepository(val context: Context) {
     }
   }
 
-  suspend fun uploadImageToStorage(uri: Uri): String? = withContext(Dispatchers.IO) {
-    // 1. First persist locally so it's always available on this device
-    val internalUri = copyUriToInternalStorage(uri)
+  private fun imageUriToFirestoreDataUrl(uri: Uri): String? {
+    return try {
+      val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+      context.contentResolver.openInputStream(uri)?.use {
+        BitmapFactory.decodeStream(it, null, bounds)
+      }
 
-    if (!isFirebaseConfigured()) {
-      return@withContext internalUri.toString()
-    }
+      var sampleSize = 1
+      while (bounds.outWidth / sampleSize > 900 || bounds.outHeight / sampleSize > 900) {
+        sampleSize *= 2
+      }
 
-    // 2. Upload to Firebase Storage so ALL customers see the same image
-    return@withContext try {
-      withTimeoutOrNull(60000L) {
-        val storage = FirebaseStorage.getInstance()
-        val filename = "prod_${UUID.randomUUID()}.jpg"
-        val storageRef = storage.reference.child("product_images/$filename")
+      val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+      val decoded = context.contentResolver.openInputStream(uri)?.use {
+        BitmapFactory.decodeStream(it, null, options)
+      } ?: return null
 
-        storageRef.putFile(internalUri).await()
-        val downloadUrl = storageRef.downloadUrl.await().toString()
-        Log.d(TAG, "Uploaded image to Firebase Storage: $downloadUrl")
-        downloadUrl
-      } ?: run {
-        Log.w(TAG, "Storage upload timed out; product will not be published without its image")
+      val maxSide = 720
+      val scale = minOf(1f, maxSide.toFloat() / maxOf(decoded.width, decoded.height).toFloat())
+      val width = maxOf(1, (decoded.width * scale).toInt())
+      val height = maxOf(1, (decoded.height * scale).toInt())
+      val resized = if (width != decoded.width || height != decoded.height) {
+        android.graphics.Bitmap.createScaledBitmap(decoded, width, height, true)
+      } else {
+        decoded
+      }
+
+      var quality = 72
+      var bytes: ByteArray
+      do {
+        val output = ByteArrayOutputStream()
+        resized.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, output)
+        bytes = output.toByteArray()
+        quality -= 8
+      } while (bytes.size > 520_000 && quality >= 32)
+
+      if (resized !== decoded) decoded.recycle()
+      resized.recycle()
+
+      if (bytes.size > 700_000) {
+        Log.e(TAG, "Compressed image is still too large for Firestore")
         null
+      } else {
+        "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
       }
     } catch (e: Exception) {
-      Log.e(TAG, "Firebase Storage upload failed: ${e.message}")
+      Log.e(TAG, "Could not prepare image for Firestore")
       null
     }
+  }
+
+  suspend fun uploadImageToStorage(uri: Uri): String? = withContext(Dispatchers.IO) {
+    // Firebase Storage requires a paid plan for this project. Store a compact
+    // image data URL in Firestore so manager and customer copies share it free.
+    imageUriToFirestoreDataUrl(uri)
   }
 
   suspend fun deleteImageFromStorage(imageUrl: String?) = withContext(Dispatchers.IO) {
@@ -452,7 +483,7 @@ class FirebaseRepository(val context: Context) {
 
     if (imageUri != null) {
       val uploadedImageUrl = uploadImageToStorage(imageUri)
-      if (uploadedImageUrl.isNullOrBlank() || !uploadedImageUrl.startsWith("http")) {
+      if (uploadedImageUrl.isNullOrBlank() || !(uploadedImageUrl.startsWith("http") || uploadedImageUrl.startsWith("data:image/"))) {
         Log.e(TAG, "Product image upload failed; refusing to publish an invisible product")
         return@withContext false
       }
@@ -479,7 +510,7 @@ class FirebaseRepository(val context: Context) {
     // Sync to Firestore directly
     if (isFirebaseConfigured()) {
       try {
-        withTimeoutOrNull(6000L) {
+        withTimeoutOrNull(30000L) {
           val db = FirebaseFirestore.getInstance()
           db.collection("products").document(id).set(newProduct.toMap()).await()
           Log.d(TAG, "Added product $id to Firestore")
@@ -504,10 +535,12 @@ class FirebaseRepository(val context: Context) {
 
     if (newImageUri != null) {
       val uploaded = uploadImageToStorage(newImageUri)
-      if (uploaded != null) {
-        finalImageUrl = uploaded
-        imageWasChanged = true
+      if (uploaded.isNullOrBlank()) {
+        Log.e(TAG, "Updated image could not be prepared; keeping edit dialog open")
+        return@withContext false
       }
+      finalImageUrl = uploaded
+      imageWasChanged = true
     } else if (!customImageUrl.isNullOrBlank() && customImageUrl != oldImageUrl) {
       imageWasChanged = true
     }
@@ -523,7 +556,7 @@ class FirebaseRepository(val context: Context) {
     // Direct Firestore update
     if (isFirebaseConfigured()) {
       try {
-        withTimeoutOrNull(6000L) {
+        withTimeoutOrNull(30000L) {
           val db = FirebaseFirestore.getInstance()
           db.collection("products").document(product.id).set(updatedProduct.toMap()).await()
           Log.d(TAG, "Updated product ${product.id} in Firestore")
@@ -567,7 +600,7 @@ class FirebaseRepository(val context: Context) {
     // Direct Firestore deletion
     if (isFirebaseConfigured()) {
       try {
-        withTimeoutOrNull(6000L) {
+        withTimeoutOrNull(30000L) {
           val db = FirebaseFirestore.getInstance()
           db.collection("products").document(productId).delete().await()
           Log.d(TAG, "Deleted product $productId from Firestore")
@@ -589,7 +622,7 @@ class FirebaseRepository(val context: Context) {
     val cleanPhone = phone.replace(Regex("[^0-9]"), "")
     if (isFirebaseConfigured()) {
       try {
-        return@withContext withTimeoutOrNull(6000L) {
+        return@withContext withTimeoutOrNull(30000L) {
           val db = FirebaseFirestore.getInstance()
           // Try direct document by ID
           val doc = db.collection("customers").document("cust_$cleanPhone").get().await()
@@ -634,7 +667,7 @@ class FirebaseRepository(val context: Context) {
 
     if (isFirebaseConfigured()) {
       try {
-        withTimeoutOrNull(6000L) {
+        withTimeoutOrNull(30000L) {
           val db = FirebaseFirestore.getInstance()
           db.collection("customers").document(customer.id).set(customer.toMap()).await()
         }
@@ -660,7 +693,7 @@ class FirebaseRepository(val context: Context) {
   suspend fun recordOrderInFirestore(order: Order): Boolean = withContext(Dispatchers.IO) {
     if (!isFirebaseConfigured()) return@withContext true
     return@withContext try {
-      withTimeoutOrNull(6000L) {
+      withTimeoutOrNull(30000L) {
         val db = FirebaseFirestore.getInstance()
         val orderMap = mapOf(
           "id" to order.id,
