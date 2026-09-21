@@ -10,6 +10,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -27,6 +28,35 @@ jobs:
 
       - name: Extract project
         run: unzip -q VIB-ACCOUNTS-BUILD-SOURCE-v1.1.zip
+
+      - name: Enable custom resource values
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          files = list(Path("VIB-ACCOUNTS").rglob("build.gradle.kts"))
+          target = next(
+              (p for p in files if p.as_posix().endswith("accounting/build.gradle.kts")),
+              None
+          )
+
+          if target is None:
+              raise SystemExit("accounting/build.gradle.kts not found")
+
+          text = target.read_text()
+
+          if "resValues = true" not in text:
+              marker = "buildFeatures {"
+              if marker not in text:
+                  raise SystemExit("buildFeatures block not found")
+              text = text.replace(
+                  marker,
+                  marker + "\n        resValues = true",
+                  1
+              )
+              target.write_text(text)
+
+          print(f"Enabled resValues in {target}")
 
       - name: Build manager and staff APKs
         working-directory: VIB-ACCOUNTS
