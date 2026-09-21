@@ -1,0 +1,45 @@
+name: Build VIB Accounts Manager and Staff
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'VIB-ACCOUNTS-BUILD-SOURCE-v1.1.zip'
+      - '.github/workflows/build-vib-accounts-zip.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '9.3.1'
+
+      - name: Extract project
+        run: unzip -q VIB-ACCOUNTS-BUILD-SOURCE-v1.1.zip
+
+      - name: Build manager and staff APKs
+        working-directory: VIB-ACCOUNTS
+        run: gradle :accounting:assembleManagerDebug :accounting:assembleStaffDebug --no-configuration-cache
+
+      - name: Upload manager APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-ACCOUNTS-MANAGER-APK
+          path: VIB-ACCOUNTS/accounting/build/outputs/apk/manager/debug/accounting-manager-debug.apk
+
+      - name: Upload staff APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-ACCOUNTS-STAFF-APK
+          path: VIB-ACCOUNTS/accounting/build/outputs/apk/staff/debug/accounting-staff-debug.apk
