@@ -29,8 +29,6 @@ jobs:
       - name: Extract project
         run: unzip -q VIB-ACCOUNTS-BUILD-SOURCE-v1.1.zip
 
-      
-
       - name: Build manager and staff APKs
         working-directory: VIB-ACCOUNTS
         run: gradle :accounting:assembleManagerDebug :accounting:assembleStaffDebug --no-configuration-cache
