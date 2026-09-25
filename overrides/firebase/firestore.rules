@@ -1,0 +1,118 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signed() { return request.auth != null; }
+    function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function active() { return signed() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && profile().active == true; }
+    function owner() { return active() && profile().role == 'owner'; }
+    function employee() { return active() && profile().role == 'employee'; }
+    function branch() { return profile().branchId; }
+    function whole(n) { return n is int; }
+    function natural(n) { return whole(n) && n >= 0; }
+    match /users/{uid} {
+      allow read: if owner() || (signed() && request.auth.uid == uid);
+      // A signed-in account can only request access. Branch and role are assigned by owner.
+      allow create: if signed() && request.auth.uid == uid
+        && request.auth.token.email is string
+        && request.resource.data.keys().hasOnly(['role', 'active', 'name', 'phone', 'createdAt'])
+        && request.resource.data.role == 'pending'
+        && request.resource.data.active == false
+        && request.resource.data.phone is string
+        && request.resource.data.createdAt == request.time;
+      allow create, update: if owner();
+      allow delete: if false;
+    }
+    match /products/{id} {
+      allow read: if active();
+      allow write: if owner();
+    }
+    match /branches/{id} {
+      allow read: if active();
+      allow write: if owner();
+    }
+    match /stock/{id} {
+      allow read: if owner() || (employee() && resource.data.branchId == branch());
+      allow create, update: if owner() && request.resource.data.keys().hasOnly(['branchId', 'productId', 'quantity', 'lastSaleId']) && whole(request.resource.data.quantity) && id == request.resource.data.branchId + '_' + request.resource.data.productId;
+      allow update: if employee() && resource.data.branchId == branch()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'lastSaleId'])
+        && request.resource.data.lastSaleId is string
+        && request.resource.data.lastSaleId != resource.data.get('lastSaleId', '')
+        && !exists(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId))
+        && natural(request.resource.data.quantity)
+        && request.resource.data.quantity < resource.data.quantity
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId)).data.productId == resource.data.productId
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId)).data.branchId == branch()
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId)).data.employeeId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.lastSaleId)).data.quantity == resource.data.quantity - request.resource.data.quantity;
+    }
+    match /receipts/{id} {
+      allow read, create: if owner();
+      allow update, delete: if false;
+    }
+    match /stockAdjustments/{id} {
+      allow read, create: if owner();
+      allow update, delete: if false;
+    }
+    match /customers/{id} {
+      allow read, create, update: if owner();
+      allow delete: if false;
+    }
+    match /suppliers/{id} {
+      allow read, create, update: if owner();
+      allow delete: if false;
+    }
+    match /accountMovements/{id} {
+      allow read, create: if owner();
+      allow update, delete: if false;
+    }
+    match /settings/{id} {
+      allow read, create, update: if owner();
+      allow delete: if false;
+    }
+    match /stockMovements/{id} {
+      allow read, create: if owner();
+      allow create: if employee()
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.branchId == branch()
+        && request.resource.data.kind == 'sale'
+        && request.resource.data.quantity is int
+        && request.resource.data.quantity < 0
+        && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.referenceId)).data.employeeId == request.auth.uid;
+      allow update, delete: if false;
+    }
+    match /salesReturns/{id} {
+      allow read, create: if owner();
+      allow update, delete: if false;
+    }
+    match /purchaseReturns/{id} {
+      allow read, create: if owner();
+      allow update, delete: if false;
+    }
+    match /purchases/{id} {
+      allow read, create: if owner();
+      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
+      allow delete: if false;
+    }
+    match /sales/{id} {
+      allow read: if owner() || (employee() && resource.data.branchId == branch());
+      allow create: if owner() || (employee() && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.branchId == branch()
+        && request.resource.data.quantity is int && request.resource.data.quantity > 0
+        && request.resource.data.keys().hasOnly(['branchId','employeeId','customerPhone','productId','productName','quantity','unitPrice','total','status','createdAt'])
+        && request.resource.data.status == 'completed'
+        && request.resource.data.createdAt == request.time
+        && getAfter(/databases/$(database)/documents/stock/$(branch() + '_' + request.resource.data.productId)).data.lastSaleId == id
+        && getAfter(/databases/$(database)/documents/stock/$(branch() + '_' + request.resource.data.productId)).data.quantity == get(/databases/$(database)/documents/stock/$(branch() + '_' + request.resource.data.productId)).data.quantity - request.resource.data.quantity
+        && request.resource.data.productName == get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.name
+        && request.resource.data.unitPrice == get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.price
+        && request.resource.data.total == request.resource.data.quantity * request.resource.data.unitPrice);
+      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
+      allow update: if employee() && resource.data.branchId == branch()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy'])
+        && request.resource.data.printedBy == request.auth.uid;
+      allow delete: if false;
+    }
+  }
+}
