@@ -1,0 +1,68 @@
+name: Build Independent VIB Sales Apps
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'VIB-SALES-INDEPENDENT-SOURCE.zip'
+      - '.github/workflows/build-vib-sales-independent.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Extract independent sales project
+        run: |
+          mkdir VIB-SALES-INDEPENDENT
+          unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d VIB-SALES-INDEPENDENT
+
+      - name: Create independent Android platform
+        working-directory: VIB-SALES-INDEPENDENT
+        run: flutter create --platforms=android --org com.alaa.vibsales --project-name manager .
+
+      - name: Prepare manager app
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
+          cp firebase/google-services.json android/app/google-services.json
+          flutter pub get
+
+      - name: Build manager APK
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          flutter build apk --release
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-release.apk dist/VIB-SALES-MANAGER.apk
+
+      - name: Build staff APK separately
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          sed -i 's/com\.alaa\.vibsales\.manager/com.alaa.vibsales.staff/g' android/app/build.gradle.kts
+          sed -i 's/com\.alaa\.vibsales\.manager/com.alaa.vibsales.staff/g' android/app/google-services.json
+          flutter clean
+          flutter pub get
+          flutter build apk --release
+          cp build/app/outputs/flutter-apk/app-release.apk dist/VIB-SALES-STAFF.apk
+
+      - name: Upload manager APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-MANAGER.apk
+          if-no-files-found: error
+
+      - name: Upload staff APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-SALES-STAFF-APK
+          path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-STAFF.apk
+          if-no-files-found: error
