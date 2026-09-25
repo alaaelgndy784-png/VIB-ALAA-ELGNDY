@@ -50,6 +50,7 @@ jobs:
         working-directory: VIB-SALES-INDEPENDENT
         run: |
           sed -i 's/com\.alaa\.vibsales\.manager/com.alaa.vibsales.staff/g' android/app/build.gradle.kts
+          sed -i 's/namespace = "com\.alaa\.vibsales\.staff"/namespace = "com.alaa.vibsales.manager"/' android/app/build.gradle.kts
           sed -i 's/com\.alaa\.vibsales\.manager/com.alaa.vibsales.staff/g' android/app/google-services.json
           sed -i 's/android:label="VIB MANAGER"/android:label="VIB STAFF"/' android/app/src/main/AndroidManifest.xml
           perl -0pi -e "s/'role':\s*'owner',\s*'active':\s*true/'role': 'pending', 'active': false/g" lib/main.dart
