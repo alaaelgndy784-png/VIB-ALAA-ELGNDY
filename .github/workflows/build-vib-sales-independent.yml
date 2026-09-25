@@ -35,8 +35,8 @@ jobs:
           sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
           cp firebase/google-services.json android/app/google-services.json
           flutter pub get
-                    sed -i "s#import 'package:intl/intl.dart';#import 'package:intl/intl.dart' show DateFormat;#" lib/main.dart
-
+       sed -i "s#import 'package:intl/intl.dart';#import 'package:intl/intl.dart' show DateFormat;#" lib/main.dart
+          sed -i "s#await Firebase.initializeApp();#await Firebase.initializeApp(options: const FirebaseOptions(apiKey: 'AIzaSyBDjNjPOhmTt0SbYUfCTQM8IteDCBxGfWk', appId: '1:200962643703:android:5874257a144d31822c65f2', messagingSenderId: '200962643703', projectId: 'vib-sales', storageBucket: 'vib-sales.firebasestorage.app'));#" lib/main.dart
       - name: Build manager APK
         working-directory: VIB-SALES-INDEPENDENT
         run: |
