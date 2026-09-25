@@ -35,6 +35,7 @@ jobs:
           sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
           cp firebase/google-services.json android/app/google-services.json
           flutter pub get
+                    sed -i "s#import 'package:intl/intl.dart';#import 'package:intl/intl.dart' show DateFormat;#" lib/main.dart
 
       - name: Build manager APK
         working-directory: VIB-SALES-INDEPENDENT
