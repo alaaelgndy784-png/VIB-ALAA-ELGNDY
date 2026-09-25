@@ -33,6 +33,8 @@ jobs:
         working-directory: VIB-SALES-INDEPENDENT
         run: |
           sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
+          sed -i 's/android:label="manager"/android:label="VIB MANAGER"/' android/app/src/main/AndroidManifest.xml
+          cp -r assets/icons/manager/mipmap-* android/app/src/main/res/
           cp firebase/google-services.json android/app/google-services.json
           flutter pub get
 
@@ -48,6 +50,8 @@ jobs:
         run: |
           sed -i 's/com\.alaa\.vibsales\.manager/com.alaa.vibsales.staff/g' android/app/build.gradle.kts
           sed -i 's/com\.alaa\.vibsales\.manager/com.alaa.vibsales.staff/g' android/app/google-services.json
+          sed -i 's/android:label="VIB MANAGER"/android:label="VIB STAFF"/' android/app/src/main/AndroidManifest.xml
+          cp -r assets/icons/staff/mipmap-* android/app/src/main/res/
           flutter clean
           flutter pub get
           flutter build apk --release
