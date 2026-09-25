@@ -1,0 +1,49 @@
+
+name: Build VIB Sales APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download project
+        uses: actions/checkout@v4
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Extract project
+        run: |
+          mkdir vib_sales
+          unzip -q VIB-SALES-FRESH-SOURCE.zip -d vib_sales
+
+      - name: Create Android application
+        working-directory: vib_sales
+        run: |
+          flutter create --platforms=android --org com.vib --project-name sales .
+          sed -i 's/^name: sales$/name: vib_sales/' pubspec.yaml
+          sed -i '/id("com.android.application") version/a\    id("com.google.gms.google-services") version "4.4.4" apply false' android/settings.gradle.kts
+          sed -i '/id("com.android.application")/a\    id("com.google.gms.google-services")' android/app/build.gradle.kts
+          sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' android/app/build.gradle.kts
+          cp firebase/google-services.json android/app/google-services.json
+
+      - name: Install packages
+        working-directory: vib_sales
+        run: flutter pub get
+
+      - name: Build APK
+        working-directory: vib_sales
+        run: flutter build apk --release
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-SALES-APK
+          path: vib_sales/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
