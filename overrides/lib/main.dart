@@ -266,7 +266,9 @@ class Products extends StatelessWidget {
           final d = docs[i], p = d.data();
           return ListTile(title: Text('${p['name'] ?? ''}'), subtitle: Text('السعر: ${p['price'] ?? 0} ج.م'), trailing: owner
             ? Wrap(children: [IconButton(tooltip: 'تعديل', icon: const Icon(Icons.edit), onPressed: () => productDialog(context, id: d.id, data: p)), IconButton(tooltip: 'المخزون الرئيسي', icon: const Icon(Icons.warehouse), onPressed: () => mainStockDialog(context, d.id, '${p['name']}'))])
-            : IconButton(icon: const Icon(Icons.add_shopping_cart), onPressed: () => saleDialog(context, d.id, p, uid, branchId)));
+            : FilledButton.icon(icon: const Icon(Icons.receipt_long),
+                label: const Text('فاتورة بيع'),
+                onPressed: () => saleDialog(context, d.id, p, uid, branchId)));
         })),
       ]);
     },
@@ -295,7 +297,12 @@ Future<void> productDialog(BuildContext context, {String? id, Map<String, dynami
 Future<void> saleDialog(BuildContext context, String productId, Map<String, dynamic> product, String uid, String branchId) async {
   final quantity = TextEditingController(text: '1');
   final customerPhone = TextEditingController();
-  await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(title: Text('بيع ${product['name']}'), content: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: quantity, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الكمية')), TextField(controller: customerPhone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم هاتف الزبون (اختياري للواتساب)'))]),
+  final saleRef = db.collection('sales').doc();
+  await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(title: Text('فاتورة بيع: ${product['name']}'), content: Column(mainAxisSize: MainAxisSize.min, children: [
+    Text('سعر الوحدة: ${product['price'] ?? 0} ج.م'),
+    TextField(controller: quantity, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الكمية')),
+    TextField(controller: customerPhone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم هاتف الزبون (اختياري للواتساب)')),
+  ]),
     actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')), FilledButton(onPressed: () async {
       final qty = int.tryParse(quantity.text);
       if (qty == null || qty <= 0) return;
@@ -305,12 +312,22 @@ Future<void> saleDialog(BuildContext context, String productId, Map<String, dyna
           final stock = await tx.get(stockRef);
           final current = (stock.data()?['quantity'] as num?)?.toInt() ?? 0;
           if (current < qty) throw Exception('الكمية غير متاحة في الفرع');
-          final sale = db.collection('sales').doc();
-          tx.update(stockRef, {'quantity': current - qty, 'lastSaleId': sale.id});
-          tx.set(sale, {'branchId': branchId, 'employeeId': uid, 'customerPhone': customerPhone.text.trim(), 'productId': productId, 'productName': product['name'], 'quantity': qty, 'unitPrice': product['price'], 'total': qty * (product['price'] as num), 'status': 'completed', 'createdAt': FieldValue.serverTimestamp()});
-          tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': product['name'], 'branchId': branchId, 'kind': 'sale', 'quantity': -qty, 'balanceAfter': current - qty, 'referenceId': sale.id, 'actorId': uid, 'createdAt': FieldValue.serverTimestamp()});
+          tx.update(stockRef, {'quantity': current - qty, 'lastSaleId': saleRef.id});
+          tx.set(saleRef, {'branchId': branchId, 'employeeId': uid, 'customerPhone': customerPhone.text.trim(), 'productId': productId, 'productName': product['name'], 'quantity': qty, 'unitPrice': product['price'], 'total': qty * (product['price'] as num), 'status': 'completed', 'createdAt': FieldValue.serverTimestamp()});
+          tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': product['name'], 'branchId': branchId, 'kind': 'sale', 'quantity': -qty, 'balanceAfter': current - qty, 'referenceId': saleRef.id, 'actorId': uid, 'createdAt': FieldValue.serverTimestamp()});
         });
-        if (dialogContext.mounted) Navigator.pop(dialogContext);
+        if (dialogContext.mounted) {
+          Navigator.pop(dialogContext);
+          try {
+            final saved = await saleRef.get();
+            if (context.mounted && saved.data() != null) {
+              await invoiceActions(context, 'sales', saleRef.id, saved.data()!, canReturn: false);
+            }
+          } catch (_) {
+            if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('تم حفظ الفاتورة؛ افتح مبيعاتي لعرضها')));
+          }
+        }
       } catch (e) { if (dialogContext.mounted) ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text('تعذر البيع: $e'))); }
     }, child: const Text('تأكيد البيع'))]));
 }
