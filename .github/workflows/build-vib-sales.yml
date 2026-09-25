@@ -32,6 +32,8 @@ jobs:
           sed -i '/id("com.android.application")/a\    id("com.google.gms.google-services")' android/app/build.gradle.kts
           sed -i 's/minSdk = flutter.minSdkVersion/minSdk = 23/' android/app/build.gradle.kts
           cp firebase/google-services.json android/app/google-services.json
+                    sed -i "s#import 'package:intl/intl.dart';#import 'package:intl/intl.dart' as intl;#" lib/main.dart
+          sed -i 's/DateFormat(/intl.DateFormat(/g' lib/main.dart
 
       - name: Install packages
         working-directory: vib_sales
