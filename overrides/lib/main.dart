@@ -405,6 +405,7 @@ class Management extends StatelessWidget {
   const Management({super.key});
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
+    Card(child: ListTile(leading: const Icon(Icons.payments, color: gold), title: const Text('الصندوق'), subtitle: const Text('إضافة وخصم ومراجعة الحركات'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الصندوق')), body: const CashBox()))))),
     Card(child: ListTile(leading: const Icon(Icons.store, color: gold), title: const Text('الفروع والمخزون'), subtitle: const Text('إضافة الفروع ونقل البضاعة إليها'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الفروع')), body: const Branches()))))),
     Card(child: ListTile(leading: const Icon(Icons.people, color: gold), title: const Text('الموظفون والصلاحيات'), subtitle: const Text('تفعيل الموظف وتحديد فرعه'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الموظفون')), body: const Staff()))))),
     Card(child: ListTile(leading: const Icon(Icons.history, color: gold), title: const Text('سجل حركات الحسابات'), subtitle: const Text('التحصيلات والمدفوعات محفوظة بالتاريخ'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('حركات الحسابات')), body: const AccountMovements()))))),
@@ -665,8 +666,13 @@ Future<void> accountDialog(BuildContext context, String collection, String id, M
           await db.runTransaction((tx) async {
             final ref = db.collection(collection).doc(id);
             final snapshot = await tx.get(ref);
+            final cashRef = db.collection('cash').doc('main');
+            final cash = await tx.get(cashRef);
             final balance = (snapshot.data()?['balance'] as num?)?.toDouble();
             if (balance == null || paid > balance) throw Exception('المبلغ أكبر من الرصيد الحالي');
+            final beforeCash = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
+            final cashDelta = isSupplier ? -paid : paid;
+            if (beforeCash + cashDelta < 0) throw Exception('رصيد الصندوق لا يكفي');
             tx.update(ref, {'balance': balance - paid, 'updatedAt': FieldValue.serverTimestamp()});
             tx.set(db.collection('accountMovements').doc(), {
               'accountType': collection, 'accountId': id, 'accountName': snapshot.data()?['name'],
@@ -675,12 +681,106 @@ Future<void> accountDialog(BuildContext context, String collection, String id, M
               'createdAt': FieldValue.serverTimestamp(),
               'actorId': FirebaseAuth.instance.currentUser!.uid,
             });
+            tx.set(cashRef, {'balance': beforeCash + cashDelta,
+              'updatedAt': FieldValue.serverTimestamp()});
+            tx.set(db.collection('cashMovements').doc(), {
+              'kind': isSupplier ? 'supplierPayment' : 'customerCollection',
+              'accountId': id, 'accountName': snapshot.data()?['name'],
+              'amount': paid, 'delta': cashDelta,
+              'balanceBefore': beforeCash, 'balanceAfter': beforeCash + cashDelta,
+              'reason': isSupplier ? 'سداد مورد' : 'تحصيل عميل',
+              'actorId': FirebaseAuth.instance.currentUser!.uid,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
           });
           if (dialogContext.mounted) Navigator.pop(dialogContext);
         } catch (e) {
           if (dialogContext.mounted) ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text('تعذر تسجيل الحركة: $e')));
         }
       }, child: Text(isSupplier ? 'تسجيل السداد' : 'تسجيل التحصيل'))],
+  ));
+}
+
+class CashBox extends StatelessWidget {
+  const CashBox({super.key});
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: db.collection('cash').doc('main').snapshots(),
+      builder: (context, snap) => Padding(
+        padding: const EdgeInsets.all(16),
+        child: Text('رصيد الصندوق: ${snap.data?.data()?['balance'] ?? 0} ج.م',
+          style: const TextStyle(fontSize: 22, color: gold)),
+      ),
+    ),
+    Wrap(spacing: 12, children: [
+      FilledButton.icon(onPressed: () => cashDialog(context, true),
+        icon: const Icon(Icons.add), label: const Text('إضافة للصندوق')),
+      OutlinedButton.icon(onPressed: () => cashDialog(context, false),
+        icon: const Icon(Icons.remove), label: const Text('خصم من الصندوق')),
+    ]),
+    Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: db.collection('cashMovements').snapshots(),
+      builder: (context, snap) {
+        if (snap.hasError) return const Center(child: Text('تعذر عرض حركة الصندوق'));
+        if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+        final rows = snap.data!.docs.toList()..sort((a, b) =>
+          ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
+          .compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+        if (rows.isEmpty) return const Center(child: Text('لا توجد حركات للصندوق'));
+        return ListView.builder(itemCount: rows.length, itemBuilder: (context, i) {
+          final m = rows[i].data();
+          final date = m['createdAt'] is Timestamp
+            ? DateFormat('dd/MM/yyyy HH:mm').format((m['createdAt'] as Timestamp).toDate())
+            : 'جارٍ الحفظ';
+          return ListTile(title: Text('${m['reason'] ?? ''}'),
+            subtitle: Text('$date • بواسطة ${m['actorId'] ?? ''}'),
+            trailing: Text('${(m['delta'] as num?)?.toDouble() ?? 0} ج.م',
+              style: const TextStyle(color: gold)));
+        });
+      },
+    )),
+  ]);
+}
+
+Future<void> cashDialog(BuildContext context, bool deposit) async {
+  final amount = TextEditingController(), reason = TextEditingController();
+  await showDialog<void>(context: context, builder: (c) => AlertDialog(
+    title: Text(deposit ? 'إضافة للصندوق' : 'خصم من الصندوق'),
+    content: Column(mainAxisSize: MainAxisSize.min, children: [
+      TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: const InputDecoration(labelText: 'المبلغ')),
+      TextField(controller: reason, maxLength: 160,
+        decoration: const InputDecoration(labelText: 'سبب الحركة')),
+    ]),
+    actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')),
+      FilledButton(onPressed: () async {
+        final value = double.tryParse(amount.text.trim());
+        if (value == null || !value.isFinite || value <= 0 || reason.text.trim().isEmpty) {
+          ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اكتب مبلغ صحيح وسبب الحركة')));
+          return;
+        }
+        try {
+          await db.runTransaction((tx) async {
+            final ref = db.collection('cash').doc('main');
+            final snapshot = await tx.get(ref);
+            final before = (snapshot.data()?['balance'] as num?)?.toDouble() ?? 0;
+            final delta = deposit ? value : -value;
+            if (before + delta < 0) throw Exception('رصيد الصندوق لا يكفي');
+            tx.set(ref, {'balance': before + delta, 'updatedAt': FieldValue.serverTimestamp()});
+            tx.set(db.collection('cashMovements').doc(), {
+              'kind': deposit ? 'deposit' : 'withdrawal', 'amount': value,
+              'delta': delta, 'balanceBefore': before, 'balanceAfter': before + delta,
+              'reason': reason.text.trim(),
+              'actorId': FirebaseAuth.instance.currentUser!.uid,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+          });
+          if (c.mounted) Navigator.pop(c);
+        } catch (e) {
+          if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر حفظ الحركة: $e')));
+        }
+      }, child: const Text('حفظ الحركة'))],
   ));
 }
 
