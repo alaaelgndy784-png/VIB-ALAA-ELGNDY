@@ -27,6 +27,10 @@ jobs:
           unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d VIB-SALES-INDEPENDENT
           cp overrides/lib/main.dart VIB-SALES-INDEPENDENT/lib/main.dart
           cp overrides/pubspec.yaml VIB-SALES-INDEPENDENT/pubspec.yaml
+          mkdir -p VIB-SALES-INDEPENDENT/assets/tessdata
+          cp overrides/assets/tessdata/tessdata_config.json VIB-SALES-INDEPENDENT/assets/tessdata/
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/ara.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/ara.traineddata
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/eng.traineddata
           mkdir -p VIB-SALES-INDEPENDENT/assets/fonts
           cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf VIB-SALES-INDEPENDENT/assets/fonts/DejaVuSans.ttf
 
