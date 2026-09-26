@@ -38,7 +38,9 @@ jobs:
         working-directory: VIB-SALES-INDEPENDENT
         run: |
           sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
-          sed -i 's/android:label="manager"/android:label="VIB MANAGER"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="manager"/android:label="VIB MANAGER NEW"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/applicationId = "com.alaa.vibsales.manager"/applicationId = "com.alaa.vibsales.managerlite"/' android/app/build.gradle.kts
+          grep -q 'applicationId = "com.alaa.vibsales.managerlite"' android/app/build.gradle.kts
           sed -i 's/import io.flutter.embedding.android.FlutterActivity/import io.flutter.embedding.android.FlutterFragmentActivity/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
           sed -i 's/FlutterActivity()/FlutterFragmentActivity()/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
           sed -i '/<manifest/a\    <uses-permission android:name="android.permission.USE_BIOMETRIC" />' android/app/src/main/AndroidManifest.xml
@@ -50,20 +52,22 @@ jobs:
       - name: Build manager APK
         working-directory: VIB-SALES-INDEPENDENT
         run: |
-          flutter build apk --release
+          flutter build apk --release --split-per-abi
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk dist/VIB-SALES-MANAGER.apk
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk
 
       - name: Build staff APK separately
         working-directory: VIB-SALES-INDEPENDENT
         run: |
-          sed -i 's/android:label="VIB MANAGER"/android:label="VIB STAFF"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="VIB MANAGER NEW"/android:label="VIB STAFF NEW"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/applicationId = "com.alaa.vibsales.managerlite"/applicationId = "com.alaa.vibsales.stafflite"/' android/app/build.gradle.kts
+          grep -q 'applicationId = "com.alaa.vibsales.stafflite"' android/app/build.gradle.kts
           perl -0pi -e "s/'role':\s*'owner',\s*'active':\s*true/'role': 'pending', 'active': false/g" lib/main.dart
           cp -r assets/icons/staff/mipmap-* android/app/src/main/res/
           flutter clean
           flutter pub get
-          flutter build apk --release
-          cp build/app/outputs/flutter-apk/app-release.apk dist/VIB-SALES-STAFF.apk
+          flutter build apk --release --split-per-abi
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk
 
       - name: Upload manager APK
         uses: actions/upload-artifact@v4
