@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 import 'dart:io';
-import 'package:flutter_tesseract_ocr/flutter_tesseract_ocr.dart';
+import 'package:tesseract_ocr/tesseract_ocr.dart';
+import 'package:tesseract_ocr/ocr_engine_config.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -571,10 +572,10 @@ class _ProfitReportState extends State<ProfitReport> {
                   knownCost += qty * cost.toDouble();
                 } else { missingCost++; }
               }
-              return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'cash').snapshots(), builder: (context, expensesSnap) {
+              return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'expenses').snapshots(), builder: (context, expensesSnap) {
                 if (expensesSnap.hasError) return const Center(child: Text('تعذر تحميل المصروفات'));
                 if (!expensesSnap.hasData) return const Center(child: CircularProgressIndicator());
-                final expenses = expensesSnap.data!.docs.where((d) { final date = (d.data()['createdAt'] as Timestamp?)?.toDate(); return d.data()['kind'] == 'expense' && date != null && !date.isBefore(start) && date.isBefore(end); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
+                final expenses = expensesSnap.data!.docs.where((d) { final date = (d.data()['createdAt'] as Timestamp?)?.toDate(); return date != null && !date.isBefore(start) && date.isBefore(end); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
               return ListView(padding: const EdgeInsets.all(16), children: [
                 ListTile(title: const Text('عدد فواتير البيع'), trailing: Text('${sales.length}')),
                 ListTile(title: const Text('إجمالي المبيعات'), trailing: Text('${revenue.toStringAsFixed(2)} ج.م')),
@@ -653,7 +654,7 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
   if (photo == null || !context.mounted) return;
   final notice = ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري قراءة الفاتورة...'), duration: Duration(minutes: 1)));
   String text = '';
-  try { text = await FlutterTesseractOcr.extractText(photo.path, language: 'ara+eng', args: {'psm': '3'}); }
+  try { text = await TesseractOcr.extractText(photo.path, config: const OCRConfig(language: 'ara+eng', engine: OCREngine.tesseract)); }
   catch (_) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذرت القراءة التلقائية. يمكنك إدخال الفاتورة يدويًا.'))); }
   notice.close();
   if (!context.mounted) return;
