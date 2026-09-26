@@ -65,6 +65,20 @@ service cloud.firestore {
       allow read, create: if owner();
       allow update, delete: if false;
     }
+    match /cash/{id} {
+      allow read, create, update: if owner() && id == 'main';
+      allow delete: if false;
+    }
+    match /cashMovements/{id} {
+      allow read, create: if owner()
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.amount is number
+        && request.resource.data.amount > 0
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() > 0;
+      allow update, delete: if false;
+    }
     match /settings/{id} {
       allow read, create, update: if owner();
       allow delete: if false;
