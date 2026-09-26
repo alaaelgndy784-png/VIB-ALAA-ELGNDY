@@ -1,4 +1,7 @@
 import 'dart:typed_data';
+import 'dart:io';
+import 'package:flutter_tesseract_ocr/flutter_tesseract_ocr.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -265,7 +268,10 @@ class Products extends StatelessWidget {
         if (owner) Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(onPressed: () => productDialog(context), icon: const Icon(Icons.add), label: const Text('إضافة منتج'))),
         Expanded(child: docs.isEmpty ? const Center(child: Text('لا توجد منتجات بعد')) : ListView.builder(itemCount: docs.length, itemBuilder: (context, i) {
           final d = docs[i], p = d.data();
-          return ListTile(title: Text('${p['name'] ?? ''}'), subtitle: Text('السعر: ${p['price'] ?? 0} ج.م'), trailing: owner
+          return ListTile(title: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: db.collection('stock').doc('${owner ? 'main' : branchId}_${d.id}').snapshots(),
+            builder: (context, stock) => Text('${p['name'] ?? ''}  •  المتوفر: ${(stock.data?.data()?['quantity'] as num?)?.toInt() ?? 0}'),
+          ), subtitle: Text('السعر: ${p['price'] ?? 0} ج.م'), trailing: owner
             ? Wrap(children: [IconButton(tooltip: 'تعديل', icon: const Icon(Icons.edit), onPressed: () => productDialog(context, id: d.id, data: p)), IconButton(tooltip: 'المخزون الرئيسي', icon: const Icon(Icons.warehouse), onPressed: () => mainStockDialog(context, d.id, '${p['name']}'))])
             : FilledButton.icon(icon: const Icon(Icons.receipt_long),
                 label: const Text('فاتورة بيع'),
@@ -565,20 +571,20 @@ class _ProfitReportState extends State<ProfitReport> {
                   knownCost += qty * cost.toDouble();
                 } else { missingCost++; }
               }
-              return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'expenses').snapshots(), builder: (context, expensesSnap) {
+              return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'cash').snapshots(), builder: (context, expensesSnap) {
                 if (expensesSnap.hasError) return const Center(child: Text('تعذر تحميل المصروفات'));
                 if (!expensesSnap.hasData) return const Center(child: CircularProgressIndicator());
-                final expenses = expensesSnap.data!.docs.where((d) { final date = (d.data()['createdAt'] as Timestamp?)?.toDate(); return date != null && !date.isBefore(start) && date.isBefore(end); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
+                final expenses = expensesSnap.data!.docs.where((d) { final date = (d.data()['createdAt'] as Timestamp?)?.toDate(); return d.data()['kind'] == 'expense' && date != null && !date.isBefore(start) && date.isBefore(end); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
               return ListView(padding: const EdgeInsets.all(16), children: [
                 ListTile(title: const Text('عدد فواتير البيع'), trailing: Text('${sales.length}')),
                 ListTile(title: const Text('إجمالي المبيعات'), trailing: Text('${revenue.toStringAsFixed(2)} ج.م')),
                 ListTile(title: const Text('تكلفة الأصناف المعروفة'), trailing: Text('${knownCost.toStringAsFixed(2)} ج.م')),
                 ListTile(title: const Text('المصروفات'), trailing: Text('${expenses.toStringAsFixed(2)} ج.م')),
                 ListTile(title: const Text('الربح الإجمالي التقديري'),
-                  trailing: Text(missingCost == 0 ? '${(revenue - knownCost).toStringAsFixed(2)} ج.م' : 'غير مكتمل',
+                  trailing: Text('${(revenue - knownCost).toStringAsFixed(2)} ج.م',
                     style: const TextStyle(color: gold, fontWeight: FontWeight.bold))),
-                ListTile(title: const Text('الربح بعد المصروفات'), trailing: Text(missingCost == 0 ? '${(revenue - knownCost - expenses).toStringAsFixed(2)} ج.م' : 'غير مكتمل')),
-                if (missingCost > 0) Text('تكلفة الشراء غير مسجلة في $missingCost فاتورة. أضفها للأصناف أولًا.'),
+                ListTile(title: const Text('الربح بعد المصروفات'), trailing: Text('${(revenue - knownCost - expenses).toStringAsFixed(2)} ج.م')),
+                if (missingCost > 0) Text('الربح المعروض تقديري: تكلفة الشراء غير مسجلة في $missingCost فاتورة، ولذلك قد يكون الربح الفعلي أقل. أضف تكلفة شراء الأصناف أولًا.'),
                 const SizedBox(height: 16),
                 const Text('هذا تقدير حسب سعر الشراء المسجل حاليًا للصنف. يشمل المصروفات المسجلة في الفترة، وقد يختلف إذا تغيرت التكلفة بعد البيع.'),
               ]);
@@ -595,7 +601,10 @@ class Purchases extends StatelessWidget {
   const Purchases({super.key});
   @override
   Widget build(BuildContext context) => Column(children: [
-    Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(onPressed: () => purchaseDialog(context), icon: const Icon(Icons.add), label: const Text('فاتورة مشتريات جديدة'))),
+    Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, children: [
+      FilledButton.icon(onPressed: () => purchaseDialog(context), icon: const Icon(Icons.add), label: const Text('فاتورة مشتريات جديدة')),
+      OutlinedButton.icon(onPressed: () => scannedPurchaseDialog(context), icon: const Icon(Icons.camera_alt), label: const Text('تصوير فاتورة مشتريات')),
+    ])),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: db.collection('purchases').orderBy('createdAt', descending: true).limit(300).snapshots(),
       builder: (context, snap) {
@@ -614,6 +623,137 @@ class Purchases extends StatelessWidget {
 }
 
 String formatDate(dynamic value) => value is Timestamp ? DateFormat('dd/MM/yyyy HH:mm').format(value.toDate()) : 'جارٍ الحفظ';
+
+class ScannedLine {
+  String? productId;
+  final quantity = TextEditingController(text: '1');
+  final cost = TextEditingController();
+  ScannedLine({this.productId});
+  void dispose() { quantity.dispose(); cost.dispose(); }
+}
+
+String _ocrKey(String value) => value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9\u0621-\u064a]'), '');
+String _ocrNumber(String value) => value.replaceAllMapped(RegExp(r'[٠-٩]'), (m) => '${m.group(0)!.runes.first - 0x660}').replaceAll('٫', '.').replaceAll('٬', '');
+
+Future<void> scannedPurchaseDialog(BuildContext context) async {
+  final products = await db.collection('products').where('active', isEqualTo: true).get();
+  final suppliers = await db.collection('suppliers').get();
+  if (!context.mounted) return;
+  if (products.docs.isEmpty || suppliers.docs.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف الأصناف والمورد أولًا'))); return;
+  }
+  final source = await showModalBottomSheet<ImageSource>(context: context, builder: (c) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
+    ListTile(leading: const Icon(Icons.camera_alt), title: const Text('التقاط صورة'), onTap: () => Navigator.pop(c, ImageSource.camera)),
+    ListTile(leading: const Icon(Icons.photo_library), title: const Text('اختيار صورة'), onTap: () => Navigator.pop(c, ImageSource.gallery)),
+  ])));
+  if (source == null) return;
+  XFile? photo;
+  try { photo = await ImagePicker().pickImage(source: source, imageQuality: 90, maxWidth: 2400); }
+  catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر فتح الكاميرا: $e'))); return; }
+  if (photo == null || !context.mounted) return;
+  final notice = ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري قراءة الفاتورة...'), duration: Duration(minutes: 1)));
+  String text = '';
+  try { text = await FlutterTesseractOcr.extractText(photo.path, language: 'ara+eng', args: {'psm': '3'}); }
+  catch (_) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذرت القراءة التلقائية. يمكنك إدخال الفاتورة يدويًا.'))); }
+  notice.close();
+  if (!context.mounted) return;
+  String? supplierId;
+  final whole = _ocrKey(text);
+  for (final s in suppliers.docs) {
+    final name = _ocrKey('${s.data()['name'] ?? ''}');
+    if (name.length >= 3 && whole.contains(name)) { supplierId = s.id; break; }
+  }
+  final lines = <ScannedLine>[];
+  for (final row in text.split('\n')) {
+    final normalized = _ocrKey(row);
+    for (final p in products.docs) {
+      final name = _ocrKey('${p.data()['name'] ?? ''}');
+      if (name.length >= 3 && normalized.contains(name) && !lines.any((e) => e.productId == p.id)) {
+        lines.add(ScannedLine(productId: p.id)); break;
+      }
+    }
+  }
+  if (lines.isEmpty) lines.add(ScannedLine());
+  final invoice = TextEditingController();
+  final paid = TextEditingController(text: '0');
+  final markup = TextEditingController();
+  bool saving = false;
+  await showDialog<void>(context: context, barrierDismissible: false, builder: (outer) => StatefulBuilder(builder: (c, update) => AlertDialog(
+    title: const Text('مراجعة فاتورة المشتريات'),
+    content: SizedBox(width: 500, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      Image.file(File(photo!.path), height: 140),
+      const Text('راجع المورد والكمية وسعر الشراء لكل صنف؛ القراءة من الصورة قد تخطئ.', style: TextStyle(color: gold)),
+      ExpansionTile(title: const Text('النص المستخرج من الصورة'), children: [SelectableText(text.isEmpty ? 'لم يتم التعرف على النص' : text)]),
+      DropdownButtonFormField<String>(initialValue: supplierId, isExpanded: true, decoration: const InputDecoration(labelText: 'المورد *'), items: suppliers.docs.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(), onChanged: saving ? null : (v) => update(() => supplierId = v)),
+      TextField(controller: invoice, decoration: const InputDecoration(labelText: 'رقم فاتورة المورد')),
+      for (var i = 0; i < lines.length; i++) Card(key: ObjectKey(lines[i]), child: Padding(padding: const EdgeInsets.all(8), child: Column(children: [
+        Row(children: [Expanded(child: Text('الصنف ${i + 1}')), IconButton(icon: const Icon(Icons.delete), onPressed: saving || lines.length == 1 ? null : () => update(() => lines.removeAt(i).dispose()))]),
+        DropdownButtonFormField<String>(initialValue: lines[i].productId, isExpanded: true, decoration: const InputDecoration(labelText: 'الصنف المسجل *'), items: products.docs.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(), onChanged: saving ? null : (v) => update(() => lines[i].productId = v)),
+        TextField(controller: lines[i].quantity, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الكمية *')),
+        TextField(controller: lines[i].cost, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'سعر الشراء للوحدة *')),
+      ]))),
+      TextButton.icon(onPressed: saving || lines.length >= 30 ? null : () => update(() => lines.add(ScannedLine())), icon: const Icon(Icons.add), label: const Text('إضافة صنف')),
+      TextField(controller: paid, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'المدفوع للمورد الآن')),
+      TextField(controller: markup, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'زيادة سعر البيع % (اختياري؛ مثل 5 أو 10)'), onChanged: (_) => update(() {})),
+      if (double.tryParse(_ocrNumber(markup.text.replaceAll(',', '.'))) case final percent?)
+        for (final row in lines)
+          if (row.productId != null && double.tryParse(_ocrNumber(row.cost.text.replaceAll(',', '.'))) case final cost?)
+            Text('${products.docs.firstWhere((p) => p.id == row.productId).data()['name']}: سعر البيع المقترح ${(cost * (1 + percent / 100)).toStringAsFixed(2)} ج.م'),
+    ]))),
+    actions: [TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')), FilledButton(onPressed: saving ? null : () async {
+      final entries = <({String id, int qty, double cost})>[];
+      var total = 0.0;
+      for (final row in lines) {
+        final qty = int.tryParse(_ocrNumber(row.quantity.text.trim()));
+        final cost = double.tryParse(_ocrNumber(row.cost.text.trim().replaceAll(',', '.')));
+        if (row.productId == null || qty == null || qty <= 0 || cost == null || !cost.isFinite || cost < 0 || entries.any((e) => e.id == row.productId)) {
+          ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('راجع كل صنف وكمية وسعر؛ لا تكرر الصنف'))); return;
+        }
+        entries.add((id: row.productId!, qty: qty, cost: cost)); total += qty * cost;
+      }
+      final payment = double.tryParse(_ocrNumber(paid.text.trim().replaceAll(',', '.')));
+      final increase = markup.text.trim().isEmpty ? null : double.tryParse(_ocrNumber(markup.text.trim().replaceAll(',', '.')));
+      if (markup.text.trim().isNotEmpty && (increase == null || !increase.isFinite || increase < 0 || increase > 1000)) {
+        ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اكتب نسبة زيادة صحيحة من 0 إلى 1000'))); return;
+      }
+      if (supplierId == null || payment == null || !payment.isFinite || payment < 0 || payment > total) {
+        ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اختر المورد وتأكد من المبلغ المدفوع'))); return;
+      }
+      update(() => saving = true);
+      try {
+        final supplier = suppliers.docs.firstWhere((e) => e.id == supplierId).data();
+        final group = db.collection('purchases').doc().id;
+        await db.runTransaction((tx) async {
+          final supplierRef = db.collection('suppliers').doc(supplierId);
+          final supplierSnap = await tx.get(supplierRef);
+          if (!supplierSnap.exists) throw StateError('المورد غير موجود');
+          final stocks = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+          for (final e in entries) { stocks[e.id] = await tx.get(db.collection('stock').doc('main_${e.id}')); }
+          final before = (supplierSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
+          final due = total - payment;
+          final actor = FirebaseAuth.instance.currentUser!.uid;
+          tx.update(supplierRef, {'balance': before + due, 'updatedAt': FieldValue.serverTimestamp()});
+          for (final e in entries) {
+            final p = products.docs.firstWhere((d) => d.id == e.id).data();
+            final old = (stocks[e.id]?.data()?['quantity'] as num?)?.toInt() ?? 0;
+            final ref = db.collection('purchases').doc();
+            tx.set(db.collection('stock').doc('main_${e.id}'), {'branchId': 'main', 'productId': e.id, 'quantity': old + e.qty}, SetOptions(merge: true));
+            tx.update(db.collection('products').doc(e.id), {'purchasePrice': e.cost, if (increase != null) 'price': double.parse((e.cost * (1 + increase / 100)).toStringAsFixed(2)), 'updatedAt': FieldValue.serverTimestamp()});
+            tx.set(ref, {'invoiceNumber': invoice.text.trim(), 'scanGroupId': group, 'source': 'camera', 'supplierId': supplierId, 'supplierName': supplier['name'], 'productId': e.id, 'productName': p['name'], 'quantity': e.qty, 'unitCost': e.cost, 'total': e.qty * e.cost, 'paid': 0, 'due': e.qty * e.cost, 'status': 'completed', 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+            tx.set(db.collection('stockMovements').doc(), {'productId': e.id, 'productName': p['name'], 'branchId': 'main', 'kind': 'purchase', 'quantity': e.qty, 'balanceAfter': old + e.qty, 'referenceId': ref.id, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+          }
+          tx.set(db.collection('accountMovements').doc(), {'accountType': 'suppliers', 'accountId': supplierId, 'accountName': supplier['name'], 'kind': 'purchase', 'amount': due, 'balanceBefore': before, 'balanceAfter': before + due, 'referenceId': group, 'paid': payment, 'createdAt': FieldValue.serverTimestamp(), 'actorId': actor});
+        });
+        if (c.mounted) Navigator.pop(c);
+        if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ الفاتورة وتحديث المخزون وحساب المورد')));
+      } catch (e) {
+        if (c.mounted) { update(() => saving = false); ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر الحفظ: $e'))); }
+      }
+    }, child: const Text('تأكيد وحفظ'))],
+  )));
+  for (final row in lines) { row.dispose(); }
+  invoice.dispose(); paid.dispose(); markup.dispose();
+}
 
 Future<void> purchaseDialog(BuildContext context) async {
   final products = await db.collection('products').where('active', isEqualTo: true).get();
