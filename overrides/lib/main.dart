@@ -436,6 +436,7 @@ class Management extends StatelessWidget {
     Card(child: ListTile(leading: const Icon(Icons.inventory_2, color: gold), title: const Text('جرد المخزون حسب الفئة'), subtitle: const Text('المتاح وسعر الشراء وسعر البيع لكل صنف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('جرد المخزون')), body: const InventoryAudit()))))),
     Card(child: ListTile(leading: const Icon(Icons.trending_up, color: gold), title: const Text('تقرير الأرباح'), subtitle: const Text('يومي وأسبوعي وشهري حسب تكلفة شراء الأصناف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير الأرباح')), body: const ProfitReport()))))),
     Card(child: ListTile(leading: const Icon(Icons.payments, color: gold), title: const Text('الصندوق'), subtitle: const Text('إضافة وخصم ومراجعة الحركات'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الصندوق')), body: const CashBox()))))),
+    Card(child: ListTile(leading: const Icon(Icons.receipt, color: gold), title: const Text('المصروفات'), subtitle: const Text('مصروفات المحل والرواتب وخصمها من الصندوق'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('المصروفات')), body: const Expenses()))))),
     Card(child: ListTile(leading: const Icon(Icons.store, color: gold), title: const Text('الفروع والمخزون'), subtitle: const Text('إضافة الفروع ونقل البضاعة إليها'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الفروع')), body: const Branches()))))),
     Card(child: ListTile(leading: const Icon(Icons.people, color: gold), title: const Text('الموظفون والصلاحيات'), subtitle: const Text('تفعيل الموظف وتحديد فرعه'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الموظفون')), body: const Staff()))))),
     Card(child: ListTile(leading: const Icon(Icons.history, color: gold), title: const Text('سجل حركات الحسابات'), subtitle: const Text('التحصيلات والمدفوعات محفوظة بالتاريخ'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('حركات الحسابات')), body: const AccountMovements()))))),
@@ -447,6 +448,43 @@ class Management extends StatelessWidget {
 class InventoryAudit extends StatefulWidget {
   const InventoryAudit({super.key});
   @override State<InventoryAudit> createState() => _InventoryAuditState();
+}
+
+class Expenses extends StatelessWidget {
+  const Expenses({super.key});
+  @override Widget build(BuildContext context) => Column(children: [
+    Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(onPressed: () => expenseDialog(context), icon: const Icon(Icons.add), label: const Text('تسجيل مصروف'))),
+    Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'expenses').snapshots(), builder: (context, snap) {
+      if (snap.hasError) return const Center(child: Text('تعذر تحميل المصروفات'));
+      if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+      final rows = snap.data!.docs.toList()..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+      final total = rows.fold<double>(0, (sum, row) => sum + ((row.data()['amount'] as num?)?.toDouble() ?? 0));
+      return Column(children: [ListTile(title: const Text('إجمالي المصروفات المسجلة'), trailing: Text('${total.toStringAsFixed(2)} ج.م')), Expanded(child: ListView(children: rows.map((row) { final data = row.data(); return ListTile(title: Text('${data['reason'] ?? ''}'), subtitle: Text('${data['category'] ?? 'عام'} • ${formatDate(data['createdAt'])}'), trailing: Text('${data['amount']} ج.م')); }).toList()))]);
+    }))]);
+}
+
+Future<void> expenseDialog(BuildContext context) async {
+  final category = TextEditingController(), reason = TextEditingController(), amount = TextEditingController();
+  await showDialog<void>(context: context, builder: (dialog) => AlertDialog(title: const Text('مصروف جديد'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+    TextField(controller: category, decoration: const InputDecoration(labelText: 'الفئة، مثل إيجار أو رواتب')),
+    TextField(controller: reason, decoration: const InputDecoration(labelText: 'وصف المصروف')),
+    TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'المبلغ')),
+  ])), actions: [TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء')), FilledButton(onPressed: () async {
+    final value = double.tryParse(amount.text.trim());
+    if (value == null || !value.isFinite || value <= 0 || reason.text.trim().isEmpty) return;
+    try {
+      await db.runTransaction((tx) async {
+        final cashRef = db.collection('settings').doc('cash'), snap = await tx.get(cashRef);
+        final before = (snap.data()?['balance'] as num?)?.toDouble() ?? 0;
+        if (before < value) throw Exception('رصيد الصندوق غير كافٍ');
+        final ref = db.collection('accountMovements').doc();
+        tx.set(cashRef, {'balance': before - value, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+        tx.set(ref, {'accountType': 'expenses', 'category': category.text.trim().isEmpty ? 'عام' : category.text.trim(), 'reason': reason.text.trim(), 'amount': value, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
+        tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'expense', 'accountId': ref.id, 'accountName': category.text.trim(), 'amount': value, 'delta': -value, 'balanceBefore': before, 'balanceAfter': before - value, 'reason': reason.text.trim(), 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
+      });
+      if (dialog.mounted) Navigator.pop(dialog);
+    } catch (e) { if (dialog.mounted) ScaffoldMessenger.of(dialog).showSnackBar(SnackBar(content: Text('تعذر حفظ المصروف: $e'))); }
+  }, child: const Text('حفظ المصروف'))]));
 }
 
 class _InventoryAuditState extends State<InventoryAudit> {
@@ -469,7 +507,7 @@ class _InventoryAuditState extends State<InventoryAudit> {
         }
         final filtered = rows.where((p) => selected == 'الكل' || '${p.data()['category'] ?? 'غير مصنف'}' == selected).toList()..sort((a,b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
         return Column(children: [Padding(padding: const EdgeInsets.all(12), child: DropdownButtonFormField<String>(value: selected, decoration: const InputDecoration(labelText: 'الفئة'), items: categories.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setState(() => category = v ?? 'الكل'))),
-          Text('عدد الأصناف: ${filtered.length}'), Expanded(child: ListView(children: filtered.map((p) { final data = p.data(); return Card(child: ListTile(title: Text('${data['name']}'), subtitle: Text('الفئة: ${data['category'] ?? 'غير مصنف'}\nسعر الشراء: ${data['purchasePrice'] ?? 'غير مسجل'} ج.م • سعر البيع: ${data['price'] ?? 0} ج.م'), isThreeLine: true, trailing: Text('متوفر\n${amounts[p.id] ?? 0}', textAlign: TextAlign.center, style: const TextStyle(color: gold)))); }).toList()))) ]);
+          Text('عدد الأصناف: ${filtered.length}'), Expanded(child: ListView(children: filtered.map((p) { final data = p.data(); return Card(child: ListTile(title: Text('${data['name']}'), subtitle: Text('الفئة: ${data['category'] ?? 'غير مصنف'}\nسعر الشراء: ${data['purchasePrice'] ?? 'غير مسجل'} ج.م • سعر البيع: ${data['price'] ?? 0} ج.م'), isThreeLine: true, trailing: Text('متوفر\n${amounts[p.id] ?? 0}', textAlign: TextAlign.center, style: const TextStyle(color: gold)))); }).toList())) ]);
       });
     });
 }
@@ -526,17 +564,24 @@ class _ProfitReportState extends State<ProfitReport> {
                   knownCost += qty * cost.toDouble();
                 } else { missingCost++; }
               }
+              return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'expenses').snapshots(), builder: (context, expensesSnap) {
+                if (expensesSnap.hasError) return const Center(child: Text('تعذر تحميل المصروفات'));
+                if (!expensesSnap.hasData) return const Center(child: CircularProgressIndicator());
+                final expenses = expensesSnap.data!.docs.where((d) { final date = (d.data()['createdAt'] as Timestamp?)?.toDate(); return date != null && !date.isBefore(start) && date.isBefore(end); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
               return ListView(padding: const EdgeInsets.all(16), children: [
                 ListTile(title: const Text('عدد فواتير البيع'), trailing: Text('${sales.length}')),
                 ListTile(title: const Text('إجمالي المبيعات'), trailing: Text('${revenue.toStringAsFixed(2)} ج.م')),
                 ListTile(title: const Text('تكلفة الأصناف المعروفة'), trailing: Text('${knownCost.toStringAsFixed(2)} ج.م')),
+                ListTile(title: const Text('المصروفات'), trailing: Text('${expenses.toStringAsFixed(2)} ج.م')),
                 ListTile(title: const Text('الربح الإجمالي التقديري'),
                   trailing: Text(missingCost == 0 ? '${(revenue - knownCost).toStringAsFixed(2)} ج.م' : 'غير مكتمل',
                     style: const TextStyle(color: gold, fontWeight: FontWeight.bold))),
+                ListTile(title: const Text('الربح بعد المصروفات'), trailing: Text(missingCost == 0 ? '${(revenue - knownCost - expenses).toStringAsFixed(2)} ج.م' : 'غير مكتمل')),
                 if (missingCost > 0) Text('تكلفة الشراء غير مسجلة في $missingCost فاتورة. أضفها للأصناف أولًا.'),
                 const SizedBox(height: 16),
-                const Text('هذا تقدير حسب سعر الشراء المسجل حاليًا للصنف. لا يشمل المصروفات أو تغير تكلفة الشراء بين الفواتير.'),
+                const Text('هذا تقدير حسب سعر الشراء المسجل حاليًا للصنف. يشمل المصروفات المسجلة في الفترة، وقد يختلف إذا تغيرت التكلفة بعد البيع.'),
               ]);
+              });
             },
           );
         },
@@ -601,6 +646,7 @@ Future<void> purchaseDialog(BuildContext context) async {
           final oldBalance = (supplierSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
           final total = qty * unitCost, due = total - paidNow, purchaseRef = db.collection('purchases').doc();
           tx.set(stockRef, {'branchId': 'main', 'productId': productId, 'quantity': oldQty + qty}, SetOptions(merge: true));
+          tx.update(db.collection('products').doc(productId), {'purchasePrice': unitCost, 'updatedAt': FieldValue.serverTimestamp()});
           tx.update(supplierRef, {'balance': oldBalance + due, 'updatedAt': FieldValue.serverTimestamp()});
           tx.set(purchaseRef, {'invoiceNumber': invoice.text.trim(), 'supplierId': supplierId, 'supplierName': supplier['name'], 'productId': productId, 'productName': product['name'], 'quantity': qty, 'unitCost': unitCost, 'total': total, 'paid': paidNow, 'due': due, 'status': 'completed', 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
           tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': product['name'], 'branchId': 'main', 'kind': 'purchase', 'quantity': qty, 'balanceAfter': oldQty + qty, 'referenceId': purchaseRef.id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
