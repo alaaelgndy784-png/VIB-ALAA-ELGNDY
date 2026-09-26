@@ -41,6 +41,7 @@ jobs:
       - name: Prepare manager app
         working-directory: VIB-SALES-INDEPENDENT
         run: |
+          printf '%s\n' 'android.newDsl=false' 'android.builtInKotlin=false' >> android/gradle.properties
           sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
           sed -i 's/android:label="manager"/android:label="VIB MANAGER SCAN"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/applicationId = "com.alaa.vibsales.manager"/applicationId = "com.alaa.vibsales.managerscan"/' android/app/build.gradle.kts
