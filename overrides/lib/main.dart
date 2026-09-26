@@ -278,42 +278,62 @@ class Products extends StatelessWidget {
 Future<void> productDialog(BuildContext context, {String? id, Map<String, dynamic>? data}) async {
   final name = TextEditingController(text: '${data?['name'] ?? ''}');
   final price = TextEditingController(text: '${data?['price'] ?? ''}');
-  await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(title: Text(id == null ? 'منتج جديد' : 'تعديل المنتج'), content: Column(mainAxisSize: MainAxisSize.min, children: [
+  final purchasePrice = TextEditingController(text: '${data?['purchasePrice'] ?? ''}');
+  final category = TextEditingController(text: '${data?['category'] ?? ''}');
+  await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(title: Text(id == null ? 'منتج جديد' : 'تعديل المنتج'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
     TextField(controller: name, decoration: const InputDecoration(labelText: 'اسم المنتج')),
+    TextField(controller: category, decoration: const InputDecoration(labelText: 'الفئة')),
     TextField(controller: price, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'السعر')),
-  ]), actions: [
+    TextField(controller: purchasePrice, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'تكلفة شراء الوحدة لتقرير الأرباح')),
+  ])), actions: [
     TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
     FilledButton(onPressed: () async {
       final amount = double.tryParse(price.text);
-      if (name.text.trim().isEmpty || amount == null || amount < 0) return;
+      final unitCost = purchasePrice.text.trim().isEmpty ? null : double.tryParse(purchasePrice.text.trim());
+      if (name.text.trim().isEmpty || amount == null || !amount.isFinite || amount < 0 ||
+          (purchasePrice.text.trim().isNotEmpty && (unitCost == null || !unitCost.isFinite || unitCost < 0))) return;
       final ref = id == null ? db.collection('products').doc() : db.collection('products').doc(id);
-      try { await ref.set({'name': name.text.trim(), 'price': amount, 'active': true, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+      try { await ref.set({'name': name.text.trim(), 'category': category.text.trim().isEmpty ? 'غير مصنف' : category.text.trim(), 'price': amount,
+        if (unitCost != null) 'purchasePrice': unitCost,
+        'active': true, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
         if (dialogContext.mounted) Navigator.pop(dialogContext);
       } catch (_) { if (dialogContext.mounted) ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('فشل حفظ المنتج'))); }
     }, child: const Text('حفظ')),
   ]));
 }
 
-Future<void> saleDialog(BuildContext context, String productId, Map<String, dynamic> product, String uid, String branchId) async {
+Future<void> saleDialog(BuildContext context, String productId, Map<String, dynamic> product, String uid, String branchId, {bool owner = false}) async {
   final quantity = TextEditingController(text: '1');
   final customerPhone = TextEditingController();
+  final reason = TextEditingController();
+  bool allowShortage = false, allowBelowCost = false;
   final saleRef = db.collection('sales').doc();
-  await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(title: Text('فاتورة بيع: ${product['name']}'), content: Column(mainAxisSize: MainAxisSize.min, children: [
+  await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(builder: (dialogContext, update) => AlertDialog(title: Text('فاتورة بيع: ${product['name']}'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
     Text('سعر الوحدة: ${product['price'] ?? 0} ج.م'),
     TextField(controller: quantity, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الكمية')),
     TextField(controller: customerPhone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم هاتف الزبون (اختياري للواتساب)')),
-  ]),
+    if (owner) SwitchListTile(title: const Text('السماح بالبيع رغم نقص الكمية'), value: allowShortage, onChanged: (v) => update(() => allowShortage = v)),
+    if (owner) SwitchListTile(title: const Text('السماح بالبيع أقل من التكلفة'), value: allowBelowCost, onChanged: (v) => update(() => allowBelowCost = v)),
+    if (owner && (allowShortage || allowBelowCost)) TextField(controller: reason, decoration: const InputDecoration(labelText: 'سبب الاستثناء (إلزامي)')),
+  ])),
     actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')), FilledButton(onPressed: () async {
       final qty = int.tryParse(quantity.text);
       if (qty == null || qty <= 0) return;
+      if ((allowShortage || allowBelowCost) && reason.text.trim().isEmpty) {
+        ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('سجل سبب الاستثناء أولًا')));
+        return;
+      }
       try {
         await db.runTransaction((tx) async {
           final stockRef = db.collection('stock').doc('${branchId}_$productId');
           final stock = await tx.get(stockRef);
           final current = (stock.data()?['quantity'] as num?)?.toInt() ?? 0;
-          if (current < qty) throw Exception('الكمية غير متاحة في الفرع');
-          tx.update(stockRef, {'quantity': current - qty, 'lastSaleId': saleRef.id});
-          tx.set(saleRef, {'branchId': branchId, 'employeeId': uid, 'customerPhone': customerPhone.text.trim(), 'productId': productId, 'productName': product['name'], 'quantity': qty, 'unitPrice': product['price'], 'total': qty * (product['price'] as num), 'status': 'completed', 'createdAt': FieldValue.serverTimestamp()});
+          if (current < qty && !(owner && allowShortage)) throw Exception('الكمية غير متاحة في الفرع');
+          final price = (product['price'] as num?)?.toDouble() ?? 0;
+          final cost = (product['purchasePrice'] as num?)?.toDouble();
+          if (cost != null && price < cost && !(owner && allowBelowCost)) throw Exception('سعر البيع أقل من التكلفة؛ يحتاج موافقة المدير');
+          tx.set(stockRef, {'branchId': branchId, 'productId': productId, 'quantity': current - qty, 'lastSaleId': saleRef.id}, SetOptions(merge: true));
+          tx.set(saleRef, {'branchId': branchId, 'employeeId': uid, 'customerPhone': customerPhone.text.trim(), 'productId': productId, 'productName': product['name'], 'quantity': qty, 'unitPrice': price, 'total': qty * price, 'status': 'completed', 'createdAt': FieldValue.serverTimestamp(), if (owner && (allowShortage || allowBelowCost)) 'managerOverride': {'reason': reason.text.trim(), 'shortage': current < qty, 'belowCost': cost != null && price < cost, 'actorId': uid}});
           tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': product['name'], 'branchId': branchId, 'kind': 'sale', 'quantity': -qty, 'balanceAfter': current - qty, 'referenceId': saleRef.id, 'actorId': uid, 'createdAt': FieldValue.serverTimestamp()});
         });
         if (dialogContext.mounted) {
@@ -329,7 +349,7 @@ Future<void> saleDialog(BuildContext context, String productId, Map<String, dyna
           }
         }
       } catch (e) { if (dialogContext.mounted) ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text('تعذر البيع: $e'))); }
-    }, child: const Text('تأكيد البيع'))]));
+    }, child: const Text('تأكيد البيع'))])));
 }
 
 class Sales extends StatelessWidget {
@@ -343,14 +363,22 @@ class Sales extends StatelessWidget {
     if (snap.hasError) return const Center(child: Text('تعذر عرض المبيعات'));
     if (!snap.hasData) return const Center(child: CircularProgressIndicator());
     final rows = snap.data!.docs.where((d) => owner || d.data()['branchId'] == branchId).toList()..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
-    if (rows.isEmpty) return const Center(child: Text('لا توجد مبيعات بعد'));
-    return ListView(children: rows.map((d) { final s = d.data(); return ListTile(
+    return Column(children: [Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(icon: const Icon(Icons.add_shopping_cart), label: const Text('عملية بيع جديدة'), onPressed: () => newSaleDialog(context, owner, branchId))), Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد مبيعات بعد')) : ListView(children: rows.map((d) { final s = d.data(); return ListTile(
       title: Text('${s['productName']} × ${s['quantity']}'),
       subtitle: Text('فرع: ${s['branchId']} • ${formatDate(s['createdAt'])}${s['status'] == 'returned' ? ' • مرتجع' : ''}'),
       trailing: Text('${s['total']} ج.م'),
       onTap: () => invoiceActions(context, 'sales', d.id, s, canReturn: owner),
-    ); }).toList());
+    ); }).toList()))]);
   });
+}
+
+Future<void> newSaleDialog(BuildContext context, bool owner, String branchId) async {
+  try {
+    final products = await db.collection('products').get();
+    if (!context.mounted) return;
+    final available = products.docs.where((p) => p.data()['active'] == true).toList();
+    await showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (sheet) => SafeArea(child: SizedBox(height: MediaQuery.sizeOf(sheet).height * .7, child: Column(children: [const ListTile(title: Text('اختار الصنف لعملية البيع')), Expanded(child: ListView(children: available.map((p) => ListTile(title: Text('${p.data()['name']}'), subtitle: Text('${p.data()['price'] ?? 0} ج.م'), onTap: () { Navigator.pop(sheet); saleDialog(context, p.id, p.data(), FirebaseAuth.instance.currentUser!.uid, owner ? 'main' : branchId, owner: owner); })).toList()))]))));
+  } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر تحميل الأصناف: $e'))); }
 }
 
 class Branches extends StatelessWidget {
@@ -405,6 +433,8 @@ class Management extends StatelessWidget {
   const Management({super.key});
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
+    Card(child: ListTile(leading: const Icon(Icons.inventory_2, color: gold), title: const Text('جرد المخزون حسب الفئة'), subtitle: const Text('المتاح وسعر الشراء وسعر البيع لكل صنف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('جرد المخزون')), body: const InventoryAudit()))))),
+    Card(child: ListTile(leading: const Icon(Icons.trending_up, color: gold), title: const Text('تقرير الأرباح'), subtitle: const Text('يومي وأسبوعي وشهري حسب تكلفة شراء الأصناف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير الأرباح')), body: const ProfitReport()))))),
     Card(child: ListTile(leading: const Icon(Icons.payments, color: gold), title: const Text('الصندوق'), subtitle: const Text('إضافة وخصم ومراجعة الحركات'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الصندوق')), body: const CashBox()))))),
     Card(child: ListTile(leading: const Icon(Icons.store, color: gold), title: const Text('الفروع والمخزون'), subtitle: const Text('إضافة الفروع ونقل البضاعة إليها'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الفروع')), body: const Branches()))))),
     Card(child: ListTile(leading: const Icon(Icons.people, color: gold), title: const Text('الموظفون والصلاحيات'), subtitle: const Text('تفعيل الموظف وتحديد فرعه'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الموظفون')), body: const Staff()))))),
@@ -412,6 +442,107 @@ class Management extends StatelessWidget {
     Card(child: ListTile(leading: const Icon(Icons.swap_vert, color: gold), title: const Text('تقرير حركة صنف'), subtitle: const Text('مبيعات ومشتريات ومرتجعات ورصيد كل حركة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير حركة صنف')), body: const ItemMovementReport()))))),
     Card(child: ListTile(leading: const Icon(Icons.settings, color: gold), title: const Text('الإعدادات والطباعة'), subtitle: const Text('بيانات الشركة وتجهيز الفواتير للطباعة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الإعدادات')), body: const AppSettings()))))),
   ]);
+}
+
+class InventoryAudit extends StatefulWidget {
+  const InventoryAudit({super.key});
+  @override State<InventoryAudit> createState() => _InventoryAuditState();
+}
+
+class _InventoryAuditState extends State<InventoryAudit> {
+  String category = 'الكل';
+  @override Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+    stream: db.collection('products').snapshots(), builder: (context, products) {
+      if (products.hasError) return const Center(child: Text('تعذر تحميل الأصناف'));
+      if (!products.hasData) return const Center(child: CircularProgressIndicator());
+      final rows = products.data!.docs.where((p) => p.data()['active'] == true).toList();
+      final categories = {'الكل', ...rows.map((p) => '${p.data()['category'] ?? 'غير مصنف'}')}.toList()..sort();
+      final selected = categories.contains(category) ? category : 'الكل';
+      return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('stock').snapshots(), builder: (context, stock) {
+        if (stock.hasError) return const Center(child: Text('تعذر تحميل المخزون'));
+        if (!stock.hasData) return const Center(child: CircularProgressIndicator());
+        final amounts = <String, int>{};
+        for (final entry in stock.data!.docs) {
+          final data = entry.data();
+          final id = '${data['productId'] ?? ''}';
+          if (id.isNotEmpty) amounts[id] = (amounts[id] ?? 0) + ((data['quantity'] as num?)?.toInt() ?? 0);
+        }
+        final filtered = rows.where((p) => selected == 'الكل' || '${p.data()['category'] ?? 'غير مصنف'}' == selected).toList()..sort((a,b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
+        return Column(children: [Padding(padding: const EdgeInsets.all(12), child: DropdownButtonFormField<String>(value: selected, decoration: const InputDecoration(labelText: 'الفئة'), items: categories.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setState(() => category = v ?? 'الكل'))),
+          Text('عدد الأصناف: ${filtered.length}'), Expanded(child: ListView(children: filtered.map((p) { final data = p.data(); return Card(child: ListTile(title: Text('${data['name']}'), subtitle: Text('الفئة: ${data['category'] ?? 'غير مصنف'}\nسعر الشراء: ${data['purchasePrice'] ?? 'غير مسجل'} ج.م • سعر البيع: ${data['price'] ?? 0} ج.م'), isThreeLine: true, trailing: Text('متوفر\n${amounts[p.id] ?? 0}', textAlign: TextAlign.center, style: const TextStyle(color: gold)))); }).toList()))) ]);
+      });
+    });
+}
+
+class ProfitReport extends StatefulWidget {
+  const ProfitReport({super.key});
+  @override State<ProfitReport> createState() => _ProfitReportState();
+}
+
+class _ProfitReportState extends State<ProfitReport> {
+  String period = 'day';
+  @override Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final start = switch (period) {
+      'week' => today.subtract(Duration(days: today.weekday - 1)),
+      'month' => DateTime(now.year, now.month, 1),
+      _ => today,
+    };
+    final end = switch (period) {
+      'week' => start.add(const Duration(days: 7)),
+      'month' => DateTime(now.year, now.month + 1, 1),
+      _ => start.add(const Duration(days: 1)),
+    };
+    return Column(children: [
+      Padding(padding: const EdgeInsets.all(12), child: SegmentedButton<String>(
+        segments: const [ButtonSegment(value: 'day', label: Text('يومي')),
+          ButtonSegment(value: 'week', label: Text('أسبوعي')),
+          ButtonSegment(value: 'month', label: Text('شهري'))],
+        selected: {period}, onSelectionChanged: (v) => setState(() => period = v.first))),
+      Text('من ${DateFormat('dd/MM/yyyy').format(start)} إلى ${DateFormat('dd/MM/yyyy').format(end.subtract(const Duration(days: 1)))}'),
+      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: db.collection('products').snapshots(),
+        builder: (context, productsSnap) {
+          if (productsSnap.hasError) return const Center(child: Text('تعذر تحميل تكلفة الأصناف'));
+          if (!productsSnap.hasData) return const Center(child: CircularProgressIndicator());
+          final products = {for (final p in productsSnap.data!.docs) p.id: p.data()};
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: db.collection('sales')
+              .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+              .where('createdAt', isLessThan: Timestamp.fromDate(end)).snapshots(),
+            builder: (context, salesSnap) {
+              if (salesSnap.hasError) return const Center(child: Text('تعذر تحميل المبيعات'));
+              if (!salesSnap.hasData) return const Center(child: CircularProgressIndicator());
+              final sales = salesSnap.data!.docs.where((d) => d.data()['status'] != 'returned').toList();
+              double revenue = 0, knownCost = 0;
+              int missingCost = 0;
+              for (final item in sales) {
+                final sale = item.data();
+                final qty = (sale['quantity'] as num?)?.toDouble() ?? 0;
+                revenue += (sale['total'] as num?)?.toDouble() ?? 0;
+                final cost = products['${sale['productId']}']?['purchasePrice'];
+                if (cost is num && cost >= 0) {
+                  knownCost += qty * cost.toDouble();
+                } else { missingCost++; }
+              }
+              return ListView(padding: const EdgeInsets.all(16), children: [
+                ListTile(title: const Text('عدد فواتير البيع'), trailing: Text('${sales.length}')),
+                ListTile(title: const Text('إجمالي المبيعات'), trailing: Text('${revenue.toStringAsFixed(2)} ج.م')),
+                ListTile(title: const Text('تكلفة الأصناف المعروفة'), trailing: Text('${knownCost.toStringAsFixed(2)} ج.م')),
+                ListTile(title: const Text('الربح الإجمالي التقديري'),
+                  trailing: Text(missingCost == 0 ? '${(revenue - knownCost).toStringAsFixed(2)} ج.م' : 'غير مكتمل',
+                    style: const TextStyle(color: gold, fontWeight: FontWeight.bold))),
+                if (missingCost > 0) Text('تكلفة الشراء غير مسجلة في $missingCost فاتورة. أضفها للأصناف أولًا.'),
+                const SizedBox(height: 16),
+                const Text('هذا تقدير حسب سعر الشراء المسجل حاليًا للصنف. لا يشمل المصروفات أو تغير تكلفة الشراء بين الفواتير.'),
+              ]);
+            },
+          );
+        },
+      )),
+    ]);
+  }
 }
 
 class Purchases extends StatelessWidget {
@@ -508,6 +639,7 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
   String selected = branches.docs.any((d) => d.id == data['branchId'])
       ? data['branchId'] as String : branches.docs.first.id;
   bool enabled = data['active'] == true;
+  bool canPrint = data['canPrint'] == true;
   await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(
     builder: (c, setDialogState) => AlertDialog(
       title: const Text('صلاحيات الموظف'),
@@ -519,13 +651,16 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
           onChanged: (v) { if (v != null) setDialogState(() => selected = v); }),
         SwitchListTile(title: const Text('تفعيل الدخول'), value: enabled,
           onChanged: (v) => setDialogState(() => enabled = v)),
+        SwitchListTile(title: const Text('السماح بطباعة الفواتير'), value: canPrint,
+          onChanged: (v) => setDialogState(() => canPrint = v)),
       ]),
       actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')),
         FilledButton(onPressed: () async {
           if (name.text.trim().isEmpty) return;
           try {
             await db.collection('users').doc(uid).update({
-              'name': name.text.trim(), 'role': 'employee', 'branchId': selected, 'active': enabled,
+              'name': name.text.trim(), 'role': 'employee', 'branchId': selected,
+              'active': enabled, 'canPrint': canPrint,
             });
             if (c.mounted) Navigator.pop(c);
           } catch (_) {
@@ -820,17 +955,79 @@ class _AppSettingsState extends State<AppSettings> {
     TextField(controller: address, decoration: const InputDecoration(labelText: 'العنوان')),
     TextField(controller: tax, decoration: const InputDecoration(labelText: 'الرقم الضريبي (اختياري)')),
     const SizedBox(height: 20), FilledButton.icon(onPressed: saving ? null : save, icon: const Icon(Icons.save), label: const Text('حفظ الإعدادات')),
+    const SizedBox(height: 12), OutlinedButton.icon(onPressed: () => printTestPage(context), icon: const Icon(Icons.print), label: const Text('اختيار الطابعة وطباعة صفحة تجربة')),
+    const Text('طابعة البلوتوث تظهر في شاشة الطباعة إذا كانت متصلة بالموبايل ولها خدمة طباعة متوافقة.'),
     const SizedBox(height: 14), const Card(child: ListTile(leading: Icon(Icons.cloud_done, color: gold), title: Text('حفظ البيانات طويل المدة'), subtitle: Text('الفواتير والحركات لا تُحذف وتظل محفوظة في قاعدة البيانات.'))),
   ]);
 }
 
+Future<void> printTestPage(BuildContext context) async {
+  try {
+    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final pdf = pw.Document();
+    pdf.addPage(pw.Page(build: (_) => pw.Center(child: pw.Text('VIB للتجارة والتوزيع - تجربة الطباعة',
+      style: pw.TextStyle(font: font, fontSize: 22)))));
+    await Printing.layoutPdf(name: 'VIB-PRINT-TEST.pdf', onLayout: (_) => pdf.save());
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تعذر فتح الطباعة: $e')));
+  }
+}
+
 Future<void> invoiceActions(BuildContext context, String type, String id, Map<String, dynamic> data, {bool canReturn = true}) async {
   final returned = data['status'] == 'returned';
+  final profile = (await db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid).get()).data();
+  if (!context.mounted) return;
+  final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
-    ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); printInvoice(context, type, id, data); }),
+    if (type == 'sales' && profile?['role'] == 'owner' && !returned) ListTile(leading: const Icon(Icons.edit_note, color: gold), title: const Text('تصحيح فاتورة البيع'), onTap: () { Navigator.pop(c); correctSaleDialog(context, id, data); }),
+    if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); printInvoice(context, type, id, data); }),
     if (type == 'sales' && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال للزبون على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
     if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
   ])));
+}
+
+Future<void> correctSaleDialog(BuildContext context, String id, Map<String, dynamic> data) async {
+  final quantity = TextEditingController(text: '${data['quantity'] ?? 1}');
+  final price = TextEditingController(text: '${data['unitPrice'] ?? 0}');
+  final reason = TextEditingController();
+  await showDialog<void>(context: context, builder: (dialog) => AlertDialog(title: const Text('تصحيح فاتورة بيع'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+    const Text('ستبقى الفاتورة الأصلية محفوظة كمرتجع، وتُنشأ فاتورة بديلة مع تعديل المخزون.'),
+    TextField(controller: quantity, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الكمية الجديدة')),
+    TextField(controller: price, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'سعر البيع الجديد')),
+    TextField(controller: reason, decoration: const InputDecoration(labelText: 'سبب التصحيح (إلزامي)')),
+  ])), actions: [TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء')), FilledButton(onPressed: () async {
+    final qty = int.tryParse(quantity.text), unit = double.tryParse(price.text);
+    if (qty == null || qty <= 0 || unit == null || !unit.isFinite || unit < 0 || reason.text.trim().isEmpty) {
+      ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content: Text('أدخل كمية وسعرًا صحيحين وسبب التصحيح'))); return;
+    }
+    final replacement = db.collection('sales').doc();
+    try {
+      await db.runTransaction((tx) async {
+        final oldRef = db.collection('sales').doc(id), old = await tx.get(oldRef);
+        if (!old.exists || old.data()?['status'] != 'completed') throw Exception('الفاتورة غير متاحة للتصحيح');
+        final original = old.data()!;
+        final productId = '${original['productId']}', branch = '${original['branchId']}';
+        final stockRef = db.collection('stock').doc('${branch}_$productId');
+        final stock = await tx.get(stockRef);
+        final product = await tx.get(db.collection('products').doc(productId));
+        final oldQty = (original['quantity'] as num).toInt();
+        final current = (stock.data()?['quantity'] as num?)?.toInt() ?? 0;
+        final balance = current + oldQty - qty;
+        if (balance < 0) throw Exception('الكمية الجديدة تتجاوز المخزون؛ صحح المخزون أو استخدم عملية بيع بموافقة المدير');
+        final cost = (product.data()?['purchasePrice'] as num?)?.toDouble();
+        if (cost != null && unit < cost) throw Exception('السعر الجديد أقل من تكلفة الشراء');
+        tx.update(oldRef, {'status': 'returned', 'returnedAt': FieldValue.serverTimestamp(), 'returnId': replacement.id});
+        tx.set(replacement, {'branchId': branch, 'employeeId': FirebaseAuth.instance.currentUser!.uid, 'customerPhone': original['customerPhone'] ?? '', 'productId': productId, 'productName': original['productName'], 'quantity': qty, 'unitPrice': unit, 'total': qty * unit, 'status': 'completed', 'createdAt': FieldValue.serverTimestamp(), 'correctsInvoiceId': id, 'correctionReason': reason.text.trim()});
+        tx.set(stockRef, {'branchId': branch, 'productId': productId, 'quantity': balance, 'lastSaleId': replacement.id}, SetOptions(merge: true));
+        for (final move in [('correction_return', oldQty, current + oldQty, id), ('correction_sale', -qty, balance, replacement.id)]) {
+          tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': original['productName'], 'branchId': branch, 'kind': move.$1, 'quantity': move.$2, 'balanceAfter': move.$3, 'referenceId': move.$4, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'reason': reason.text.trim(), 'createdAt': FieldValue.serverTimestamp()});
+        }
+      });
+      if (dialog.mounted) Navigator.pop(dialog);
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم التصحيح، رقم الفاتورة الجديدة: ${replacement.id}')));
+    } catch (e) { if (dialog.mounted) ScaffoldMessenger.of(dialog).showSnackBar(SnackBar(content: Text('تعذر التصحيح: $e'))); }
+  }, child: const Text('حفظ التصحيح'))]));
 }
 
 Future<void> sendInvoiceWhatsApp(BuildContext context, String id, Map<String, dynamic> data) async {
@@ -844,12 +1041,20 @@ Future<void> sendInvoiceWhatsApp(BuildContext context, String id, Map<String, dy
 
 Future<void> printInvoice(BuildContext context, String type, String id, Map<String, dynamic> data) async {
   try {
-    final settings = (await db.collection('settings').doc('main').get()).data() ?? <String, dynamic>{};
+    Map<String, dynamic> settings = {};
+    try {
+      settings = (await db.collection('settings').doc('main').get()).data() ?? {};
+    } catch (_) {
+      // The employee may print an authorized sale even if company settings are owner-only.
+    }
     final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final logo = pw.MemoryImage((await rootBundle.load('assets/icons/manager/mipmap-xxxhdpi/ic_launcher.png')).buffer.asUint8List());
     final pdf = pw.Document();
     final isSale = type == 'sales';
     final unit = data[isSale ? 'unitPrice' : 'unitCost'] ?? 0;
     pdf.addPage(pw.Page(pageFormat: PdfPageFormat.a4, theme: pw.ThemeData.withFont(base: font, bold: font), build: (_) => pw.Directionality(textDirection: pw.TextDirection.rtl, child: pw.Padding(padding: const pw.EdgeInsets.all(28), child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+      pw.Center(child: pw.Image(logo, width: 76, height: 76)),
+      pw.SizedBox(height: 8),
       pw.Center(child: pw.Text('${settings['companyName'] ?? 'VIB للتجارة والتوزيع'}', style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold))),
       pw.SizedBox(height: 6), pw.Center(child: pw.Text('${settings['address'] ?? ''}  ${settings['phone'] ?? ''}')),
       if ('${settings['taxNumber'] ?? ''}'.isNotEmpty) pw.Center(child: pw.Text('الرقم الضريبي: ${settings['taxNumber']}')),
