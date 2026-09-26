@@ -113,13 +113,16 @@ service cloud.firestore {
       allow create: if owner() || (employee() && request.resource.data.employeeId == request.auth.uid
         && request.resource.data.branchId == branch()
         && request.resource.data.quantity is int && request.resource.data.quantity > 0
-        && request.resource.data.keys().hasOnly(['branchId','employeeId','customerPhone','productId','productName','quantity','unitPrice','total','status','createdAt'])
+        && request.resource.data.keys().hasOnly(['branchId','employeeId','customerPhone','productId','productName','quantity','unitPrice','total','unitCost','status','createdAt'])
         && request.resource.data.status == 'completed'
         && request.resource.data.createdAt == request.time
         && getAfter(/databases/$(database)/documents/stock/$(branch() + '_' + request.resource.data.productId)).data.lastSaleId == id
         && getAfter(/databases/$(database)/documents/stock/$(branch() + '_' + request.resource.data.productId)).data.quantity == get(/databases/$(database)/documents/stock/$(branch() + '_' + request.resource.data.productId)).data.quantity - request.resource.data.quantity
         && request.resource.data.productName == get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.name
         && request.resource.data.unitPrice == get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.price
+        && ((!request.resource.data.keys().hasAny(['unitCost'])
+          && get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.get('purchasePrice', null) == null)
+          || (request.resource.data.unitCost == get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.purchasePrice))
         && request.resource.data.total == request.resource.data.quantity * request.resource.data.unitPrice);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
