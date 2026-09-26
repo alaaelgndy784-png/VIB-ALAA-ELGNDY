@@ -698,8 +698,9 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
       TextField(controller: markup, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'زيادة سعر البيع % (اختياري؛ مثل 5 أو 10)'), onChanged: (_) => update(() {})),
       if (double.tryParse(_ocrNumber(markup.text.replaceAll(',', '.'))) case final percent?)
         for (final row in lines)
-          if (row.productId != null && double.tryParse(_ocrNumber(row.cost.text.replaceAll(',', '.'))) case final cost?)
-            Text('${products.docs.firstWhere((p) => p.id == row.productId).data()['name']}: سعر البيع المقترح ${(cost * (1 + percent / 100)).toStringAsFixed(2)} ج.م'),
+          if (row.productId != null)
+            if (double.tryParse(_ocrNumber(row.cost.text.replaceAll(',', '.'))) case final cost?)
+              Text('${products.docs.firstWhere((p) => p.id == row.productId).data()['name']}: سعر البيع المقترح ${(cost * (1 + percent / 100)).toStringAsFixed(2)} ج.م'),
     ]))),
     actions: [TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')), FilledButton(onPressed: saving ? null : () async {
       final entries = <({String id, int qty, double cost})>[];
