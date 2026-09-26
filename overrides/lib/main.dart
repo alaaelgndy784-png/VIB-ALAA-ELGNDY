@@ -229,21 +229,41 @@ class Home extends StatefulWidget {
   State<Home> createState() => _HomeState();
 }
 class _HomeState extends State<Home> {
-  int page = 0;
+  int page = -1;
   @override
   Widget build(BuildContext context) {
     final owner = widget.role == 'owner';
     final labels = owner ? ['المنتجات', 'المبيعات', 'المشتريات', 'الحسابات', 'الإدارة'] : ['المنتجات', 'مبيعاتي'];
+    const sectionIcons = [Icons.inventory_2_outlined, Icons.receipt_long_outlined,
+      Icons.shopping_cart_checkout, Icons.account_balance_wallet_outlined, Icons.admin_panel_settings_outlined];
     return Scaffold(
-      appBar: AppBar(title: Text('VIB | ${widget.name}'), actions: [IconButton(tooltip: 'خروج', onPressed: () => FirebaseAuth.instance.signOut(), icon: const Icon(Icons.logout))]),
+      appBar: AppBar(title: Text('VIB | ${widget.name}'), actions: [
+        if (page >= 0) IconButton(tooltip: 'الرئيسية', onPressed: () => setState(() => page = -1), icon: const Icon(Icons.home_outlined)),
+        IconButton(tooltip: 'خروج', onPressed: () => FirebaseAuth.instance.signOut(), icon: const Icon(Icons.logout)),
+      ]),
       body: switch(page) {
+        -1 => GridView.builder(
+          padding: const EdgeInsets.all(18),
+          gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+            maxCrossAxisExtent: 180, mainAxisSpacing: 14, crossAxisSpacing: 14, childAspectRatio: 1),
+          itemCount: labels.length,
+          itemBuilder: (context, i) => Material(
+            color: const Color(0xFF1D1D1D),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: const BorderSide(color: gold)),
+            child: InkWell(borderRadius: BorderRadius.circular(12), onTap: () => setState(() => page = i),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                Icon(sectionIcons[i], color: gold, size: 44), const SizedBox(height: 12),
+                Text(labels[i], style: const TextStyle(color: gold, fontSize: 18, fontWeight: FontWeight.bold)),
+              ])),
+          ),
+        ),
         0 => Products(owner: owner, uid: widget.uid, branchId: widget.branchId),
         1 => Sales(owner: owner, branchId: widget.branchId),
         2 => const Purchases(),
         3 => const Accounts(),
         _ => const Management(),
       },
-      bottomNavigationBar: NavigationBar(selectedIndex: page, onDestinationSelected: (i) => setState(() => page = i), destinations: [
+      bottomNavigationBar: page < 0 ? null : NavigationBar(selectedIndex: page, onDestinationSelected: (i) => setState(() => page = i), destinations: [
         const NavigationDestination(icon: Icon(Icons.inventory_2_outlined), label: 'المنتجات'),
         NavigationDestination(icon: const Icon(Icons.receipt_long_outlined), label: labels[1]),
         if (owner) const NavigationDestination(icon: Icon(Icons.shopping_cart_checkout), label: 'المشتريات'),
