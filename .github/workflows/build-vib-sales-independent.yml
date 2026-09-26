@@ -28,7 +28,7 @@ jobs:
           cp overrides/lib/main.dart VIB-SALES-INDEPENDENT/lib/main.dart
           cp overrides/pubspec.yaml VIB-SALES-INDEPENDENT/pubspec.yaml
           mkdir -p VIB-SALES-INDEPENDENT/assets/tessdata
-          printf '%s\n' '{"files":["ara.traineddata","eng.traineddata"]}' > VIB-SALES-INDEPENDENT/assets/tessdata/tessdata_config.json
+          printf '%s\n' '{"files":["ara.traineddata","eng.traineddata"]}' > VIB-SALES-INDEPENDENT/assets/tessdata_config.json
           curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/ara.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/ara.traineddata
           curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/eng.traineddata
           mkdir -p VIB-SALES-INDEPENDENT/assets/fonts
