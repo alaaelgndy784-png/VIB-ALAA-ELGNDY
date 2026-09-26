@@ -666,7 +666,7 @@ Future<void> accountDialog(BuildContext context, String collection, String id, M
           await db.runTransaction((tx) async {
             final ref = db.collection(collection).doc(id);
             final snapshot = await tx.get(ref);
-            final cashRef = db.collection('cash').doc('main');
+            final cashRef = db.collection('settings').doc('cash');
             final cash = await tx.get(cashRef);
             final balance = (snapshot.data()?['balance'] as num?)?.toDouble();
             if (balance == null || paid > balance) throw Exception('المبلغ أكبر من الرصيد الحالي');
@@ -683,7 +683,8 @@ Future<void> accountDialog(BuildContext context, String collection, String id, M
             });
             tx.set(cashRef, {'balance': beforeCash + cashDelta,
               'updatedAt': FieldValue.serverTimestamp()});
-            tx.set(db.collection('cashMovements').doc(), {
+            tx.set(db.collection('accountMovements').doc(), {
+              'accountType': 'cash',
               'kind': isSupplier ? 'supplierPayment' : 'customerCollection',
               'accountId': id, 'accountName': snapshot.data()?['name'],
               'amount': paid, 'delta': cashDelta,
@@ -706,7 +707,7 @@ class CashBox extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Column(children: [
     StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-      stream: db.collection('cash').doc('main').snapshots(),
+      stream: db.collection('settings').doc('cash').snapshots(),
       builder: (context, snap) => Padding(
         padding: const EdgeInsets.all(16),
         child: Text('رصيد الصندوق: ${snap.data?.data()?['balance'] ?? 0} ج.م',
@@ -720,7 +721,7 @@ class CashBox extends StatelessWidget {
         icon: const Icon(Icons.remove), label: const Text('خصم من الصندوق')),
     ]),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: db.collection('cashMovements').snapshots(),
+      stream: db.collection('accountMovements').where('accountType', isEqualTo: 'cash').snapshots(),
       builder: (context, snap) {
         if (snap.hasError) return const Center(child: Text('تعذر عرض حركة الصندوق'));
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
@@ -762,13 +763,14 @@ Future<void> cashDialog(BuildContext context, bool deposit) async {
         }
         try {
           await db.runTransaction((tx) async {
-            final ref = db.collection('cash').doc('main');
+            final ref = db.collection('settings').doc('cash');
             final snapshot = await tx.get(ref);
             final before = (snapshot.data()?['balance'] as num?)?.toDouble() ?? 0;
             final delta = deposit ? value : -value;
             if (before + delta < 0) throw Exception('رصيد الصندوق لا يكفي');
             tx.set(ref, {'balance': before + delta, 'updatedAt': FieldValue.serverTimestamp()});
-            tx.set(db.collection('cashMovements').doc(), {
+            tx.set(db.collection('accountMovements').doc(), {
+              'accountType': 'cash',
               'kind': deposit ? 'deposit' : 'withdrawal', 'amount': value,
               'delta': delta, 'balanceBefore': before, 'balanceAfter': before + delta,
               'reason': reason.text.trim(),
