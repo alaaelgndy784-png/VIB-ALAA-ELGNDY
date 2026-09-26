@@ -974,14 +974,16 @@ class AppSettings extends StatefulWidget {
 
 class _AppSettingsState extends State<AppSettings> {
   final company = TextEditingController(text: 'VIB للتجارة والتوزيع');
-  final phone = TextEditingController(), whatsapp = TextEditingController(), address = TextEditingController(), tax = TextEditingController();
+  final phone = TextEditingController(), whatsapp = TextEditingController(), address = TextEditingController();
+  String paper = 'a4';
   bool loading = true, saving = false;
   @override void initState() { super.initState(); load(); }
   Future<void> load() async {
     final d = (await db.collection('settings').doc('main').get()).data();
     if (d != null) {
       company.text = '${d['companyName'] ?? company.text}'; phone.text = '${d['phone'] ?? ''}';
-      whatsapp.text = '${d['whatsapp'] ?? ''}'; address.text = '${d['address'] ?? ''}'; tax.text = '${d['taxNumber'] ?? ''}';
+      whatsapp.text = '${d['whatsapp'] ?? ''}'; address.text = '${d['address'] ?? ''}';
+      paper = ['a4', '58', '80'].contains(d['paperSize']) ? '${d['paperSize']}' : 'a4';
     }
     if (mounted) setState(() => loading = false);
   }
@@ -989,7 +991,7 @@ class _AppSettingsState extends State<AppSettings> {
     if (company.text.trim().isEmpty) return;
     setState(() => saving = true);
     try {
-      await db.collection('settings').doc('main').set({'companyName': company.text.trim(), 'phone': phone.text.trim(), 'whatsapp': whatsapp.text.trim(), 'address': address.text.trim(), 'taxNumber': tax.text.trim(), 'updatedAt': FieldValue.serverTimestamp(), 'updatedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
+      await db.collection('settings').doc('main').set({'companyName': company.text.trim(), 'phone': phone.text.trim(), 'whatsapp': whatsapp.text.trim(), 'address': address.text.trim(), 'paperSize': paper, 'updatedAt': FieldValue.serverTimestamp(), 'updatedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ الإعدادات')));
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الحفظ: $e'))); }
     finally { if (mounted) setState(() => saving = false); }
@@ -999,20 +1001,27 @@ class _AppSettingsState extends State<AppSettings> {
     TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم الهاتف')),
     TextField(controller: whatsapp, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم واتساب')),
     TextField(controller: address, decoration: const InputDecoration(labelText: 'العنوان')),
-    TextField(controller: tax, decoration: const InputDecoration(labelText: 'الرقم الضريبي (اختياري)')),
+    const SizedBox(height: 12), const Text('إعدادات الطباعة', style: TextStyle(color: gold, fontSize: 20)),
+    DropdownButtonFormField<String>(value: paper, decoration: const InputDecoration(labelText: 'مقاس ورق الفاتورة'), items: const [DropdownMenuItem(value: 'a4', child: Text('A4 عادي')), DropdownMenuItem(value: '58', child: Text('إيصال حراري 58 مم')), DropdownMenuItem(value: '80', child: Text('إيصال حراري 80 مم'))], onChanged: (v) => setState(() => paper = v ?? 'a4')),
     const SizedBox(height: 20), FilledButton.icon(onPressed: saving ? null : save, icon: const Icon(Icons.save), label: const Text('حفظ الإعدادات')),
-    const SizedBox(height: 12), OutlinedButton.icon(onPressed: () => printTestPage(context), icon: const Icon(Icons.print), label: const Text('اختيار الطابعة وطباعة صفحة تجربة')),
+    const SizedBox(height: 12), OutlinedButton.icon(onPressed: () => printTestPage(context, paper), icon: const Icon(Icons.print), label: const Text('اختيار الطابعة وطباعة صفحة تجربة')),
     const Text('طابعة البلوتوث تظهر في شاشة الطباعة إذا كانت متصلة بالموبايل ولها خدمة طباعة متوافقة.'),
     const SizedBox(height: 14), const Card(child: ListTile(leading: Icon(Icons.cloud_done, color: gold), title: Text('حفظ البيانات طويل المدة'), subtitle: Text('الفواتير والحركات لا تُحذف وتظل محفوظة في قاعدة البيانات.'))),
   ]);
 }
 
-Future<void> printTestPage(BuildContext context) async {
+PdfPageFormat invoicePageFormat(String paper) => switch (paper) {
+  '58' => PdfPageFormat(58 * PdfPageFormat.mm, 180 * PdfPageFormat.mm, marginAll: 3 * PdfPageFormat.mm),
+  '80' => PdfPageFormat(80 * PdfPageFormat.mm, 180 * PdfPageFormat.mm, marginAll: 4 * PdfPageFormat.mm),
+  _ => PdfPageFormat.a4,
+};
+
+Future<void> printTestPage(BuildContext context, String paper) async {
   try {
     final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
     final pdf = pw.Document();
-    pdf.addPage(pw.Page(build: (_) => pw.Center(child: pw.Text('VIB للتجارة والتوزيع - تجربة الطباعة',
-      style: pw.TextStyle(font: font, fontSize: 22)))));
+    pdf.addPage(pw.Page(pageFormat: invoicePageFormat(paper), build: (_) => pw.Center(child: pw.Text('VIB للتجارة والتوزيع\nتجربة الطباعة\n${paper == 'a4' ? 'A4' : '$paper مم'}', textAlign: pw.TextAlign.center,
+      style: pw.TextStyle(font: font, fontSize: paper == 'a4' ? 22 : 11)))));
     await Printing.layoutPdf(name: 'VIB-PRINT-TEST.pdf', onLayout: (_) => pdf.save());
   } catch (e) {
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
@@ -1027,7 +1036,7 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
     if (type == 'sales' && profile?['role'] == 'owner' && !returned) ListTile(leading: const Icon(Icons.edit_note, color: gold), title: const Text('تصحيح فاتورة البيع'), onTap: () { Navigator.pop(c); correctSaleDialog(context, id, data); }),
-    if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); printInvoice(context, type, id, data); }),
+    if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
     if (type == 'sales' && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال للزبون على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
     if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
   ])));
@@ -1085,7 +1094,15 @@ Future<void> sendInvoiceWhatsApp(BuildContext context, String id, Map<String, dy
   if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر فتح واتساب')));
 }
 
-Future<void> printInvoice(BuildContext context, String type, String id, Map<String, dynamic> data) async {
+Future<void> selectInvoicePaper(BuildContext context, String type, String id, Map<String, dynamic> data) async {
+  final selected = await showModalBottomSheet<String>(context: context, builder: (sheet) => SafeArea(child: Wrap(children: [
+    const ListTile(title: Text('مقاس ورق الفاتورة')),
+    for (final choice in [('a4', 'ورق A4'), ('58', 'إيصال 58 مم'), ('80', 'إيصال 80 مم')]) ListTile(title: Text(choice.$2), onTap: () => Navigator.pop(sheet, choice.$1)),
+  ])));
+  if (selected != null && context.mounted) await printInvoice(context, type, id, data, paperChoice: selected);
+}
+
+Future<void> printInvoice(BuildContext context, String type, String id, Map<String, dynamic> data, {String? paperChoice}) async {
   try {
     Map<String, dynamic> settings = {};
     try {
@@ -1098,19 +1115,20 @@ Future<void> printInvoice(BuildContext context, String type, String id, Map<Stri
     final pdf = pw.Document();
     final isSale = type == 'sales';
     final unit = data[isSale ? 'unitPrice' : 'unitCost'] ?? 0;
-    pdf.addPage(pw.Page(pageFormat: PdfPageFormat.a4, theme: pw.ThemeData.withFont(base: font, bold: font), build: (_) => pw.Directionality(textDirection: pw.TextDirection.rtl, child: pw.Padding(padding: const pw.EdgeInsets.all(28), child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-      pw.Center(child: pw.Image(logo, width: 76, height: 76)),
+    final paper = paperChoice ?? (['a4', '58', '80'].contains(settings['paperSize']) ? '${settings['paperSize']}' : 'a4');
+    final thermal = paper != 'a4';
+    pdf.addPage(pw.Page(pageFormat: invoicePageFormat(paper), theme: pw.ThemeData.withFont(base: font, bold: font), build: (_) => pw.Directionality(textDirection: pw.TextDirection.rtl, child: pw.Padding(padding: pw.EdgeInsets.all(thermal ? 2 : 28), child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+      pw.Center(child: pw.Image(logo, width: thermal ? 34 : 76, height: thermal ? 34 : 76)),
       pw.SizedBox(height: 8),
-      pw.Center(child: pw.Text('${settings['companyName'] ?? 'VIB للتجارة والتوزيع'}', style: pw.TextStyle(fontSize: 24, fontWeight: pw.FontWeight.bold))),
+      pw.Center(child: pw.Text('${settings['companyName'] ?? 'VIB للتجارة والتوزيع'}', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: thermal ? 11 : 24, fontWeight: pw.FontWeight.bold))),
       pw.SizedBox(height: 6), pw.Center(child: pw.Text('${settings['address'] ?? ''}  ${settings['phone'] ?? ''}')),
-      if ('${settings['taxNumber'] ?? ''}'.isNotEmpty) pw.Center(child: pw.Text('الرقم الضريبي: ${settings['taxNumber']}')),
-      pw.Divider(), pw.Text(isSale ? 'فاتورة مبيعات' : 'فاتورة مشتريات', style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
-      pw.Text('رقم الفاتورة: ${data['invoiceNumber']?.toString().isNotEmpty == true ? data['invoiceNumber'] : id}'), pw.Text('التاريخ: ${formatDate(data['createdAt'])}'),
+      pw.Divider(), pw.Text(isSale ? 'فاتورة مبيعات' : 'فاتورة مشتريات', style: pw.TextStyle(fontSize: thermal ? 12 : 20, fontWeight: pw.FontWeight.bold)),
+      pw.Text('رقم الفاتورة: ${data['invoiceNumber']?.toString().isNotEmpty == true ? data['invoiceNumber'] : id}', style: pw.TextStyle(fontSize: thermal ? 8 : 12)), pw.Text('التاريخ: ${formatDate(data['createdAt'])}', style: pw.TextStyle(fontSize: thermal ? 9 : 12)),
       if (!isSale) pw.Text('المورد: ${data['supplierName'] ?? ''}'), pw.SizedBox(height: 18),
-      pw.Table(border: pw.TableBorder.all(), children: [
+      if (thermal) pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [pw.Text('الصنف: ${data['productName'] ?? ''}', style: const pw.TextStyle(fontSize: 9)), pw.Text('الكمية: ${data['quantity'] ?? 0} × $unit ج.م', style: const pw.TextStyle(fontSize: 9)), pw.Divider()]) else pw.Table(border: pw.TableBorder.all(), children: [
         pw.TableRow(children: ['الإجمالي', 'سعر الوحدة', 'الكمية', 'الصنف'].map((v) => pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text(v, textAlign: pw.TextAlign.center, style: pw.TextStyle(fontWeight: pw.FontWeight.bold)))).toList()),
         pw.TableRow(children: ['${data['total'] ?? 0}', '$unit', '${data['quantity'] ?? 0}', '${data['productName'] ?? ''}'].map((v) => pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text(v, textAlign: pw.TextAlign.center))).toList()),
-      ]), pw.SizedBox(height: 16), pw.Text('الإجمالي: ${data['total'] ?? 0} ج.م', style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold)),
+      ]), pw.SizedBox(height: thermal ? 6 : 16), pw.Text('الإجمالي: ${data['total'] ?? 0} ج.م', style: pw.TextStyle(fontSize: thermal ? 11 : 18, fontWeight: pw.FontWeight.bold)),
       if (!isSale) pw.Text('المدفوع: ${data['paid'] ?? 0} ج.م     المتبقي: ${data['due'] ?? 0} ج.م'),
       if (data['status'] == 'returned') pw.Text('فاتورة مرتجعة', style: const pw.TextStyle(color: PdfColors.red, fontSize: 18)),
     ])))));
