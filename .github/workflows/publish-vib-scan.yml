@@ -1,0 +1,26 @@
+name: Publish VIB scanned purchase APKs
+on:
+  workflow_dispatch:
+permissions:
+  actions: read
+  contents: write
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download completed build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download 36242205077 --repo "${{ github.repository }}" --name VIB-SALES-MANAGER-APK --dir manager
+          gh run download 36242205077 --repo "${{ github.repository }}" --name VIB-SALES-STAFF-APK --dir staff
+          test -s manager/VIB-SALES-MANAGER.apk
+          test -s staff/VIB-SALES-STAFF.apk
+          unzip -t manager/VIB-SALES-MANAGER.apk | tail -n 1
+          unzip -t staff/VIB-SALES-STAFF.apk | tail -n 1
+          sha256sum manager/VIB-SALES-MANAGER.apk staff/VIB-SALES-STAFF.apk
+      - name: Publish APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create vib-sales-scan-20260926             manager/VIB-SALES-MANAGER.apk#VIB-SALES-MANAGER-SCAN.apk             staff/VIB-SALES-STAFF.apk#VIB-SALES-STAFF-SCAN.apk             --repo "${{ github.repository }}"             --target "${{ github.sha }}"             --title "VIB Sales - تصوير المشتريات والأرباح"             --notes "نسختا المدير والموظف لأندرويد 64 بت: تصوير المشتريات، مراجعة الأصناف والمورد، نسبة زيادة سعر البيع، الكمية بجانب اسم المنتج، وإظهار الربح التقديري."             --latest
