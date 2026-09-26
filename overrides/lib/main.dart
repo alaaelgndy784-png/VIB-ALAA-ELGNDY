@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -341,7 +342,7 @@ Future<void> saleDialog(BuildContext context, String productId, Map<String, dyna
           try {
             final saved = await saleRef.get();
             if (context.mounted && saved.data() != null) {
-              await invoiceActions(context, 'sales', saleRef.id, saved.data()!, canReturn: false);
+              await exportInvoicePdf(context, 'sales', saleRef.id, saved.data()!);
             }
           } catch (_) {
             if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
@@ -1035,6 +1036,7 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
   if (!context.mounted) return;
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
+    ListTile(leading: const Icon(Icons.picture_as_pdf, color: gold), title: const Text('حفظ أو مشاركة الفاتورة PDF'), onTap: () { Navigator.pop(c); exportInvoicePdf(context, type, id, data); }),
     if (type == 'sales' && profile?['role'] == 'owner' && !returned) ListTile(leading: const Icon(Icons.edit_note, color: gold), title: const Text('تصحيح فاتورة البيع'), onTap: () { Navigator.pop(c); correctSaleDialog(context, id, data); }),
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
     if (type == 'sales' && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال للزبون على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
@@ -1102,8 +1104,7 @@ Future<void> selectInvoicePaper(BuildContext context, String type, String id, Ma
   if (selected != null && context.mounted) await printInvoice(context, type, id, data, paperChoice: selected);
 }
 
-Future<void> printInvoice(BuildContext context, String type, String id, Map<String, dynamic> data, {String? paperChoice}) async {
-  try {
+Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> data, {String? paperChoice}) async {
     Map<String, dynamic> settings = {};
     try {
       settings = (await db.collection('settings').doc('main').get()).data() ?? {};
@@ -1132,7 +1133,22 @@ Future<void> printInvoice(BuildContext context, String type, String id, Map<Stri
       if (!isSale) pw.Text('المدفوع: ${data['paid'] ?? 0} ج.م     المتبقي: ${data['due'] ?? 0} ج.م'),
       if (data['status'] == 'returned') pw.Text('فاتورة مرتجعة', style: const pw.TextStyle(color: PdfColors.red, fontSize: 18)),
     ])))));
-    await Printing.layoutPdf(name: '${isSale ? 'VIB-SALE' : 'VIB-PURCHASE'}-$id.pdf', onLayout: (_) => pdf.save());
+    return pdf.save();
+}
+
+Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<String, dynamic> data) async {
+  try {
+    final bytes = await createInvoicePdf(type, id, data, paperChoice: 'a4');
+    await Printing.sharePdf(bytes: bytes, filename: '${type == 'sales' ? 'VIB-SALE' : 'VIB-PURCHASE'}-$id.pdf');
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر إنشاء PDF: $e')));
+  }
+}
+
+Future<void> printInvoice(BuildContext context, String type, String id, Map<String, dynamic> data, {String? paperChoice}) async {
+  try {
+    final bytes = await createInvoicePdf(type, id, data, paperChoice: paperChoice);
+    await Printing.layoutPdf(name: '${type == 'sales' ? 'VIB-SALE' : 'VIB-PURCHASE'}-$id.pdf', onLayout: (_) async => bytes);
     await db.collection(type).doc(id).set({'printedAt': FieldValue.serverTimestamp(), 'printedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
   } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e'))); }
 }
