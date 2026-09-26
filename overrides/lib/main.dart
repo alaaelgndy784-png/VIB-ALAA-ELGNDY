@@ -733,14 +733,18 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
           final before = (supplierSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
           final due = total - payment;
           final actor = FirebaseAuth.instance.currentUser!.uid;
+          var paymentRemaining = payment;
           tx.update(supplierRef, {'balance': before + due, 'updatedAt': FieldValue.serverTimestamp()});
           for (final e in entries) {
             final p = products.docs.firstWhere((d) => d.id == e.id).data();
             final old = (stocks[e.id]?.data()?['quantity'] as num?)?.toInt() ?? 0;
             final ref = db.collection('purchases').doc();
+            final lineTotal = e.qty * e.cost;
+            final linePaid = paymentRemaining < lineTotal ? paymentRemaining : lineTotal;
+            paymentRemaining -= linePaid;
             tx.set(db.collection('stock').doc('main_${e.id}'), {'branchId': 'main', 'productId': e.id, 'quantity': old + e.qty}, SetOptions(merge: true));
             tx.update(db.collection('products').doc(e.id), {'purchasePrice': e.cost, if (increase != null) 'price': double.parse((e.cost * (1 + increase / 100)).toStringAsFixed(2)), 'updatedAt': FieldValue.serverTimestamp()});
-            tx.set(ref, {'invoiceNumber': invoice.text.trim(), 'scanGroupId': group, 'source': 'camera', 'supplierId': supplierId, 'supplierName': supplier['name'], 'productId': e.id, 'productName': p['name'], 'quantity': e.qty, 'unitCost': e.cost, 'total': e.qty * e.cost, 'paid': 0, 'due': e.qty * e.cost, 'status': 'completed', 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+            tx.set(ref, {'invoiceNumber': invoice.text.trim(), 'scanGroupId': group, 'source': 'camera', 'supplierId': supplierId, 'supplierName': supplier['name'], 'productId': e.id, 'productName': p['name'], 'quantity': e.qty, 'unitCost': e.cost, 'total': lineTotal, 'paid': linePaid, 'due': lineTotal - linePaid, 'status': 'completed', 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
             tx.set(db.collection('stockMovements').doc(), {'productId': e.id, 'productName': p['name'], 'branchId': 'main', 'kind': 'purchase', 'quantity': e.qty, 'balanceAfter': old + e.qty, 'referenceId': ref.id, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
           }
           tx.set(db.collection('accountMovements').doc(), {'accountType': 'suppliers', 'accountId': supplierId, 'accountName': supplier['name'], 'kind': 'purchase', 'amount': due, 'balanceBefore': before, 'balanceAfter': before + due, 'referenceId': group, 'paid': payment, 'createdAt': FieldValue.serverTimestamp(), 'actorId': actor});
