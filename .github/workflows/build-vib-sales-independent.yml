@@ -26,8 +26,6 @@ jobs:
         run: |
           mkdir VIB-SALES-INDEPENDENT
           unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d VIB-SALES-INDEPENDENT
-          cp overrides/lib/main.dart VIB-SALES-INDEPENDENT/lib/main.dart
-          cp overrides/pubspec.yaml VIB-SALES-INDEPENDENT/pubspec.yaml
           mkdir -p VIB-SALES-INDEPENDENT/assets/tessdata
           printf '%s\n' '{"files":["ara.traineddata","eng.traineddata"]}' > VIB-SALES-INDEPENDENT/assets/tessdata_config.json
           curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/ara.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/ara.traineddata
@@ -50,7 +48,6 @@ jobs:
           sed -i 's/import io.flutter.embedding.android.FlutterActivity/import io.flutter.embedding.android.FlutterFragmentActivity/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
           sed -i 's/FlutterActivity()/FlutterFragmentActivity()/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
           sed -i '/<manifest/a\    <uses-permission android:name="android.permission.USE_BIOMETRIC" />' android/app/src/main/AndroidManifest.xml
-          perl -0pi -e "s/'role':\s*'pending',\s*'active':\s*false/'role': 'owner', 'active': true/g" lib/main.dart
           cp -r assets/icons/manager/mipmap-* android/app/src/main/res/
           cp firebase/google-services.json android/app/google-services.json
           flutter pub get
@@ -68,7 +65,6 @@ jobs:
           sed -i 's/android:label="VIB MANAGER SCAN"/android:label="VIB STAFF SCAN"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/applicationId = "com.alaa.vibsales.managerscan"/applicationId = "com.alaa.vibsales.staffscan"/' android/app/build.gradle.kts
           grep -q 'applicationId = "com.alaa.vibsales.staffscan"' android/app/build.gradle.kts
-          perl -0pi -e "s/'role':\s*'owner',\s*'active':\s*true/'role': 'pending', 'active': false/g" lib/main.dart
           cp -r assets/icons/staff/mipmap-* android/app/src/main/res/
           flutter clean
           flutter pub get
