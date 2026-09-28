@@ -30,6 +30,10 @@ service cloud.firestore {
       allow read: if active();
       allow write: if owner();
     }
+    match /vehicles/{id} {
+      allow read, create, update: if owner();
+      allow delete: if false;
+    }
     match /stock/{id} {
       allow read: if owner() || (employee() && resource.data.branchId == branch());
       allow create, update: if owner() && request.resource.data.keys().hasOnly(['branchId', 'productId', 'quantity', 'lastSaleId']) && whole(request.resource.data.quantity) && id == request.resource.data.branchId + '_' + request.resource.data.productId;
@@ -108,18 +112,50 @@ service cloud.firestore {
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
       allow delete: if false;
     }
+    match /invoiceHeaders/{id} {
+      allow read: if owner() || (employee() && resource.data.type == 'sales'
+        && resource.data.branchId == branch());
+      allow create: if owner() || (employee()
+        && request.resource.data.keys().hasOnly(['type', 'branchId', 'actorId',
+          'customerId', 'customerName', 'customerPhone', 'items', 'total',
+          'paid', 'due', 'paymentStatus', 'status', 'createdAt'])
+        && request.resource.data.type == 'sales'
+        && request.resource.data.branchId == branch()
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.customerId == ''
+        && request.resource.data.total is number
+        && request.resource.data.total >= 0
+        && request.resource.data.paid == request.resource.data.total
+        && request.resource.data.due == 0
+        && request.resource.data.paymentStatus == 'مدفوع'
+        && request.resource.data.status == 'completed'
+        && request.resource.data.createdAt == request.time);
+      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['status', 'returnedAt', 'returnId', 'printedAt', 'printedBy']);
+      allow update: if employee() && resource.data.type == 'sales'
+        && resource.data.branchId == branch()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy'])
+        && request.resource.data.printedBy == request.auth.uid;
+      allow delete: if false;
+    }
     match /sales/{id} {
       allow read: if owner() || (employee() && resource.data.branchId == branch());
       allow create: if owner() || (employee() && request.resource.data.employeeId == request.auth.uid
         && request.resource.data.branchId == branch()
         && request.resource.data.quantity is int && request.resource.data.quantity > 0
-        && request.resource.data.keys().hasOnly(['branchId','employeeId','customerPhone','productId','productName','quantity','unitPrice','total','status','createdAt'])
+        && request.resource.data.keys().hasOnly(['invoiceId','branchId','employeeId','customerPhone','productId','productName','quantity','unitPrice','total','unitCost','status','createdAt'])
+        && (!request.resource.data.keys().hasAny(['invoiceId'])
+          || (getAfter(/databases/$(database)/documents/invoiceHeaders/$(request.resource.data.invoiceId)).data.actorId == request.auth.uid
+            && getAfter(/databases/$(database)/documents/invoiceHeaders/$(request.resource.data.invoiceId)).data.branchId == branch()))
         && request.resource.data.status == 'completed'
         && request.resource.data.createdAt == request.time
         && getAfter(/databases/$(database)/documents/stock/$(branch() + '_' + request.resource.data.productId)).data.lastSaleId == id
         && getAfter(/databases/$(database)/documents/stock/$(branch() + '_' + request.resource.data.productId)).data.quantity == get(/databases/$(database)/documents/stock/$(branch() + '_' + request.resource.data.productId)).data.quantity - request.resource.data.quantity
         && request.resource.data.productName == get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.name
         && request.resource.data.unitPrice == get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.price
+        && ((!request.resource.data.keys().hasAny(['unitCost'])
+          && get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.get('purchasePrice', null) == null)
+          || (request.resource.data.unitCost == get(/databases/$(database)/documents/products/$(request.resource.data.productId)).data.purchasePrice))
         && request.resource.data.total == request.resource.data.quantity * request.resource.data.unitPrice);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
