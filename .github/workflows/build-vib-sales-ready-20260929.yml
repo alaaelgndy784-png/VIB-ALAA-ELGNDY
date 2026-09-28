@@ -1,0 +1,86 @@
+name: Build VIB Sales Ready 2026-09-29
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'VIB-SALES-INDEPENDENT-SOURCE-2.zip'
+      - '.github/workflows/build-vib-sales-ready-20260929.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          channel: stable
+          cache: true
+
+      - name: Extract fixed VIB Sales project
+        run: |
+          rm -rf VIB-SALES-INDEPENDENT
+          mkdir VIB-SALES-INDEPENDENT
+          unzip -q VIB-SALES-INDEPENDENT-SOURCE-2.zip -d VIB-SALES-INDEPENDENT
+          mkdir -p VIB-SALES-INDEPENDENT/assets/tessdata
+          printf '%s\n' '{"files":["ara.traineddata","eng.traineddata"]}' > VIB-SALES-INDEPENDENT/assets/tessdata_config.json
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/ara.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/ara.traineddata
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/eng.traineddata
+          mkdir -p VIB-SALES-INDEPENDENT/assets/fonts
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf VIB-SALES-INDEPENDENT/assets/fonts/DejaVuSans.ttf
+
+      - name: Create Android platform
+        working-directory: VIB-SALES-INDEPENDENT
+        run: flutter create --platforms=android --org com.alaa.vibsales --project-name manager .
+
+      - name: Prepare manager app
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          printf '%s\n' 'android.newDsl=false' 'android.builtInKotlin=false' >> android/gradle.properties
+          sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
+          sed -i 's/android:label="manager"/android:label="VIB MANAGER READY 29"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/applicationId = "com.alaa.vibsales.manager"/applicationId = "com.alaa.vibsales.managerready20260929"/' android/app/build.gradle.kts
+          grep -q 'applicationId = "com.alaa.vibsales.managerready20260929"' android/app/build.gradle.kts
+          sed -i 's/import io.flutter.embedding.android.FlutterActivity/import io.flutter.embedding.android.FlutterFragmentActivity/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
+          sed -i 's/FlutterActivity()/FlutterFragmentActivity()/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
+          sed -i '/<manifest/a\    <uses-permission android:name="android.permission.USE_BIOMETRIC" />' android/app/src/main/AndroidManifest.xml
+          cp -r assets/icons/manager/mipmap-* android/app/src/main/res/
+          cp firebase/google-services.json android/app/google-services.json
+          flutter pub get
+
+      - name: Build manager APK
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          flutter build apk --release --split-per-abi
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER-READY.apk
+
+      - name: Build staff APK separately
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          sed -i 's/android:label="VIB MANAGER READY 29"/android:label="VIB STAFF READY 29"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/applicationId = "com.alaa.vibsales.managerready20260929"/applicationId = "com.alaa.vibsales.staffready20260929"/' android/app/build.gradle.kts
+          grep -q 'applicationId = "com.alaa.vibsales.staffready20260929"' android/app/build.gradle.kts
+          cp -r assets/icons/staff/mipmap-* android/app/src/main/res/
+          flutter clean
+          flutter pub get
+          flutter build apk --release --split-per-abi
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF-READY.apk
+
+      - name: Upload manager APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-READY-APK
+          path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-MANAGER-READY.apk
+          if-no-files-found: error
+
+      - name: Upload staff APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-SALES-STAFF-READY-APK
+          path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-STAFF-READY.apk
+          if-no-files-found: error
