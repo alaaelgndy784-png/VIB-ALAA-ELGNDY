@@ -6,17 +6,59 @@
           ])),
         const SizedBox(height: 14), _paymentCard(), const SizedBox(height: 16),
         Row(children: [
-          Expanded(child: OutlinedButton.icon(onPressed: _sharePdf,
-            icon: const Icon(Icons.picture_as_pdf), label: const Text('حفظ كـ PDF'))),
+          Expanded(child: SizedBox(height: 52, child: OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            onPressed: _sharePdf,
+            child: const FittedBox(fit: BoxFit.scaleDown, child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.picture_as_pdf, size: 18),
+                SizedBox(width: 5),
+                Text('حفظ كـ PDF', maxLines: 1, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              ],
+            )),
+          ))),
           if (widget.isSale) ...[
-            const SizedBox(width: 10),
-            Expanded(child: FilledButton.icon(onPressed: _whatsApp,
-              icon: const Icon(Icons.chat), label: const Text('إرسال واتساب'))),
+            const SizedBox(width: 8),
+            Expanded(child: SizedBox(height: 52, child: FilledButton(
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              onPressed: _whatsApp,
+              child: const FittedBox(fit: BoxFit.scaleDown, child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.chat, size: 18),
+                  SizedBox(width: 5),
+                  Text('إرسال واتساب', maxLines: 1, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                ],
+              )),
+            ))),
           ],
-          const SizedBox(width: 10),
-          Expanded(child: FilledButton.icon(onPressed: savedRef == null && !saving ? _save : null,
-            icon: Icon(savedRef == null ? Icons.save : Icons.check_circle),
-            label: Text(saving ? 'جاري الحفظ...' : savedRef == null ? 'حفظ الفاتورة' : 'تم الحفظ'))),
+          const SizedBox(width: 8),
+          Expanded(child: SizedBox(height: 52, child: FilledButton(
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            onPressed: savedRef == null && !saving ? _save : null,
+            child: FittedBox(fit: BoxFit.scaleDown, child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(savedRef == null ? Icons.save : Icons.check_circle, size: 18),
+                const SizedBox(width: 5),
+                Text(saving ? 'جاري الحفظ...' : savedRef == null ? 'حفظ الفاتورة' : 'تم الحفظ',
+                  maxLines: 1, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              ],
+            )),
+          ))),
         ]),
         const SizedBox(height: 28),
       ])),
