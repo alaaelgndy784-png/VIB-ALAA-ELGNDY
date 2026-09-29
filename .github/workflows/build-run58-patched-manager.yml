@@ -1,0 +1,74 @@
+name: Build Run58 Patched Manager
+
+on:
+  push:
+    branches:
+      - fix/run58-invoices-20260929
+    paths:
+      - 'patches/run58_invoice_patch.part*'
+      - '.github/workflows/build-run58-patched-manager.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact Run58 branch
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          channel: stable
+          cache: true
+
+      - name: Extract original Run58 source and apply invoice-only patch
+        run: |
+          rm -rf VIB-SALES-RUN58
+          mkdir VIB-SALES-RUN58
+          unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d VIB-SALES-RUN58
+          cat patches/run58_invoice_patch.part* > /tmp/run58_invoice_patch.py
+          echo "0343c14ee11681921bf1f972daf5d1b49122e9ba38303d4be37417d7bb11b1c3  /tmp/run58_invoice_patch.py" | sha256sum -c -
+          cd VIB-SALES-RUN58
+          python /tmp/run58_invoice_patch.py
+          dart format lib/main.dart
+          mkdir -p assets/tessdata
+          printf '%s\n' '{"files":["ara.traineddata","eng.traineddata"]}' > assets/tessdata_config.json
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/ara.traineddata --output assets/tessdata/ara.traineddata
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata --output assets/tessdata/eng.traineddata
+          mkdir -p assets/fonts
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf assets/fonts/DejaVuSans.ttf
+
+      - name: Create Android platform
+        working-directory: VIB-SALES-RUN58
+        run: flutter create --platforms=android --org com.alaa.vibsales --project-name manager .
+
+      - name: Prepare same Run58 manager identity
+        working-directory: VIB-SALES-RUN58
+        run: |
+          printf '%s\n' 'android.newDsl=false' 'android.builtInKotlin=false' >> android/gradle.properties
+          sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
+          sed -i 's/android:label="manager"/android:label="VIB MANAGER JARD 28"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/applicationId = "com.alaa.vibsales.manager"/applicationId = "com.alaa.vibsales.manageraudit20260928"/' android/app/build.gradle.kts
+          grep -q 'applicationId = "com.alaa.vibsales.manageraudit20260928"' android/app/build.gradle.kts
+          sed -i 's/import io.flutter.embedding.android.FlutterActivity/import io.flutter.embedding.android.FlutterFragmentActivity/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
+          sed -i 's/FlutterActivity()/FlutterFragmentActivity()/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
+          sed -i '/<manifest/a\    <uses-permission android:name="android.permission.USE_BIOMETRIC" />' android/app/src/main/AndroidManifest.xml
+          cp -r assets/icons/manager/mipmap-* android/app/src/main/res/
+          cp firebase/google-services.json android/app/google-services.json
+          flutter pub get
+
+      - name: Build manager APK
+        working-directory: VIB-SALES-RUN58
+        run: |
+          flutter build apk --release --split-per-abi
+          mkdir -p dist
+          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-RUN58-MANAGER-INVOICE.apk
+
+      - name: Upload manager APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-RUN58-MANAGER-INVOICE
+          path: VIB-SALES-RUN58/dist/VIB-RUN58-MANAGER-INVOICE.apk
+          if-no-files-found: error
