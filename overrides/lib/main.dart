@@ -514,10 +514,20 @@ class _InventoryAuditState extends State<InventoryAudit> {
           if (id.isNotEmpty) amounts[id] = (amounts[id] ?? 0) + ((data['quantity'] as num?)?.toInt() ?? 0);
         }
         final filtered = rows.where((p) => selected == 'الكل' || '${p.data()['category'] ?? 'غير مصنف'}' == selected).toList()..sort((a,b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
-        return Column(children: [Padding(padding: const EdgeInsets.all(12), child: DropdownButtonFormField<String>(value: selected, decoration: const InputDecoration(labelText: 'الفئة'), items: categories.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setState(() => category = v ?? 'الكل'))),
-          Text('عدد الأصناف: ${filtered.length}'), Expanded(child: ListView(children: filtered.map((p) { final data = p.data(); return Card(child: ListTile(title: Text('${data['name']}'), subtitle: Text('الفئة: ${data['category'] ?? 'غير مصنف'}\nسعر الشراء: ${data['purchasePrice'] ?? 'غير مسجل'} ج.م • سعر البيع: ${data['price'] ?? 0} ج.م'), isThreeLine: true, trailing: Text('متوفر\n${amounts[p.id] ?? 0}', textAlign: TextAlign.center, style: const TextStyle(color: gold)))); }).toList())) ]);
+        return Column(children: [Padding(padding: const EdgeInsets.all(12), child: Row(children:[Expanded(child:DropdownButtonFormField<String>(value: selected, decoration: const InputDecoration(labelText: 'الفئة'), items: categories.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setState(() => category = v ?? 'الكل'))),const SizedBox(width:8),FilledButton.icon(onPressed:()=>exportInventoryAuditPdf(context,filtered,amounts),icon:const Icon(Icons.picture_as_pdf),label:const Text('PDF / طباعة'))])),
+          Text('عدد الأصناف: ${filtered.length}'), Expanded(child: ListView.builder(itemCount:filtered.length,itemBuilder:(context,i){final p=filtered[i],data=p.data(),qty=amounts[p.id]??0;return Card(child:ListTile(leading:CircleAvatar(child:Text('${i+1}')),title:Text('${data['name']}'),subtitle:Text('الكمية: $qty  |  تكلفة الشراء: ${data['purchasePrice']??0}  |  سعر البيع: ${data['price']??0}'),trailing:Text('متوفر\n$qty',textAlign:TextAlign.center,style:const TextStyle(color:gold))));})) ]);
       });
     });
+}
+
+
+Future<void> exportInventoryAuditPdf(BuildContext context,List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,Map<String,int> amounts) async {
+  try{final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));final pdf=pw.Document();
+  pdf.addPage(pw.MultiPage(pageFormat:PdfPageFormat.a4,theme:pw.ThemeData.withFont(base:font),textDirection:pw.TextDirection.rtl,build:(_)=>[
+    pw.Text('VIB - جرد المخزون',style:pw.TextStyle(font:font,fontSize:18,fontWeight:pw.FontWeight.bold)),pw.SizedBox(height:8),
+    pw.Table.fromTextArray(headers:['م','اسم الصنف','الكمية','تكلفة الشراء','سعر البيع'],data:[for(var i=0;i<rows.length;i++)['${i+1}','${rows[i].data()['name']??''}','${amounts[rows[i].id]??0}','${rows[i].data()['purchasePrice']??0}','${rows[i].data()['price']??0}'],headerStyle:pw.TextStyle(font:font,fontWeight:pw.FontWeight.bold),cellStyle:pw.TextStyle(font:font,fontSize:9))
+  ]));await Printing.layoutPdf(name:'VIB-INVENTORY-${DateFormat('yyyyMMdd').format(DateTime.now())}.pdf',onLayout:(_)=>pdf.save());}
+  catch(e){if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر إنشاء تقرير الجرد: $e')));}
 }
 
 class ProfitReport extends StatefulWidget {
