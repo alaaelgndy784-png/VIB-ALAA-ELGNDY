@@ -1030,6 +1030,38 @@ Future<void> accountDialog(BuildContext context, String collection, String id, M
   ));
 }
 
+class ReceiptVouchers extends StatelessWidget {
+  const ReceiptVouchers({super.key});
+  @override Widget build(BuildContext context) => Column(children: [
+    Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 10, children: [
+      FilledButton.icon(onPressed: () => receiptVoucherDialog(context, true), icon: const Icon(Icons.call_received), label: const Text('سند قبض')),
+      OutlinedButton.icon(onPressed: () => receiptVoucherDialog(context, false), icon: const Icon(Icons.call_made), label: const Text('سند صرف')),
+    ])),
+    Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'cash').snapshots(), builder: (context, snap) {
+      if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+      final rows = snap.data!.docs.where((d) => d.data()['kind'] == 'receipt_voucher' || d.data()['kind'] == 'payment_voucher').toList()..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+      if (rows.isEmpty) return const Center(child: Text('لا توجد سندات حتى الآن'));
+      return ListView(children: rows.map((d) { final x=d.data(); return ListTile(leading: Icon(x['kind']=='receipt_voucher' ? Icons.call_received : Icons.call_made, color: gold), title: Text('${x['kind']=='receipt_voucher' ? 'سند قبض' : 'سند صرف'} • ${x['partyName'] ?? ''}'), subtitle: Text('${x['reason'] ?? ''}\n${formatDate(x['createdAt'])}'), isThreeLine: true, trailing: Text('${x['amount'] ?? 0} ج.م')); }).toList());
+    }))
+  ]);
+}
+
+Future<void> receiptVoucherDialog(BuildContext context, bool receipt) async {
+  final party = TextEditingController(), amount = TextEditingController(), reason = TextEditingController();
+  await showDialog<void>(context: context, builder: (c) => AlertDialog(title: Text(receipt ? 'سند قبض' : 'سند صرف'), content: Column(mainAxisSize: MainAxisSize.min, children: [
+    TextField(controller: party, decoration: const InputDecoration(labelText: 'الاسم / الجهة')),
+    TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'المبلغ')),
+    TextField(controller: reason, decoration: const InputDecoration(labelText: 'البيان')),
+  ]), actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')), FilledButton(onPressed: () async {
+    final value=double.tryParse(amount.text.trim()); if(value==null || value<=0 || party.text.trim().isEmpty) return;
+    try { await db.runTransaction((tx) async {
+      final cashRef=db.collection('settings').doc('cash'), snap=await tx.get(cashRef); final before=(snap.data()?['balance'] as num?)?.toDouble() ?? 0; final delta=receipt ? value : -value;
+      if(before+delta<0) throw Exception('رصيد الصندوق لا يكفي');
+      tx.set(cashRef, {'balance':before+delta,'updatedAt':FieldValue.serverTimestamp()}, SetOptions(merge:true));
+      tx.set(db.collection('accountMovements').doc(), {'accountType':'cash','kind':receipt?'receipt_voucher':'payment_voucher','partyName':party.text.trim(),'reason':reason.text.trim(),'amount':value,'delta':delta,'balanceBefore':before,'balanceAfter':before+delta,'actorId':FirebaseAuth.instance.currentUser!.uid,'createdAt':FieldValue.serverTimestamp()});
+    }); if(c.mounted) Navigator.pop(c); } catch(e) { if(c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text('تعذر حفظ السند: $e'))); }
+  }, child: const Text('حفظ السند'))]));
+}
 class CashBox extends StatelessWidget {
   const CashBox({super.key});
   @override
@@ -1114,6 +1146,33 @@ Future<void> cashDialog(BuildContext context, bool deposit) async {
   ));
 }
 
+Future<void> createCloudBackup(BuildContext context) async {
+  try {
+    final names=['products','stock','invoiceHeaders','sales','purchases','salesReturns','purchaseReturns','accountMovements','customers','suppliers','branches'];
+    final data=<String,dynamic>{};
+    for(final name in names){
+      final q=await db.collection(name).get();
+      data[name]=q.docs.map((d)=>{'id':d.id,...d.data()}).toList();
+    }
+    final main=(await db.collection('settings').doc('main').get()).data();
+    final cash=(await db.collection('settings').doc('cash').get()).data();
+    await db.collection('backups').add({'createdAt':FieldValue.serverTimestamp(),'createdBy':FirebaseAuth.instance.currentUser!.uid,'settingsMain':main,'settingsCash':cash,'data':data});
+    if(context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تم إنشاء النسخة الاحتياطية بنجاح')));
+  } catch(e) {
+    if(context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر إنشاء النسخة الاحتياطية: $e')));
+  }
+}
+class RepairMenu extends StatelessWidget {
+  const RepairMenu({super.key});
+  @override Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
+    Card(child: ListTile(leading: const Icon(Icons.edit_note, color: gold), title: const Text('تعديل فاتورة مبيعات'), subtitle: const Text('فتح فواتير المبيعات للمراجعة والتعديل'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('فواتير المبيعات')), body: const Sales(owner: true, branchId: 'main')))))),
+    Card(child: ListTile(leading: const Icon(Icons.edit_document, color: gold), title: const Text('تعديل فاتورة مشتريات'), subtitle: const Text('فتح فواتير المشتريات للمراجعة والتعديل'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('فواتير المشتريات')), body: const Purchases()))))),
+    Card(child: ListTile(leading: const Icon(Icons.assignment_return, color: gold), title: const Text('إرجاع فاتورة مبيعات'), subtitle: const Text('اختر الفاتورة ثم استخدم أمر الإرجاع'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('إرجاع مبيعات')), body: const Sales(owner: true, branchId: 'main')))))),
+    Card(child: ListTile(leading: const Icon(Icons.keyboard_return, color: gold), title: const Text('إرجاع فاتورة مشتريات'), subtitle: const Text('اختر الفاتورة ثم استخدم أمر الإرجاع'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('إرجاع مشتريات')), body: const Purchases()))))),
+    Card(child: ListTile(leading: const Icon(Icons.print_outlined, color: gold), title: const Text('إعدادات الطباعة'), subtitle: const Text('بيانات الشركة ومقاس الورق واختيار الطابعة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('إعدادات الطباعة')), body: const AppSettings()))))),
+    Card(child: ListTile(leading: const Icon(Icons.backup_outlined, color: gold), title: const Text('عمل نسخة احتياطية'), subtitle: const Text('حفظ نسخة من بيانات البرنامج'), onTap: () => createCloudBackup(context))),
+  ]);
+}
 class AppSettings extends StatefulWidget {
   const AppSettings({super.key});
   @override State<AppSettings> createState() => _AppSettingsState();
