@@ -44,8 +44,8 @@
                     leading: const Icon(Icons.inventory_2_outlined, color: gold),
                     title: Text('${d['name'] ?? ''}'),
                     subtitle: Text(widget.isSale
-                      ? 'سعر البيع: ${((d['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ج.م'
-                      : 'سعر الشراء: ${((d['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ج.م'),
+                      ? 'سعر البيع: ${((d['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ج.م • المتوفر: ${_availableFor(p.id)}'
+                      : 'سعر الشراء: ${((d['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ج.م • المخزون الحالي: ${_availableFor(p.id)}'),
                     trailing: const Icon(Icons.add_circle, color: gold),
                     onTap: () => Navigator.pop(dialog, p.id),
                   );
