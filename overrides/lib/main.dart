@@ -251,6 +251,7 @@ class _LoginPageState extends State<LoginPage> {
       const SizedBox(height: 12),
       TextField(controller: pin, obscureText: true, keyboardType: TextInputType.number,
         decoration: const InputDecoration(labelText: 'رقم سري من 6 أرقام أو أكثر')),
+      Align(alignment: Alignment.centerRight, child: TextButton(onPressed: busy ? null : forgotPassword, child: const Text('نسيت كلمة المرور؟ إرسال رمز SMS'))),
       if (error != null) Text(error!, style: const TextStyle(color: Colors.redAccent)),
       const SizedBox(height: 18),
       FilledButton(onPressed: busy ? null : () => login(create: false), child: const Text('دخول')),
