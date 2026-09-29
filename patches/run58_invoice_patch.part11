@@ -1,1 +1,108 @@
-# Repairs screen patch placeholder; keeps patch chain ordered.
+# Put backup/reset directly on the visible RepairsPage and make AppSettings actions launch immediately.
+text = text.replace(
+    "class AppSettings extends StatefulWidget {\n  const AppSettings({super.key});",
+    "class AppSettings extends StatefulWidget {\n"
+    "  final String? initialAction;\n"
+    "  const AppSettings({super.key, this.initialAction});",
+    1
+)
+
+old_load_end = """    if (mounted) setState(() => loading = false);
+  }
+
+  Future<void> chooseLogo() async {"""
+new_load_end = """    if (mounted) {
+      setState(() => loading = false);
+      if (widget.initialAction != null) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (widget.initialAction == 'backup') {
+            createAndShareBackup();
+          } else if (widget.initialAction == 'reset') {
+            resetProgramData();
+          }
+        });
+      }
+    }
+  }
+
+  Future<void> chooseLogo() async {"""
+if old_load_end not in text:
+    raise RuntimeError('AppSettings load end not found')
+text = text.replace(old_load_end, new_load_end, 1)
+
+repairs_old = """      const ListTile(
+        leading: Icon(Icons.fingerprint, color: gold),
+        title: Text('البصمة'),
+        subtitle: Text('تُطلب عند دخول المدير؛ إعادة المحاولة من شاشة القفل'),
+      ),
+    ],
+  );
+}"""
+
+repairs_new = """      const ListTile(
+        leading: Icon(Icons.fingerprint, color: gold),
+        title: Text('البصمة'),
+        subtitle: Text('تُطلب عند دخول المدير؛ إعادة المحاولة من شاشة القفل'),
+      ),
+      const Divider(),
+      ListTile(
+        leading: const Icon(Icons.cloud_upload, color: gold),
+        title: const Text(
+          'عمل نسخة احتياطية على الإيميل',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: const Text(
+          'يجمع بيانات البرنامج في ملف واحد ثم افتح Gmail وأرسله إلى إيميلك',
+        ),
+        trailing: const Icon(Icons.chevron_left, color: gold),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => Scaffold(
+              appBar: AppBar(title: const Text('النسخة الاحتياطية')),
+              body: const AppSettings(initialAction: 'backup'),
+            ),
+          ),
+        ),
+      ),
+      ListTile(
+        leading: const Icon(
+          Icons.restart_alt,
+          color: Colors.redAccent,
+          size: 30,
+        ),
+        title: const Text(
+          'تصفير البرنامج',
+          style: TextStyle(
+            color: Colors.redAccent,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        subtitle: const Text(
+          'تصفير الفواتير والحركات والمخزون والأرصدة والصندوق مع الاحتفاظ بالأصناف والأسعار والإعدادات',
+        ),
+        trailing: const Icon(
+          Icons.chevron_left,
+          color: Colors.redAccent,
+        ),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => Scaffold(
+              appBar: AppBar(title: const Text('تصفير البرنامج')),
+              body: const AppSettings(initialAction: 'reset'),
+            ),
+          ),
+        ),
+      ),
+    ],
+  );
+}"""
+
+if repairs_old not in text:
+    raise RuntimeError('Visible RepairsPage marker not found')
+text = text.replace(repairs_old, repairs_new, 1)
+
+p.write_text(text, encoding='utf-8')
+print('visible RepairsPage backup/reset buttons added')
