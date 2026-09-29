@@ -225,32 +225,32 @@ class _LoginPageState extends State<LoginPage> {
 class Home extends StatefulWidget {
   final String uid, role, branchId, name;
   const Home({super.key, required this.uid, required this.role, required this.branchId, required this.name});
-  @override
-  State<Home> createState() => _HomeState();
+  @override State<Home> createState() => _HomeState();
 }
 class _HomeState extends State<Home> {
-  int page = 0;
-  @override
-  Widget build(BuildContext context) {
-    final owner = widget.role == 'owner';
-    final labels = owner ? ['المنتجات', 'المبيعات', 'المشتريات', 'الحسابات', 'الإدارة'] : ['المنتجات', 'مبيعاتي'];
-    return Scaffold(
-      appBar: AppBar(title: Text('VIB | ${widget.name}'), actions: [IconButton(tooltip: 'خروج', onPressed: () => FirebaseAuth.instance.signOut(), icon: const Icon(Icons.logout))]),
-      body: switch(page) {
-        0 => Products(owner: owner, uid: widget.uid, branchId: widget.branchId),
-        1 => Sales(owner: owner, branchId: widget.branchId),
-        2 => const Purchases(),
-        3 => const Accounts(),
-        _ => const Management(),
-      },
-      bottomNavigationBar: NavigationBar(selectedIndex: page, onDestinationSelected: (i) => setState(() => page = i), destinations: [
-        const NavigationDestination(icon: Icon(Icons.inventory_2_outlined), label: 'المنتجات'),
-        NavigationDestination(icon: const Icon(Icons.receipt_long_outlined), label: labels[1]),
-        if (owner) const NavigationDestination(icon: Icon(Icons.shopping_cart_checkout), label: 'المشتريات'),
-        if (owner) const NavigationDestination(icon: Icon(Icons.account_balance_wallet_outlined), label: 'الحسابات'),
-        if (owner) const NavigationDestination(icon: Icon(Icons.admin_panel_settings_outlined), label: 'الإدارة'),
-      ]),
-    );
+  Widget tile(String label, IconData icon, Widget page) => Material(
+    color: const Color(0xFF151515),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: const BorderSide(color: gold, width: 1.4)),
+    child: InkWell(borderRadius: BorderRadius.circular(18), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: Text(label)), body: page))),
+      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(icon,color:gold,size:48),const SizedBox(height:10),Text(label,textAlign:TextAlign.center,style:const TextStyle(color:gold,fontSize:17,fontWeight:FontWeight.bold))])),
+  );
+  @override Widget build(BuildContext context) {
+    final owner=widget.role=='owner';
+    if(!owner) return Scaffold(appBar:AppBar(title:Text('VIB | ${widget.name}'),actions:[IconButton(onPressed:()=>FirebaseAuth.instance.signOut(),icon:const Icon(Icons.logout))]),body:Sales(owner:false,branchId:widget.branchId));
+    final items=<Widget>[
+      tile('السيارات',Icons.local_shipping_outlined,const Branches()),
+      tile('الموظفون',Icons.badge_outlined,const Staff()),
+      tile('المبيعات',Icons.point_of_sale_outlined,const Sales(owner:true,branchId:'main')),
+      tile('المشتريات',Icons.shopping_cart_checkout,const Purchases()),
+      tile('العملاء',Icons.groups_outlined,const Accounts()),
+      tile('الموردين',Icons.storefront_outlined,const Accounts()),
+      tile('المخزون',Icons.inventory_2_outlined,const InventoryAudit()),
+      tile('المصروفات',Icons.receipt_long_outlined,const Expenses()),
+      tile('الصندوق',Icons.account_balance_wallet_outlined,const CashBox()),
+      tile('التقارير والأرباح',Icons.bar_chart_outlined,const ProfitReport()),
+      tile('الضبط والإصلاحات',Icons.settings_outlined,const Management()),
+    ];
+    return Scaffold(appBar:AppBar(title:Text('VIB | ${widget.name}'),actions:[IconButton(tooltip:'خروج',onPressed:()=>FirebaseAuth.instance.signOut(),icon:const Icon(Icons.logout))]),body:GridView.builder(padding:const EdgeInsets.all(14),gridDelegate:const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount:2,crossAxisSpacing:12,mainAxisSpacing:12,childAspectRatio:1.18),itemCount:items.length,itemBuilder:(_,i)=>items[i]));
   }
 }
 
