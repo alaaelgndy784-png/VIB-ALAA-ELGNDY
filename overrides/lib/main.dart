@@ -273,7 +273,7 @@ class Products extends StatelessWidget {
             stream: db.collection('stock').doc('${owner ? 'main' : branchId}_${d.id}').snapshots(),
             builder: (context, stock) => Text('${p['name'] ?? ''}  •  المتوفر: ${(stock.data?.data()?['quantity'] as num?)?.toInt() ?? 0}'),
           ), subtitle: Text('السعر: ${p['price'] ?? 0} ج.م'), trailing: owner
-            ? Wrap(children: [IconButton(tooltip: 'تعديل', icon: const Icon(Icons.edit), onPressed: () => productDialog(context, id: d.id, data: p)), IconButton(tooltip: 'المخزون الرئيسي', icon: const Icon(Icons.warehouse), onPressed: () => mainStockDialog(context, d.id, '${p['name']}'))])
+            ? Wrap(children: [IconButton(tooltip: 'تعديل', icon: const Icon(Icons.edit), onPressed: () => productDialog(context, id: d.id, data: p)), IconButton(tooltip: 'المخزون الرئيسي', icon: const Icon(Icons.warehouse), onPressed: () => mainStockDialog(context, d.id, '${p['name']}')), IconButton(tooltip:'حذف المنتج',icon:const Icon(Icons.delete_outline,color:Colors.redAccent),onPressed:()=>deleteProduct(context,d.id,p))])
             : FilledButton.icon(icon: const Icon(Icons.receipt_long),
                 label: const Text('فاتورة بيع'),
                 onPressed: () => saleDialog(context, d.id, p, uid, branchId)));
@@ -282,6 +282,11 @@ class Products extends StatelessWidget {
     },
   );
 }
+
+
+Future<void> deleteProduct(BuildContext context,String id,Map<String,dynamic> p) async{
+ final ok=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('تأكيد حذف المنتج'),content:Text('حذف ${p['name']??''} من القوائم؟ سيتم الاحتفاظ بالحركات والفواتير القديمة.'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('إلغاء')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('حذف'))]))??false;
+ if(!ok)return;try{await db.collection('products').doc(id).set({'active':false,'deletedAt':FieldValue.serverTimestamp(),'deletedBy':FirebaseAuth.instance.currentUser!.uid},SetOptions(merge:true));if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تم حذف المنتج من القوائم مع الاحتفاظ بالسجل القديم')));}catch(e){if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر الحذف: $e')));}}
 
 Future<void> productDialog(BuildContext context, {String? id, Map<String, dynamic>? data}) async {
   final name = TextEditingController(text: '${data?['name'] ?? ''}');
