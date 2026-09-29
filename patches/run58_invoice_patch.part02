@@ -13,6 +13,17 @@
             ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content: Text('راجع العدد والسعر')));
             return;
           }
+          if (widget.isSale && q > _availableFor(line.productId)) {
+            final available = _availableFor(line.productId);
+            ScaffoldMessenger.of(dialog).showSnackBar(SnackBar(
+              content: Text('العدد المطلوب $q أكبر من الموجود. المتوفر $available فقط')));
+            return;
+          }
+          if (widget.isSale && line.unitCost != null && pr < line.unitCost!) {
+            ScaffoldMessenger.of(dialog).showSnackBar(SnackBar(
+              content: Text('سعر البيع ${pr.toStringAsFixed(2)} أقل من سعر الشراء ${line.unitCost!.toStringAsFixed(2)}')));
+            return;
+          }
           setState(() { line.quantity = q; line.price = pr; });
           Navigator.pop(dialog);
         }, child: const Text('تعديل')),
