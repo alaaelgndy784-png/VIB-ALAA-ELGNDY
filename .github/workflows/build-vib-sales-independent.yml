@@ -32,6 +32,9 @@ jobs:
           curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/eng.traineddata
           mkdir -p VIB-SALES-INDEPENDENT/assets/fonts
           cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf VIB-SALES-INDEPENDENT/assets/fonts/DejaVuSans.ttf
+          mkdir -p VIB-SALES-INDEPENDENT/lib
+          cp overrides/lib/main.dart VIB-SALES-INDEPENDENT/lib/main.dart
+          cp overrides/pubspec.yaml VIB-SALES-INDEPENDENT/pubspec.yaml
 
       - name: Create independent Android platform
         working-directory: VIB-SALES-INDEPENDENT
