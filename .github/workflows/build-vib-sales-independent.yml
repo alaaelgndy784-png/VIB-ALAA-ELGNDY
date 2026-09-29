@@ -26,6 +26,8 @@ jobs:
         run: |
           mkdir VIB-SALES-INDEPENDENT
           unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d VIB-SALES-INDEPENDENT
+          cp overrides/lib/main.dart VIB-SALES-INDEPENDENT/lib/main.dart
+          cp overrides/pubspec.yaml VIB-SALES-INDEPENDENT/pubspec.yaml
           mkdir -p VIB-SALES-INDEPENDENT/assets/tessdata
           printf '%s\n' '{"files":["ara.traineddata","eng.traineddata"]}' > VIB-SALES-INDEPENDENT/assets/tessdata_config.json
           curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/ara.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/ara.traineddata
@@ -42,8 +44,8 @@ jobs:
         run: |
           printf '%s\n' 'android.newDsl=false' 'android.builtInKotlin=false' >> android/gradle.properties
           sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
-          sed -i 's/android:label="manager"/android:label="VIB MANAGER JARD 28"/' android/app/src/main/AndroidManifest.xml
-          sed -i 's/applicationId = "com.alaa.vibsales.manager"/applicationId = "com.alaa.vibsales.manageraudit20260928"/' android/app/build.gradle.kts
+          sed -i 's/android:label="manager"/android:label="VIB MANAGER FINAL"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/applicationId = "com.alaa.vibsales.manager"/applicationId = "com.alaa.vibsales.managerfinal20260930"/' android/app/build.gradle.kts
           grep -q 'applicationId = "com.alaa.vibsales.manageraudit20260928"' android/app/build.gradle.kts
           sed -i 's/import io.flutter.embedding.android.FlutterActivity/import io.flutter.embedding.android.FlutterFragmentActivity/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
           sed -i 's/FlutterActivity()/FlutterFragmentActivity()/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
