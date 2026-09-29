@@ -454,6 +454,7 @@ class Management extends StatelessWidget {
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
     Card(child: ListTile(leading: const Icon(Icons.inventory_2, color: gold), title: const Text('جرد المخزون حسب الفئة'), subtitle: const Text('المتاح وسعر الشراء وسعر البيع لكل صنف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('جرد المخزون')), body: const InventoryAudit()))))),
     Card(child: ListTile(leading: const Icon(Icons.trending_up, color: gold), title: const Text('تقرير الأرباح'), subtitle: const Text('يومي وأسبوعي وشهري حسب تكلفة شراء الأصناف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير الأرباح')), body: const ProfitReport()))))),
+    Card(child: ListTile(leading: const Icon(Icons.analytics_outlined, color: gold), title: const Text('حركة المبيعات الإجمالية'), subtitle: const Text('الإجمالي والمدفوع والآجل والمرتجعات وصافي المبيعات'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('حركة المبيعات الإجمالية')), body: const SalesMovementReport()))))),
     Card(child: ListTile(leading: const Icon(Icons.payments, color: gold), title: const Text('الصندوق'), subtitle: const Text('إضافة وخصم ومراجعة الحركات'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الصندوق')), body: const CashBox()))))),
     Card(child: ListTile(leading: const Icon(Icons.receipt, color: gold), title: const Text('المصروفات'), subtitle: const Text('مصروفات المحل والرواتب وخصمها من الصندوق'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('المصروفات')), body: const Expenses()))))),
     Card(child: ListTile(leading: const Icon(Icons.store, color: gold), title: const Text('الفروع والمخزون'), subtitle: const Text('إضافة الفروع ونقل البضاعة إليها'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الفروع')), body: const Branches()))))),
@@ -612,6 +613,30 @@ class _ProfitReportState extends State<ProfitReport> {
       )),
     ]);
   }
+}
+
+class SalesMovementReport extends StatefulWidget {
+  const SalesMovementReport({super.key});
+  @override State<SalesMovementReport> createState()=>_SalesMovementReportState();
+}
+class _SalesMovementReportState extends State<SalesMovementReport>{
+  DateTime from=DateTime(DateTime.now().year,DateTime.now().month,DateTime.now().day), to=DateTime.now();
+  Future<void> pick(bool start) async {final v=await showDatePicker(context:context,initialDate:start?from:to,firstDate:DateTime(2020),lastDate:DateTime.now().add(const Duration(days:365)));if(v!=null)setState((){if(start)from=v;else to=DateTime(v.year,v.month,v.day,23,59,59);});}
+  @override Widget build(BuildContext context)=>StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:db.collection('sales').snapshots(),builder:(context,snap){
+    if(!snap.hasData)return const Center(child:CircularProgressIndicator());
+    final rows=snap.data!.docs.where((d){final x=(d.data()['createdAt'] as Timestamp?)?.toDate();return x!=null&&!x.isBefore(from)&&!x.isAfter(to);}).toList();
+    double total=0,paid=0,due=0,returns=0;
+    for(final d in rows){final x=d.data(),v=(x['total'] as num?)?.toDouble()??0;if(x['status']=='returned'){returns+=v;continue;}total+=v;paid+=(x['paid'] as num?)?.toDouble()??v;due+=(x['due'] as num?)?.toDouble()??0;}
+    return ListView(padding:const EdgeInsets.all(16),children:[
+      Row(children:[Expanded(child:OutlinedButton(onPressed:()=>pick(true),child:Text('من ${DateFormat('dd/MM/yyyy').format(from)}'))),const SizedBox(width:8),Expanded(child:OutlinedButton(onPressed:()=>pick(false),child:Text('إلى ${DateFormat('dd/MM/yyyy').format(to)}')))]),
+      ListTile(title:const Text('إجمالي المبيعات'),trailing:Text('${total.toStringAsFixed(2)} ج.م')),
+      ListTile(title:const Text('المدفوع'),trailing:Text('${paid.toStringAsFixed(2)} ج.م')),
+      ListTile(title:const Text('الباقي / الآجل'),trailing:Text('${due.toStringAsFixed(2)} ج.م')),
+      ListTile(title:const Text('المرتجعات'),trailing:Text('${returns.toStringAsFixed(2)} ج.م')),
+      ListTile(title:const Text('صافي المبيعات'),trailing:Text('${(total-returns).toStringAsFixed(2)} ج.م',style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
+      ListTile(title:const Text('عدد العمليات'),trailing:Text('${rows.length}')),
+    ]);
+  });
 }
 
 class Purchases extends StatelessWidget {
