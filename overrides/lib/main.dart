@@ -217,7 +217,18 @@ class _LoginPageState extends State<LoginPage> {
       const SizedBox(height: 18),
       FilledButton(onPressed: busy ? null : () => login(create: false), child: const Text('دخول')),
       TextButton(onPressed: busy ? null : () => login(create: true), child: const Text('إنشاء حساب جديد')),
-      const Text('التسجيل مجاني ولا يرسل رسالة SMS. المدير يفعّل حساب الموظف ويحدد فرعه.'),
+      TextButton.icon(onPressed: busy ? null : () async {
+        final number=normalizedPhone();
+        if(number==null){setState(()=>error='اكتب رقم الهاتف المصري المسجل أولًا');return;}
+        setState(()=>busy=true);
+        try {
+          await FirebaseAuth.instance.sendPasswordResetEmail(email: emailFor(number));
+          if(mounted)setState(()=>error='تم إرسال رابط استعادة كلمة السر إلى حساب الدخول المسجل إذا كان متاحًا.');
+        } on FirebaseAuthException catch(e) {
+          if(mounted)setState(()=>error=e.message ?? 'تعذر إرسال استعادة كلمة السر');
+        } finally {if(mounted)setState(()=>busy=false);}
+      }, icon: const Icon(Icons.lock_reset), label: const Text('نسيت كلمة السر')),
+      const Text('المدير يفعّل حساب الموظف ويحدد فرعه.'),
     ]),
   ))));
 }
