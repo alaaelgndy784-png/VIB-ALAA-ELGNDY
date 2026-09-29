@@ -148,10 +148,121 @@
     ]);
   });
 
-  Widget _itemsTable() => SingleChildScrollView(scrollDirection: Axis.horizontal, child: ConstrainedBox(
-    constraints: const BoxConstraints(minWidth: 760),
-    child: Container(decoration: BoxDecoration(border: Border.all(color: gold.withValues(alpha: .55)),
-      borderRadius: BorderRadius.circular(16)), child: Column(children: [
-      Container(padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-        decoration: const BoxDecoration(color: gold, borderRadius: BorderRadius.vertical(top: Radius.circular(15))),
-        child: const Row(children: [
+  Widget _itemsTable() => Directionality(
+    textDirection: TextDirection.rtl,
+    child: Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        border: Border.all(color: gold.withValues(alpha: .55)),
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(children: [
+        Container(
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 5),
+          decoration: const BoxDecoration(
+            color: gold,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(15)),
+          ),
+          child: const Row(children: [
+            SizedBox(
+              width: 30,
+              child: Text('م', textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold)),
+            ),
+            Expanded(
+              flex: 5,
+              child: Text('المنتج', textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold)),
+            ),
+            Expanded(
+              flex: 2,
+              child: Text('السعر', textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold)),
+            ),
+            SizedBox(
+              width: 52,
+              child: Text('العدد', textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold)),
+            ),
+            Expanded(
+              flex: 2,
+              child: Text('الإجمالي', textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold)),
+            ),
+            SizedBox(
+              width: 38,
+              child: Text('حذف', textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.black, fontSize: 11, fontWeight: FontWeight.bold)),
+            ),
+          ]),
+        ),
+        if (lines.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(26),
+            child: Center(child: Text('أضف الأصناف إلى الفاتورة')),
+          ),
+        for (var i = 0; i < lines.length; i++)
+          InkWell(
+            onTap: () => _editLine(lines[i]),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 9, horizontal: 5),
+              decoration: BoxDecoration(
+                border: Border(top: BorderSide(color: Colors.white.withValues(alpha: .10))),
+              ),
+              child: Row(children: [
+                SizedBox(
+                  width: 30,
+                  child: Text('${i + 1}', textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                ),
+                Expanded(
+                  flex: 5,
+                  child: Text(
+                    lines[i].name,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    lines[i].price.toStringAsFixed(2),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                SizedBox(
+                  width: 52,
+                  child: Text(
+                    '${lines[i].quantity}',
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: gold, fontSize: 15, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                Expanded(
+                  flex: 2,
+                  child: Text(
+                    lines[i].total.toStringAsFixed(2),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                SizedBox(
+                  width: 38,
+                  child: IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.delete, color: Colors.redAccent, size: 20),
+                    onPressed: savedRef == null ? () => setState(() => lines.removeAt(i)) : null,
+                  ),
+                ),
+              ]),
+            ),
+          ),
+      ]),
+    ),
+  );
+
