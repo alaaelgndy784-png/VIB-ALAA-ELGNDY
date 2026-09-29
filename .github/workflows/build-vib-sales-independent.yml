@@ -1,4 +1,4 @@
-name: Build VIB Dashboard Features 2
+name: Build VIB Dashboard Final Features
 
 on:
   workflow_dispatch:
