@@ -193,10 +193,10 @@ methods = r'''
           Expanded(child: Text('تصفير البرنامج')),
         ]),
         content: const Text(
-          'سيتم حذف كل فواتير المبيعات والمشتريات والحركات والمصروفات '
-          'وتصفير المخزون وأرصدة العملاء والموردين والصندوق.\n\n'
-          'الأصناف والأسعار وأسماء العملاء والموردين والموظفين وإعدادات الطباعة '
-          'ستظل موجودة.\n\n'
+          'سيتم تصفير المخزون وأرصدة العملاء والموردين والصندوق، '
+          'ويبدأ البرنامج حسابات جديدة من الصفر.\n\n'
+          'الفواتير والحركات القديمة ستظل محفوظة كأرشيف ولن يتم حذفها، '
+          'وكذلك الأصناف والأسعار والإعدادات ستظل موجودة.\n\n'
           'يفضل عمل نسخة احتياطية قبل التصفير.',
         ),
         actions: [
@@ -208,7 +208,7 @@ methods = r'''
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.pop(dialog, true),
             icon: const Icon(Icons.restart_alt),
-            label: const Text('تصفير البرنامج'),
+            label: const Text('تصفير الآن'),
           ),
         ],
       ),
@@ -218,29 +218,45 @@ methods = r'''
     setState(() => resetting = true);
 
     try {
-      const collectionsToClear = <String>[
-        'sales',
-        'purchases',
-        'salesReturns',
-        'purchaseReturns',
-        'stockAdjustments',
-        'stockMovements',
-        'accountMovements',
-        'stock',
-      ];
-
-      for (final collectionName in collectionsToClear) {
-        await _deleteCollectionDocs(collectionName);
+      final stockSnapshot = await db.collection('stock').get();
+      for (var offset = 0; offset < stockSnapshot.docs.length; offset += 350) {
+        final batch = db.batch();
+        final end = (offset + 350 < stockSnapshot.docs.length)
+            ? offset + 350
+            : stockSnapshot.docs.length;
+        for (var i = offset; i < end; i++) {
+          final doc = stockSnapshot.docs[i];
+          final data = doc.data();
+          batch.set(
+            doc.reference,
+            {
+              'branchId': data['branchId'],
+              'productId': data['productId'],
+              'quantity': 0,
+              'lastSaleId': data['lastSaleId'] ?? '',
+            },
+            SetOptions(merge: false),
+          );
+        }
+        await batch.commit();
       }
 
       await _zeroAccountBalances('customers');
       await _zeroAccountBalances('suppliers');
 
-      await db.collection('settings').doc('cash').set(
+      await db.collection('cash').doc('main').set(
         {
           'balance': 0,
           'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+
+      await db.collection('settings').doc('accountingReset').set(
+        {
+          'resetAt': FieldValue.serverTimestamp(),
           'resetBy': FirebaseAuth.instance.currentUser?.uid,
+          'mode': 'new_period',
         },
         SetOptions(merge: true),
       );
@@ -248,7 +264,9 @@ methods = r'''
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('تم تصفير البرنامج بنجاح وأصبح جاهزًا لبدء حسابات جديدة'),
+          content: Text(
+            'تم تصفير المخزون والأرصدة والصندوق. الفواتير القديمة محفوظة كأرشيف.',
+          ),
         ),
       );
     } catch (e) {
@@ -261,7 +279,6 @@ methods = r'''
       if (mounted) setState(() => resetting = false);
     }
   }
-
 '''
 
 text = text[:settings_build] + methods + text[settings_build:]
