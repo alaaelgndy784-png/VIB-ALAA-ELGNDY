@@ -1,4 +1,4 @@
-name: Build RUN58 Requested Updates
+name: Build RUN58 Functional Delete Updates
 
 on:
   workflow_dispatch:
