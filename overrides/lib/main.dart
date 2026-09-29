@@ -1061,11 +1061,11 @@ class CashBox extends StatelessWidget {
           style: const TextStyle(fontSize: 22, color: gold)),
       ),
     ),
-    Wrap(spacing: 12, children: [
-      FilledButton.icon(onPressed: () => cashDialog(context, true),
-        icon: const Icon(Icons.add), label: const Text('إضافة للصندوق')),
-      OutlinedButton.icon(onPressed: () => cashDialog(context, false),
-        icon: const Icon(Icons.remove), label: const Text('خصم من الصندوق')),
+    Row(children: [
+      Expanded(child: FilledButton.icon(onPressed: () => cashDialog(context, true),
+        icon: const Icon(Icons.add), label: const Text('إضافة للصندوق'))), const SizedBox(width: 10),
+      Expanded(child: OutlinedButton.icon(onPressed: () => cashDialog(context, false),
+        icon: const Icon(Icons.remove), label: const Text('خصم من الصندوق'))),
     ]),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: db.collection('accountMovements').where('accountType', isEqualTo: 'cash').snapshots(),
