@@ -1,65 +1,118 @@
-# Put backup/reset entries directly on the visible RepairsPage.
-repairs_old = """      const ListTile(
-        leading: Icon(Icons.fingerprint, color: gold),
-        title: Text('البصمة'),
-        subtitle: Text('تُطلب عند دخول المدير؛ إعادة المحاولة من شاشة القفل'),
-      ),
-    ],
-  );
-}"""
+# Replace only RepairsPage so the two requested entries are visible on the exact screen.
+start = text.index('class RepairsPage extends StatelessWidget')
+end = text.index('class Management extends StatelessWidget', start)
 
-repairs_new = """      const ListTile(
-        leading: Icon(Icons.fingerprint, color: gold),
-        title: Text('البصمة'),
-        subtitle: Text('تُطلب عند دخول المدير؛ إعادة المحاولة من شاشة القفل'),
-      ),
-      const Divider(),
-      ListTile(
-        leading: const Icon(Icons.cloud_upload, color: gold),
-        title: const Text(
-          'عمل نسخة احتياطية على الإيميل',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: const Text(
-          'اضغط هنا لفتح النسخ الاحتياطي ثم اختر Gmail لإرسال النسخة إلى إيميلك',
-        ),
-        trailing: const Icon(Icons.chevron_left, color: gold),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => Scaffold(
-              appBar: AppBar(title: const Text('النسخة الاحتياطية')),
-              body: const AppSettings(),
-            ),
+repairs = r'''class RepairsPage extends StatelessWidget {
+  const RepairsPage({super.key});
+  @override
+  Widget build(BuildContext context) => ListView(children: [
+    ListTile(
+      leading: const Icon(Icons.receipt_long, color: gold),
+      title: const Text('فواتير المبيعات والمرتجعات'),
+      subtitle: const Text('افتح الفاتورة ثم اختر التصحيح أو الإرجاع'),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text('فواتير المبيعات')),
+            body: const Sales(owner: true, branchId: 'main'),
           ),
         ),
       ),
-      ListTile(
-        leading: const Icon(Icons.restart_alt, color: Colors.redAccent, size: 30),
-        title: const Text(
-          'تصفير البرنامج',
-          style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
-        ),
-        subtitle: const Text(
-          'اضغط هنا لتصفير الفواتير والحركات والمخزون والأرصدة والصندوق',
-        ),
-        trailing: const Icon(Icons.chevron_left, color: Colors.redAccent),
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => Scaffold(
-              appBar: AppBar(title: const Text('تصفير البرنامج والنسخ الاحتياطي')),
-              body: const AppSettings(),
-            ),
+    ),
+    ListTile(
+      leading: const Icon(Icons.shopping_cart, color: gold),
+      title: const Text('فواتير المشتريات والمرتجعات'),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text('فواتير المشتريات')),
+            body: const Purchases(),
           ),
         ),
       ),
-    ],
-  );
-}"""
+    ),
+    ListTile(
+      leading: const Icon(Icons.account_balance_wallet, color: gold),
+      title: const Text('المصروفات وحركة الصندوق'),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text('الصندوق')),
+            body: const CashBox(),
+          ),
+        ),
+      ),
+    ),
+    ListTile(
+      leading: const Icon(Icons.print, color: gold),
+      title: const Text('الطباعة واللوجو وبيانات الفاتورة'),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text('إعدادات الفاتورة')),
+            body: const AppSettings(),
+          ),
+        ),
+      ),
+    ),
+    const ListTile(
+      leading: Icon(Icons.fingerprint, color: gold),
+      title: Text('البصمة'),
+      subtitle: Text('تُطلب عند دخول المدير؛ إعادة المحاولة من شاشة القفل'),
+    ),
+    const Divider(),
+    ListTile(
+      leading: const Icon(Icons.cloud_upload, color: gold, size: 30),
+      title: const Text(
+        'عمل نسخة احتياطية على الإيميل',
+        style: TextStyle(fontWeight: FontWeight.bold),
+      ),
+      subtitle: const Text(
+        'إنشاء ملف Backup كامل ثم اختيار Gmail لإرساله إلى إيميلك',
+      ),
+      trailing: const Icon(Icons.chevron_left, color: gold),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text('عمل نسخة احتياطية')),
+            body: const AppSettings(),
+          ),
+        ),
+      ),
+    ),
+    ListTile(
+      leading: const Icon(Icons.restart_alt, color: Colors.redAccent, size: 32),
+      title: const Text(
+        'تصفير البرنامج',
+        style: TextStyle(
+          color: Colors.redAccent,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      subtitle: const Text(
+        'تصفير الفواتير والحركات والمخزون والأرصدة والصندوق بعد التأكيد',
+      ),
+      trailing: const Icon(Icons.chevron_left, color: Colors.redAccent),
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => Scaffold(
+            appBar: AppBar(title: const Text('تصفير البرنامج')),
+            body: const AppSettings(),
+          ),
+        ),
+      ),
+    ),
+  ]);
+}
 
-if repairs_old not in text:
-    raise RuntimeError('Visible RepairsPage marker not found')
-text = text.replace(repairs_old, repairs_new, 1)
+'''
+
+text = text[:start] + repairs + text[end:]
 p.write_text(text, encoding='utf-8')
-print('visible RepairsPage backup/reset entries added')
+print('visible RepairsPage replaced with backup/reset entries')
