@@ -79,19 +79,74 @@
     );
   }
 
-  Widget _productToolbar() => Row(children: [
-    FilledButton.icon(onPressed: savedRef == null ? () => _chooseProduct(scannerMode: true) : null,
-      icon: const Icon(Icons.qr_code_scanner), label: const Text('ماسح')),
-    const SizedBox(width: 10),
-    Expanded(child: TextField(controller: productSearch, enabled: savedRef == null,
-      onSubmitted: (_) => _addFromSearch(),
-      decoration: InputDecoration(prefixIcon: const Icon(Icons.search),
-        hintText: 'بحث عن منتج بالاسم أو الكود',
-        suffixIcon: IconButton(onPressed: savedRef == null ? _addFromSearch : null, icon: const Icon(Icons.search))))),
-    const SizedBox(width: 10),
-    FilledButton.icon(onPressed: savedRef == null ? _addFromSearch : null,
-      icon: const Icon(Icons.add), label: const Text('إضافة منتج')),
-  ]);
+  Widget _productToolbar() => LayoutBuilder(builder: (context, constraints) {
+    final compact = constraints.maxWidth < 430;
+    return Row(children: [
+      SizedBox(
+        width: compact ? 72 : 88,
+        height: 50,
+        child: FilledButton(
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            minimumSize: Size.zero,
+          ),
+          onPressed: savedRef == null ? () => _chooseProduct(scannerMode: true) : null,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.qr_code_scanner, size: 18),
+              if (!compact) ...[
+                const SizedBox(width: 4),
+                const Text('ماسح', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              ],
+            ]),
+          ),
+        ),
+      ),
+      const SizedBox(width: 7),
+      Expanded(
+        flex: 5,
+        child: SizedBox(
+          height: 50,
+          child: TextField(
+            controller: productSearch,
+            enabled: savedRef == null,
+            textAlignVertical: TextAlignVertical.center,
+            onTap: savedRef == null ? () => _chooseProduct() : null,
+            onSubmitted: (_) => _addFromSearch(),
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search, size: 21),
+              hintText: 'بحث عن منتج بالاسم أو الكود',
+              contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+          ),
+        ),
+      ),
+      const SizedBox(width: 7),
+      SizedBox(
+        width: compact ? 76 : 105,
+        height: 50,
+        child: FilledButton(
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 6),
+            minimumSize: Size.zero,
+          ),
+          onPressed: savedRef == null ? () => _chooseProduct() : null,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.add, size: 19),
+              if (!compact) ...[
+                const SizedBox(width: 4),
+                const Text('إضافة منتج', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+              ],
+            ]),
+          ),
+        ),
+      ),
+    ]);
+  });
 
   Widget _itemsTable() => SingleChildScrollView(scrollDirection: Axis.horizontal, child: ConstrainedBox(
     constraints: const BoxConstraints(minWidth: 760),
