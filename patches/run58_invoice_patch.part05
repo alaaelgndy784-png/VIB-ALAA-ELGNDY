@@ -1,0 +1,105 @@
+        Container(width: double.infinity, padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(border: Border.all(color: gold), borderRadius: BorderRadius.circular(18)),
+          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('إجمالي الفاتورة الحالية', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            _money(invoiceTotal, color: gold, size: 24),
+          ])),
+        const SizedBox(height: 14), _paymentCard(), const SizedBox(height: 16),
+        Row(children: [
+          Expanded(child: OutlinedButton.icon(onPressed: _sharePdf,
+            icon: const Icon(Icons.picture_as_pdf), label: const Text('حفظ كـ PDF'))),
+          if (widget.isSale) ...[
+            const SizedBox(width: 10),
+            Expanded(child: FilledButton.icon(onPressed: _whatsApp,
+              icon: const Icon(Icons.chat), label: const Text('إرسال واتساب'))),
+          ],
+          const SizedBox(width: 10),
+          Expanded(child: FilledButton.icon(onPressed: savedRef == null && !saving ? _save : null,
+            icon: Icon(savedRef == null ? Icons.save : Icons.check_circle),
+            label: Text(saving ? 'جاري الحفظ...' : savedRef == null ? 'حفظ الفاتورة' : 'تم الحفظ'))),
+        ]),
+        const SizedBox(height: 28),
+      ])),
+    );
+  }
+
+  @override void dispose() {
+    paid.dispose(); invoiceNumber.dispose(); productSearch.dispose(); super.dispose();
+  }
+}'''
+
+replace_between('Future<void> groupedSaleDialog(BuildContext context, {required bool owner,',
+                'Widget _invoicePaymentSummary', invoice_editor)
+
+sale_save = r'''Future<DocumentReference<Map<String, dynamic>>> saveManagerGroupedSale({
+  required List<({String id, int qty})> entries,
+  required QuerySnapshot<Map<String, dynamic>> products,
+  required String branchId,
+  required String invoiceNumber,
+  String? customerId,
+  required String customerName,
+  required String customerPhone,
+  required double paid,
+}) async {
+  final invoice = db.collection('sales').doc();
+  final actor = FirebaseAuth.instance.currentUser!.uid;
+
+  await db.runTransaction((tx) async {
+    final stocks = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+    final currentProducts = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+    for (final e in entries) {
+      stocks[e.id] = await tx.get(db.collection('stock').doc('${branchId}_${e.id}'));
+      currentProducts[e.id] = await tx.get(db.collection('products').doc(e.id));
+    }
+
+    final customerRef = customerId == null ? null : db.collection('customers').doc(customerId);
+    final customer = customerRef == null ? null : await tx.get(customerRef);
+    if (customerRef != null && !customer!.exists) throw Exception('العميل غير موجود');
+    final previous = (customer?.data()?['balance'] as num?)?.toDouble() ?? 0;
+
+    final cashRef = db.collection('settings').doc('cash');
+    final cash = await tx.get(cashRef);
+    final beforeCash = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
+
+    final items = <Map<String, dynamic>>[];
+    var total = 0.0;
+    for (final e in entries) {
+      final product = currentProducts[e.id]?.data();
+      if (product == null || product['active'] != true) throw Exception('الصنف غير متاح');
+      final current = (stocks[e.id]?.data()?['quantity'] as num?)?.toInt() ?? 0;
+      if (current < e.qty) throw Exception('مخزون ${product['name']} غير كافٍ');
+      final price = (product['price'] as num?)?.toDouble() ?? 0;
+      final cost = (product['purchasePrice'] as num?)?.toDouble();
+      if (cost != null && price < cost) throw Exception('سعر ${product['name']} أقل من التكلفة');
+      final amount = e.qty * price;
+      total += amount;
+      items.add({'productId': e.id, 'productName': product['name'], 'quantity': e.qty,
+        'unitPrice': price, if (cost != null) 'unitCost': cost, 'total': amount});
+      tx.set(db.collection('stock').doc('${branchId}_${e.id}'),
+        {'branchId': branchId, 'productId': e.id, 'quantity': current - e.qty, 'lastSaleId': invoice.id},
+        SetOptions(merge: true));
+      tx.set(db.collection('stockMovements').doc(), {
+        'productId': e.id, 'productName': product['name'], 'branchId': branchId,
+        'kind': 'sale', 'quantity': -e.qty, 'balanceAfter': current - e.qty,
+        'referenceId': invoice.id, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    final maxPayment = previous + total;
+    if (paid < 0 || paid > maxPayment || (customerRef == null && paid != total)) {
+      throw Exception('المدفوع لا يتجاوز إجمالي المستحق، والبيع بدون عميل يكون نقديًا بالكامل');
+    }
+    final currentDue = (total - paid).clamp(0, double.infinity).toDouble();
+    final finalBalance = (previous + total - paid).clamp(0, double.infinity).toDouble();
+
+    if (paid > 0) {
+      tx.set(cashRef, {'balance': beforeCash + paid, 'updatedAt': FieldValue.serverTimestamp()},
+        SetOptions(merge: true));
+      tx.set(db.collection('accountMovements').doc(), {
+        'accountType': 'cash', 'kind': 'invoiceSale', 'referenceId': invoice.id,
+        'amount': paid, 'delta': paid, 'balanceBefore': beforeCash, 'balanceAfter': beforeCash + paid,
+        'actorId': actor, 'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    if (customerRef != null) {
