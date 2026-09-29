@@ -1,0 +1,134 @@
+from pathlib import Path
+
+p = Path('lib/main.dart')
+text = p.read_text(encoding='utf-8')
+
+
+def replace_between(start_marker, end_marker, replacement):
+    global text
+    start = text.index(start_marker)
+    end = text.index(end_marker, start)
+    text = text[:start] + replacement.rstrip() + '\n\n' + text[end:]
+
+# Expand product search to barcode/code in the existing picker too.
+old_search = """        final name = '${p.data()['name'] ?? ''}'.toLowerCase();
+        final category = '${p.data()['category'] ?? ''}'.toLowerCase();
+        return normalized.isEmpty || name.contains(normalized) || category.contains(normalized);"""
+new_search = """        final name = '${p.data()['name'] ?? ''}'.toLowerCase();
+        final category = '${p.data()['category'] ?? ''}'.toLowerCase();
+        final code = '${p.data()['code'] ?? ''}'.toLowerCase();
+        final barcode = '${p.data()['barcode'] ?? ''}'.toLowerCase();
+        return normalized.isEmpty || name.contains(normalized) || category.contains(normalized) ||
+          code.contains(normalized) || barcode.contains(normalized);"""
+if old_search in text:
+    text = text.replace(old_search, new_search, 1)
+
+invoice_editor = r'''Future<void> groupedSaleDialog(BuildContext context, {required bool owner,
+  required String branchId, String? initialProductId}) async {
+  await Navigator.push<void>(context, MaterialPageRoute(
+    builder: (_) => DetailedInvoicePage(
+      isSale: true,
+      owner: owner,
+      branchId: branchId,
+      initialProductId: initialProductId,
+    ),
+  ));
+}
+
+class InvoiceLineDraft {
+  final String productId;
+  final String name;
+  int quantity;
+  double price;
+  final double? unitCost;
+  InvoiceLineDraft({required this.productId, required this.name, required this.quantity,
+    required this.price, this.unitCost});
+  double get total => quantity * price;
+  Map<String, dynamic> asMap(bool isSale) => {
+    'productId': productId,
+    'productName': name,
+    'quantity': quantity,
+    isSale ? 'unitPrice' : 'unitCost': price,
+    if (unitCost != null) 'unitCost': unitCost,
+    'total': total,
+  };
+}
+
+class DetailedInvoicePage extends StatefulWidget {
+  final bool isSale;
+  final bool owner;
+  final String branchId;
+  final String? initialProductId;
+  const DetailedInvoicePage({super.key, required this.isSale, required this.owner,
+    required this.branchId, this.initialProductId});
+  @override State<DetailedInvoicePage> createState() => _DetailedInvoicePageState();
+}
+
+class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> products = [];
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> accounts = [];
+  final List<InvoiceLineDraft> lines = [];
+  final paid = TextEditingController(text: '0');
+  final invoiceNumber = TextEditingController();
+  final productSearch = TextEditingController();
+  bool loading = true, saving = false;
+  String? selectedAccountId;
+  DocumentReference<Map<String, dynamic>>? savedRef;
+  Map<String, dynamic>? savedData;
+
+  @override void initState() {
+    super.initState();
+    invoiceNumber.text = DateFormat('yyyyMMddHHmmss').format(DateTime.now());
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      products = (await db.collection('products').where('active', isEqualTo: true).get()).docs;
+      if (widget.isSale) {
+        if (widget.owner) accounts = (await db.collection('customers').get()).docs;
+      } else {
+        accounts = (await db.collection('suppliers').get()).docs;
+      }
+      if (!widget.isSale && accounts.isNotEmpty) selectedAccountId = accounts.first.id;
+      if (widget.initialProductId != null) {
+        final match = products.where((p) => p.id == widget.initialProductId).toList();
+        if (match.isNotEmpty) _addProduct(match.first, refresh: false);
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر تحميل بيانات الفاتورة: $e')));
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  QueryDocumentSnapshot<Map<String, dynamic>>? get selectedAccount {
+    if (selectedAccountId == null) return null;
+    for (final a in accounts) { if (a.id == selectedAccountId) return a; }
+    return null;
+  }
+
+  double get previousBalance => (selectedAccount?.data()['balance'] as num?)?.toDouble() ?? 0;
+  double get invoiceTotal => lines.fold<double>(0, (sum, e) => sum + e.total);
+  double get paidNow {
+    final v = double.tryParse(_ocrNumber(paid.text.trim().replaceAll(',', '.'))) ?? 0;
+    return v.isFinite && v > 0 ? v : 0;
+  }
+  double get currentInvoiceDue => (invoiceTotal - paidNow).clamp(0, double.infinity).toDouble();
+  double get totalDueBeforePayment => previousBalance + invoiceTotal;
+  double get balanceAfter => (totalDueBeforePayment - paidNow).clamp(0, double.infinity).toDouble();
+  String get paymentStatus => currentInvoiceDue <= 0 && invoiceTotal > 0
+    ? 'مدفوعة بالكامل'
+    : paidNow <= 0 ? 'آجل' : 'مدفوع جزئي';
+
+  void _addProduct(QueryDocumentSnapshot<Map<String, dynamic>> p, {bool refresh = true}) {
+    final existing = lines.where((e) => e.productId == p.id).toList();
+    if (existing.isNotEmpty) {
+      existing.first.quantity += 1;
+    } else {
+      final d = p.data();
+      lines.add(InvoiceLineDraft(
+        productId: p.id,
+        name: '${d['name'] ?? ''}',
+        quantity: 1,
+        price: ((d[widget.isSale ? 'price' : 'purchasePrice'] as num?)?.toDouble() ?? 0),
