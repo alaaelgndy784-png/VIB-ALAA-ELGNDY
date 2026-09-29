@@ -441,7 +441,7 @@ class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
     return v.isFinite && v > 0 ? v : 0;
   }
   double get currentDue => (total - paidNow).clamp(0, double.infinity).toDouble();
-  double get finalBalance => oldBalance + currentDue;
+  double get finalBalance => (oldBalance + total - paidNow).clamp(0, double.infinity).toDouble();
   String get paymentStatus => paidNow <= 0 ? 'آجل' : paidNow >= total && total > 0 ? 'مدفوعة بالكامل' : 'مدفوع جزئي';
 
   void _addProduct(QueryDocumentSnapshot<Map<String, dynamic>> p, {bool refresh = true}) {
@@ -578,7 +578,7 @@ class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
       'supplierName': widget.isSale ? '' : (a['name'] ?? ''),
       'items': lines.map((e) => e.asMap(widget.isSale)).toList(),
       'total': total,
-      'paid': paidNow.clamp(0, total),
+      'paid': paidNow.clamp(0, oldBalance + total),
       'due': currentDue,
       'balanceBefore': oldBalance,
       'balanceAfter': finalBalance,
@@ -601,7 +601,18 @@ class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف صنفًا أولًا')));
       return;
     }
-    await selectInvoicePaper(context, widget.isSale ? 'sales' : 'purchases', savedId ?? invoiceNumber.text.trim(), _draftData());
+    final selected = await showModalBottomSheet<String>(context: context, builder: (sheet) => SafeArea(child: Wrap(children: [
+      const ListTile(title: Text('مقاس ورق الفاتورة')),
+      for (final choice in [('a4', 'ورق A4'), ('58', 'إيصال 58 مم'), ('80', 'إيصال 80 مم')])
+        ListTile(title: Text(choice.$2), onTap: () => Navigator.pop(sheet, choice.$1)),
+    ])));
+    if (selected == null || !mounted) return;
+    try {
+      final bytes = await createInvoicePdf(widget.isSale ? 'sales' : 'purchases', savedId ?? invoiceNumber.text.trim(), _draftData(), paperChoice: selected);
+      await Printing.layoutPdf(name: (widget.isSale ? 'VIB-SALE-' : 'VIB-PURCHASE-') + invoiceNumber.text.trim() + '.pdf', onLayout: (_) async => bytes);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: ' + e.toString())));
+    }
   }
 
   Future<void> _whatsAppDraft() async {
@@ -634,8 +645,9 @@ class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
       return;
     }
     final payment = paidNow;
-    if (payment < 0 || payment > total) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('المدفوع لا يمكن أن يكون أكبر من إجمالي الفاتورة')));
+    final maxPayment = oldBalance + total;
+    if (payment < 0 || payment > maxPayment) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('المدفوع لا يمكن أن يكون أكبر من إجمالي المستحق (الرصيد السابق + الفاتورة)')));
       return;
     }
     setState(() => saving = true);
@@ -651,11 +663,12 @@ class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
           stocks[line.productId] = await tx.get(db.collection('stock').doc((widget.isSale ? widget.branchId : 'main') + '_' + line.productId));
         }
         final before = (accountSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
-        final due = total - payment;
+        final due = (total - payment).clamp(0, double.infinity).toDouble();
+        final balanceAfter = (before + total - payment).clamp(0, double.infinity).toDouble();
         final actor = FirebaseAuth.instance.currentUser!.uid;
         final account = accountSnap.data()!;
         final items = lines.map((e) => e.asMap(widget.isSale)).toList();
-        tx.update(accountRef, {'balance': before + due, 'updatedAt': FieldValue.serverTimestamp()});
+        tx.update(accountRef, {'balance': balanceAfter, 'updatedAt': FieldValue.serverTimestamp()});
         tx.set(header, {
           'type': widget.isSale ? 'sales' : 'purchases',
           'invoiceNumber': invoiceNumber.text.trim(),
@@ -671,7 +684,7 @@ class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
           'paid': payment,
           'due': due,
           'balanceBefore': before,
-          'balanceAfter': before + due,
+          'balanceAfter': balanceAfter,
           'paymentStatus': payment <= 0 ? 'آجل' : payment >= total ? 'مدفوع' : 'جزئي',
           'status': 'completed',
           'createdAt': FieldValue.serverTimestamp(),
@@ -739,9 +752,9 @@ class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
             'accountId': selectedAccountId,
             'accountName': account['name'] ?? '',
             'kind': widget.isSale ? 'sale' : 'purchase',
-            'amount': due,
+            'amount': (total - payment).abs(),
             'balanceBefore': before,
-            'balanceAfter': before + due,
+            'balanceAfter': balanceAfter,
             'referenceId': header.id,
             'paid': payment,
             'createdAt': FieldValue.serverTimestamp(),
@@ -902,7 +915,7 @@ class Sales extends StatelessWidget {
   Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
     stream: (owner
       ? db.collection('invoiceHeaders').where('type', isEqualTo: 'sales')
-      : db.collection('invoiceHeaders').where('branchId', isEqualTo: branchId)),
+      : db.collection('invoiceHeaders').where('type', isEqualTo: 'sales').where('branchId', isEqualTo: branchId)).snapshots(),
     builder: (context, snap) {
       if (snap.hasError) return const Center(child: Text('تعذر عرض فواتير المبيعات'));
       if (!snap.hasData) return const Center(child: CircularProgressIndicator());
