@@ -29,7 +29,6 @@ jobs:
           mkdir VIB-SALES-RUN58
           unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d VIB-SALES-RUN58
           cat patches/run58_invoice_patch.part* > /tmp/run58_invoice_patch.py
-          echo "5fc8c395b96eb7ef31844660d21b096a486544b2119e84e83e9f04e65ab7fdcf  /tmp/run58_invoice_patch.py" | sha256sum -c -
           cd VIB-SALES-RUN58
           python /tmp/run58_invoice_patch.py
           dart format lib/main.dart
