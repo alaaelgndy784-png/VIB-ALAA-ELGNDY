@@ -67,6 +67,7 @@ class DetailedInvoicePage extends StatefulWidget {
 class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
   List<QueryDocumentSnapshot<Map<String, dynamic>>> products = [];
   List<QueryDocumentSnapshot<Map<String, dynamic>>> accounts = [];
+  final Map<String, int> stockAvailable = {};
   final List<InvoiceLineDraft> lines = [];
   final paid = TextEditingController(text: '0');
   final invoiceNumber = TextEditingController();
@@ -89,6 +90,13 @@ class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
         if (widget.owner) accounts = (await db.collection('customers').get()).docs;
       } else {
         accounts = (await db.collection('suppliers').get()).docs;
+      }
+      final stockBranch = widget.isSale ? widget.branchId : 'main';
+      final stockDocs = await db.collection('stock').where('branchId', isEqualTo: stockBranch).get();
+      for (final s in stockDocs.docs) {
+        final d = s.data();
+        final productId = (d['productId'] ?? '').toString();
+        if (productId.isNotEmpty) stockAvailable[productId] = (d['quantity'] as num?)?.toInt() ?? 0;
       }
       if (!widget.isSale && accounts.isNotEmpty) selectedAccountId = accounts.first.id;
       if (widget.initialProductId != null) {
@@ -121,8 +129,21 @@ class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
     ? 'مدفوعة بالكامل'
     : paidNow <= 0 ? 'آجل' : 'مدفوع جزئي';
 
+  int _availableFor(String productId) => stockAvailable[productId] ?? 0;
+
   void _addProduct(QueryDocumentSnapshot<Map<String, dynamic>> p, {bool refresh = true}) {
     final existing = lines.where((e) => e.productId == p.id).toList();
+    if (widget.isSale) {
+      final already = existing.isEmpty ? 0 : existing.first.quantity;
+      final available = _availableFor(p.id);
+      if (already >= available) {
+        if (mounted && refresh) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('لا يمكن إضافة كمية أخرى. المتوفر من ${p.data()['name'] ?? ''}: $available فقط')));
+        }
+        return;
+      }
+    }
     if (existing.isNotEmpty) {
       existing.first.quantity += 1;
     } else {
