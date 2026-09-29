@@ -7,14 +7,18 @@ if "package:share_plus/share_plus.dart" not in text:
         "import 'package:share_plus/share_plus.dart';"
     )
 
-text = text.replace(
-    "  bool loading = true, saving = false;",
-    "  bool loading = true, saving = false, backingUp = false, resetting = false;",
-    1
-)
-
 settings_build_marker = "  @override Widget build(BuildContext context) => loading ? const Center(child: CircularProgressIndicator()) : ListView(padding: const EdgeInsets.all(16), children: ["
 settings_start = text.index("class _AppSettingsState extends State<AppSettings> {")
+settings_build = text.index(settings_build_marker, settings_start)
+
+settings_head = text[settings_start:settings_build]
+if "backingUp = false" not in settings_head:
+    settings_head = settings_head.replace(
+        "  bool loading = true, saving = false;",
+        "  bool loading = true, saving = false, backingUp = false, resetting = false;",
+        1
+    )
+text = text[:settings_start] + settings_head + text[settings_build:]
 settings_build = text.index(settings_build_marker, settings_start)
 
 methods = r'''
