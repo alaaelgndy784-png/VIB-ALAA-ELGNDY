@@ -480,6 +480,7 @@ class Management extends StatelessWidget {
     Card(child: ListTile(leading: const Icon(Icons.swap_vert, color: gold), title: const Text('تقرير حركة صنف'), subtitle: const Text('مبيعات ومشتريات ومرتجعات ورصيد كل حركة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير حركة صنف')), body: const ItemMovementReport()))))),
     Card(child: ListTile(leading: const Icon(Icons.settings, color: gold), title: const Text('الإعدادات والطباعة'), subtitle: const Text('بيانات الشركة وتجهيز الفواتير للطباعة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الإعدادات')), body: const AppSettings()))))),
     Card(child: ListTile(leading: const Icon(Icons.backup_outlined, color: gold), title: const Text('النسخ الاحتياطي'), subtitle: const Text('حفظ نسخة من بيانات البرنامج'), onTap: () => createCloudBackup(context))),
+    Card(child: ListTile(leading: const Icon(Icons.build_circle_outlined, color: gold), title: const Text('الضبط والإصلاحات'), subtitle: const Text('تعديل الفواتير والمرتجعات وإعدادات الطباعة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الضبط والإصلاحات')), body: const RepairMenu()))))),
   ]);
 }
 
@@ -1188,6 +1189,17 @@ Future<void> createCloudBackup(BuildContext context) async {
   } catch(e) {
     if(context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر إنشاء النسخة الاحتياطية: $e')));
   }
+}
+class RepairMenu extends StatelessWidget {
+  const RepairMenu({super.key});
+  @override Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
+    Card(child: ListTile(leading: const Icon(Icons.edit_note, color: gold), title: const Text('تعديل فاتورة مبيعات'), subtitle: const Text('فتح فواتير المبيعات للمراجعة والتعديل'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('فواتير المبيعات')), body: const Sales(owner: true, branchId: 'main')))))),
+    Card(child: ListTile(leading: const Icon(Icons.edit_document, color: gold), title: const Text('تعديل فاتورة مشتريات'), subtitle: const Text('فتح فواتير المشتريات للمراجعة والتعديل'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('فواتير المشتريات')), body: const Purchases()))))),
+    Card(child: ListTile(leading: const Icon(Icons.assignment_return, color: gold), title: const Text('إرجاع فاتورة مبيعات'), subtitle: const Text('اختر الفاتورة ثم استخدم أمر الإرجاع'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('إرجاع مبيعات')), body: const Sales(owner: true, branchId: 'main')))))),
+    Card(child: ListTile(leading: const Icon(Icons.keyboard_return, color: gold), title: const Text('إرجاع فاتورة مشتريات'), subtitle: const Text('اختر الفاتورة ثم استخدم أمر الإرجاع'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('إرجاع مشتريات')), body: const Purchases()))))),
+    Card(child: ListTile(leading: const Icon(Icons.print_outlined, color: gold), title: const Text('إعدادات الطباعة'), subtitle: const Text('بيانات الشركة ومقاس الورق واختيار الطابعة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('إعدادات الطباعة')), body: const AppSettings()))))),
+    Card(child: ListTile(leading: const Icon(Icons.backup_outlined, color: gold), title: const Text('عمل نسخة احتياطية'), subtitle: const Text('حفظ نسخة من بيانات البرنامج'), onTap: () => createCloudBackup(context))),
+  ]);
 }
 class AppSettings extends StatefulWidget {
   const AppSettings({super.key});
