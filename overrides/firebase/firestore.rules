@@ -58,7 +58,13 @@ service cloud.firestore {
       allow update, delete: if false;
     }
     match /customers/{id} {
-      allow read, create, update: if owner();
+      allow read: if active();
+      allow create: if owner();
+      allow update: if owner() || (employee()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','updatedAt'])
+        && request.resource.data.balance is number
+        && request.resource.data.balance >= resource.data.balance
+        && request.resource.data.updatedAt == request.time);
       allow delete: if false;
     }
     match /suppliers/{id} {
@@ -116,18 +122,22 @@ service cloud.firestore {
       allow read: if owner() || (employee() && resource.data.type == 'sales'
         && resource.data.branchId == branch());
       allow create: if owner() || (employee()
-        && request.resource.data.keys().hasOnly(['type', 'branchId', 'actorId',
-          'customerId', 'customerName', 'customerPhone', 'items', 'total',
-          'paid', 'due', 'paymentStatus', 'status', 'createdAt'])
         && request.resource.data.type == 'sales'
         && request.resource.data.branchId == branch()
         && request.resource.data.actorId == request.auth.uid
-        && request.resource.data.customerId == ''
+        && request.resource.data.customerId is string
+        && request.resource.data.customerId.size() > 0
+        && exists(/databases/$(database)/documents/customers/$(request.resource.data.customerId))
+        && request.resource.data.items is list
+        && request.resource.data.items.size() > 0
         && request.resource.data.total is number
         && request.resource.data.total >= 0
-        && request.resource.data.paid == request.resource.data.total
-        && request.resource.data.due == 0
-        && request.resource.data.paymentStatus == 'مدفوع'
+        && request.resource.data.paid is number
+        && request.resource.data.paid >= 0
+        && request.resource.data.paid <= request.resource.data.total
+        && request.resource.data.due == request.resource.data.total - request.resource.data.paid
+        && request.resource.data.balanceBefore is number
+        && request.resource.data.balanceAfter == request.resource.data.balanceBefore + request.resource.data.due
         && request.resource.data.status == 'completed'
         && request.resource.data.createdAt == request.time);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
