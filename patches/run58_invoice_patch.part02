@@ -1,0 +1,108 @@
+          decoration: const InputDecoration(labelText: 'العدد')),
+        TextField(controller: price,
+          enabled: !widget.isSale,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(labelText: widget.isSale ? 'سعر البيع' : 'سعر الشراء')),
+      ]),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء')),
+        FilledButton(onPressed: () {
+          final q = int.tryParse(_ocrNumber(qty.text.trim()));
+          final pr = double.tryParse(_ocrNumber(price.text.trim().replaceAll(',', '.')));
+          if (q == null || q <= 0 || pr == null || !pr.isFinite || pr < 0) {
+            ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content: Text('راجع العدد والسعر')));
+            return;
+          }
+          setState(() { line.quantity = q; line.price = pr; });
+          Navigator.pop(dialog);
+        }, child: const Text('تعديل')),
+      ],
+    ));
+    qty.dispose(); price.dispose();
+  }
+
+  Map<String, dynamic> _draftData() {
+    final account = selectedAccount?.data() ?? <String, dynamic>{};
+    return {
+      'type': widget.isSale ? 'sales' : 'purchases',
+      'invoiceNumber': invoiceNumber.text.trim(),
+      'branchId': widget.branchId,
+      'customerId': widget.isSale ? (selectedAccountId ?? '') : '',
+      'customerName': widget.isSale ? (account['name'] ?? '') : '',
+      'customerPhone': widget.isSale ? (account['phone'] ?? '') : '',
+      'supplierId': widget.isSale ? '' : (selectedAccountId ?? ''),
+      'supplierName': widget.isSale ? '' : (account['name'] ?? ''),
+      'items': lines.map((e) => e.asMap(widget.isSale)).toList(),
+      'total': invoiceTotal,
+      'paid': paidNow.clamp(0, totalDueBeforePayment),
+      'due': currentInvoiceDue,
+      'previousBalance': previousBalance,
+      'balanceAfter': balanceAfter,
+      'paymentStatus': paymentStatus,
+      'status': 'completed',
+      'grouped': true,
+      'createdAt': Timestamp.now(),
+    };
+  }
+
+  Future<void> _sharePdf() async {
+    if (lines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف صنفًا أولًا'))); return;
+    }
+    await exportInvoicePdf(context, widget.isSale ? 'sales' : 'purchases',
+      savedRef?.id ?? invoiceNumber.text.trim(), savedData ?? _draftData());
+  }
+
+  Future<void> _printDraft() async {
+    if (lines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف صنفًا أولًا'))); return;
+    }
+    final selected = await showModalBottomSheet<String>(context: context,
+      builder: (sheet) => SafeArea(child: Wrap(children: [
+        const ListTile(title: Text('مقاس ورق الفاتورة')),
+        for (final choice in [('a4', 'ورق A4'), ('58', 'إيصال 58 مم'), ('80', 'إيصال 80 مم')])
+          ListTile(title: Text(choice.$2), onTap: () => Navigator.pop(sheet, choice.$1)),
+      ])));
+    if (selected == null || !mounted) return;
+    try {
+      final data = savedData ?? _draftData();
+      final bytes = await createInvoicePdf(widget.isSale ? 'sales' : 'purchases',
+        savedRef?.id ?? invoiceNumber.text.trim(), data, paperChoice: selected);
+      await Printing.layoutPdf(name: '${widget.isSale ? 'VIB-SALE' : 'VIB-PURCHASE'}-${invoiceNumber.text.trim()}.pdf',
+        onLayout: (_) async => bytes);
+      if (savedRef != null) await savedRef!.set({'printedAt': FieldValue.serverTimestamp(),
+        'printedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e')));
+    }
+  }
+
+  Future<void> _whatsApp() async {
+    if (!widget.isSale) return;
+    final data = savedData ?? _draftData();
+    if ('${data['customerPhone'] ?? ''}'.trim().isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اختر عميلاً له رقم هاتف أولًا'))); return;
+    }
+    await sendInvoiceWhatsApp(context, savedRef?.id ?? invoiceNumber.text.trim(), data);
+  }
+
+  Future<void> _save() async {
+    if (saving || savedRef != null) return;
+    if (lines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف صنفًا واحدًا على الأقل'))); return;
+    }
+    if (!widget.isSale && selectedAccountId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اختر المورد'))); return;
+    }
+    if (widget.isSale && !widget.owner && paidNow != invoiceTotal) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('نسخة الموظف تحفظ البيع النقدي بالكامل من هذه الشاشة'))); return;
+    }
+    final maxPayment = totalDueBeforePayment;
+    if (paidNow < 0 || paidNow > maxPayment || (widget.isSale && selectedAccountId == null && paidNow != invoiceTotal)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('راجع المدفوع؛ لا يتجاوز إجمالي المستحق، والبيع بدون عميل يكون نقديًا بالكامل'))); return;
+    }
+    setState(() => saving = true);
+    try {
+      DocumentReference<Map<String, dynamic>> ref;
+      if (widget.isSale) {
+        final entries = lines.map((e) => (id: e.productId, qty: e.quantity)).toList();
