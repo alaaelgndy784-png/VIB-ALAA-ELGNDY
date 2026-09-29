@@ -109,10 +109,10 @@ sale_save = r'''Future<DocumentReference<Map<String, dynamic>>> saveManagerGroup
       final product = currentProducts[e.id]?.data();
       if (product == null || product['active'] != true) throw Exception('الصنف غير متاح');
       final current = (stocks[e.id]?.data()?['quantity'] as num?)?.toInt() ?? 0;
-      if (current < e.qty) throw Exception('مخزون ${product['name']} غير كافٍ');
+      if (current < e.qty) throw Exception('العدد المطلوب من ${product['name']} هو ${e.qty} والمتوفر $current فقط');
       final price = (product['price'] as num?)?.toDouble() ?? 0;
       final cost = (product['purchasePrice'] as num?)?.toDouble();
-      if (cost != null && price < cost) throw Exception('سعر ${product['name']} أقل من التكلفة');
+      if (cost != null && price < cost) throw Exception('سعر بيع ${product['name']} أقل من سعر الشراء المسجل');
       final amount = e.qty * price;
       total += amount;
       items.add({'productId': e.id, 'productName': product['name'], 'quantity': e.qty,
