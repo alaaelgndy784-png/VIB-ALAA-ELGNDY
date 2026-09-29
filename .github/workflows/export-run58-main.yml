@@ -1,0 +1,26 @@
+name: Export Run58 Source Main
+
+on:
+  push:
+    branches:
+      - fix/run58-invoices-20260929
+    paths:
+      - '.github/workflows/export-run58-main.yml'
+
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract Run58 source
+        run: |
+          rm -rf extracted
+          mkdir extracted
+          unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d extracted
+          test -f extracted/lib/main.dart
+      - name: Upload original Run58 main.dart
+        uses: actions/upload-artifact@v4
+        with:
+          name: RUN58-ORIGINAL-MAIN
+          path: extracted/lib/main.dart
+          if-no-files-found: error
