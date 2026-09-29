@@ -1,4 +1,4 @@
-name: Build VIB Sales Ready 2026-09-29
+name: Build VIB Sales Ready 2026-09-29 SMS
 
 on:
   workflow_dispatch:
