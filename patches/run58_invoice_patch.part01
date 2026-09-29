@@ -14,6 +14,69 @@
     }).toList();
   }
 
+  Future<void> _askQuantityAndAdd(QueryDocumentSnapshot<Map<String, dynamic>> p) async {
+    if (savedRef != null) return;
+    final available = widget.isSale ? _availableFor(p.id) : null;
+    final qty = TextEditingController(text: '1');
+    final result = await showDialog<int>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: Text('${p.data()['name'] ?? ''}'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          if (widget.isSale)
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                'المتوفر الآن: ${available ?? 0} قطعة',
+                style: const TextStyle(color: gold, fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: qty,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            decoration: const InputDecoration(
+              labelText: 'الكمية',
+              hintText: 'مثال: 10',
+            ),
+            onSubmitted: (_) {
+              final q = int.tryParse(_ocrNumber(qty.text.trim()));
+              if (q != null && q > 0 && (!widget.isSale || q <= (available ?? 0))) {
+                Navigator.pop(dialog, q);
+              }
+            },
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء')),
+          FilledButton(
+            onPressed: () {
+              final q = int.tryParse(_ocrNumber(qty.text.trim()));
+              if (q == null || q <= 0) {
+                ScaffoldMessenger.of(dialog).showSnackBar(
+                  const SnackBar(content: Text('اكتب كمية صحيحة')));
+                return;
+              }
+              if (widget.isSale && q > (available ?? 0)) {
+                ScaffoldMessenger.of(dialog).showSnackBar(SnackBar(
+                  content: Text('العدد المطلوب $q أكبر من الموجود. المتوفر ${available ?? 0} فقط')));
+                return;
+              }
+              Navigator.pop(dialog, q);
+            },
+            child: const Text('إضافة'),
+          ),
+        ],
+      ),
+    );
+    qty.dispose();
+    if (result != null && mounted) {
+      _addProduct(p, quantity: result);
+    }
+  }
+
   Future<void> _chooseProduct({bool scannerMode = false}) async {
     if (savedRef != null) return;
     String query = scannerMode ? productSearch.text.trim() : '';
@@ -167,7 +230,7 @@
     );
     if (result == null || !mounted) return;
     final p = products.firstWhere((e) => e.id == result);
-    _addProduct(p);
+    await _askQuantityAndAdd(p);
     productSearch.clear();
   }
 
@@ -176,7 +239,7 @@
     if (q.isEmpty) return _chooseProduct();
     final matches = _matchingProducts(q);
     if (matches.length == 1) {
-      _addProduct(matches.first);
+      await _askQuantityAndAdd(matches.first);
       productSearch.clear();
     } else {
       await _chooseProduct(scannerMode: true);
