@@ -631,7 +631,7 @@ class Purchases extends StatelessWidget {
         return ListView(children: snap.data!.docs.map((d) { final p = d.data(); return Card(child: ListTile(
           title: Text('فاتورة ${p['invoiceNumber'] ?? d.id.substring(0, 6)} • ${p['supplierName'] ?? ''}'),
           subtitle: Text('${p['productName'] ?? ''} × ${p['quantity'] ?? 0}\n${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),
-          isThreeLine: true, trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+          isThreeLine: true, trailing: Wrap(crossAxisAlignment:WrapCrossAlignment.center,children:[Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),IconButton(tooltip:'إرجاع/حذف المشتريات',icon:const Icon(Icons.delete_outline,color:Colors.redAccent),onPressed:p['status']=='returned'?null:()=>confirmReturn(context,'purchases',d.id,p))]),
           onTap: () => invoiceActions(context, 'purchases', d.id, p),
         )); }).toList());
       },
