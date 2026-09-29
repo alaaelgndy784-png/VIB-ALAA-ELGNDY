@@ -17,42 +17,154 @@
   Future<void> _chooseProduct({bool scannerMode = false}) async {
     if (savedRef != null) return;
     String query = scannerMode ? productSearch.text.trim() : '';
-    final result = await showDialog<String>(context: context,
-      builder: (dialog) => StatefulBuilder(builder: (dialog, update) {
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: const Color(0xFF17130D),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (sheet) => StatefulBuilder(builder: (sheet, update) {
         final filtered = _matchingProducts(query);
-        return AlertDialog(
-          title: Text(scannerMode ? 'ماسح / بحث بالكود' : 'إضافة منتج'),
-          content: SizedBox(width: 520, height: 470, child: Column(children: [
-            TextField(
-              autofocus: true,
-              controller: scannerMode && productSearch.text.isNotEmpty ? productSearch : null,
-              decoration: InputDecoration(
-                prefixIcon: Icon(scannerMode ? Icons.qr_code_scanner : Icons.search),
-                labelText: scannerMode ? 'امسح الباركود أو اكتب الكود/الاسم' : 'بحث عن منتج بالاسم أو الكود',
+        return SafeArea(child: FractionallySizedBox(
+          heightFactor: .90,
+          child: Column(children: [
+            Container(
+              width: 54,
+              height: 5,
+              margin: const EdgeInsets.only(top: 10, bottom: 8),
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(10),
               ),
-              onChanged: (v) => update(() => query = v.trim()),
-              onSubmitted: (_) {
-                if (filtered.length == 1) Navigator.pop(dialog, filtered.first.id);
-              },
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 10),
+              child: Row(children: [
+                Expanded(child: Text(
+                  scannerMode ? 'ماسح / بحث عن منتج' : 'اختيار منتج',
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+                )),
+                IconButton(
+                  tooltip: 'إغلاق',
+                  onPressed: () => Navigator.pop(sheet),
+                  icon: const Icon(Icons.close),
+                ),
+              ]),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: TextField(
+                autofocus: true,
+                decoration: InputDecoration(
+                  prefixIcon: Icon(scannerMode ? Icons.qr_code_scanner : Icons.search, color: gold),
+                  hintText: 'بحث بالاسم أو الكود أو الباركود',
+                  filled: true,
+                  fillColor: const Color(0xFF0F0F0F),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+                ),
+                onChanged: (v) => update(() => query = v.trim()),
+                onSubmitted: (_) {
+                  if (filtered.length == 1) Navigator.pop(sheet, filtered.first.id);
+                },
+              ),
             ),
             const SizedBox(height: 8),
-            Expanded(child: filtered.isEmpty
-              ? const Center(child: Text('لا توجد نتائج'))
-              : ListView(children: filtered.map((p) {
-                  final d = p.data();
-                  return ListTile(
-                    leading: const Icon(Icons.inventory_2_outlined, color: gold),
-                    title: Text('${d['name'] ?? ''}'),
-                    subtitle: Text(widget.isSale
-                      ? 'سعر البيع: ${((d['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ج.م • المتوفر: ${_availableFor(p.id)}'
-                      : 'سعر الشراء: ${((d['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ج.م • المخزون الحالي: ${_availableFor(p.id)}'),
-                    trailing: const Icon(Icons.add_circle, color: gold),
-                    onTap: () => Navigator.pop(dialog, p.id),
-                  );
-                }).toList())),
-          ])),
-        );
-      }));
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(children: [
+                Text('النتائج: ${filtered.length}', style: const TextStyle(color: gold)),
+                const Spacer(),
+                const Text('العدد المتوفر يظهر لكل صنف', style: TextStyle(fontSize: 12, color: Colors.white70)),
+              ]),
+            ),
+            const SizedBox(height: 6),
+            Expanded(
+              child: filtered.isEmpty
+                ? const Center(child: Text('لا توجد نتائج'))
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(10, 2, 10, 18),
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 6),
+                    itemBuilder: (_, index) {
+                      final p = filtered[index];
+                      final d = p.data();
+                      final available = _availableFor(p.id);
+                      final salePrice = ((d['price'] as num?)?.toDouble() ?? 0);
+                      final purchasePrice = ((d['purchasePrice'] as num?)?.toDouble() ?? 0);
+                      final belowCost = widget.isSale && purchasePrice > 0 && salePrice < purchasePrice;
+                      return Card(
+                        margin: EdgeInsets.zero,
+                        clipBehavior: Clip.antiAlias,
+                        child: InkWell(
+                          onTap: available <= 0 && widget.isSale
+                            ? () => ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('الصنف ${d['name'] ?? ''} غير متوفر في المخزون')))
+                            : () => Navigator.pop(sheet, p.id),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                            child: Row(children: [
+                              Container(
+                                width: 42,
+                                height: 42,
+                                decoration: BoxDecoration(
+                                  color: gold.withValues(alpha: .12),
+                                  borderRadius: BorderRadius.circular(11),
+                                ),
+                                child: const Icon(Icons.inventory_2_outlined, color: gold, size: 22),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${d['name'] ?? ''}',
+                                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    widget.isSale
+                                      ? 'سعر البيع: ${salePrice.toStringAsFixed(2)} ج.م'
+                                      : 'سعر الشراء: ${purchasePrice.toStringAsFixed(2)} ج.م',
+                                    style: const TextStyle(fontSize: 14),
+                                  ),
+                                  const SizedBox(height: 3),
+                                  Text(
+                                    widget.isSale
+                                      ? 'المتوفر الآن: $available قطعة'
+                                      : 'المخزون الحالي: $available قطعة',
+                                    style: TextStyle(
+                                      color: available > 0 ? gold : Colors.redAccent,
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  if (belowCost) ...[
+                                    const SizedBox(height: 3),
+                                    const Text(
+                                      'تنبيه: سعر البيع أقل من سعر الشراء',
+                                      style: TextStyle(color: Colors.redAccent, fontSize: 13, fontWeight: FontWeight.bold),
+                                    ),
+                                  ],
+                                ],
+                              )),
+                              const SizedBox(width: 10),
+                              Icon(
+                                available > 0 || !widget.isSale ? Icons.add_circle : Icons.block,
+                                color: available > 0 || !widget.isSale ? gold : Colors.redAccent,
+                                size: 30,
+                              ),
+                            ]),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+            ),
+          ]),
+        ));
+      }),
+    );
     if (result == null || !mounted) return;
     final p = products.firstWhere((e) => e.id == result);
     _addProduct(p);
