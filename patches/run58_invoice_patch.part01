@@ -1,0 +1,118 @@
+        unitCost: (d['purchasePrice'] as num?)?.toDouble(),
+      ));
+    }
+    if (refresh && mounted) setState(() {});
+  }
+
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> _matchingProducts(String query) {
+    final q = query.trim().toLowerCase();
+    return products.where((p) {
+      final d = p.data();
+      final hay = [d['name'], d['category'], d['code'], d['barcode']]
+        .map((v) => '${v ?? ''}'.toLowerCase()).join(' ');
+      return q.isEmpty || hay.contains(q);
+    }).toList();
+  }
+
+  Future<void> _chooseProduct({bool scannerMode = false}) async {
+    if (savedRef != null) return;
+    String query = scannerMode ? productSearch.text.trim() : '';
+    final result = await showDialog<String>(context: context,
+      builder: (dialog) => StatefulBuilder(builder: (dialog, update) {
+        final filtered = _matchingProducts(query);
+        return AlertDialog(
+          title: Text(scannerMode ? 'ماسح / بحث بالكود' : 'إضافة منتج'),
+          content: SizedBox(width: 520, height: 470, child: Column(children: [
+            TextField(
+              autofocus: true,
+              controller: scannerMode && productSearch.text.isNotEmpty ? productSearch : null,
+              decoration: InputDecoration(
+                prefixIcon: Icon(scannerMode ? Icons.qr_code_scanner : Icons.search),
+                labelText: scannerMode ? 'امسح الباركود أو اكتب الكود/الاسم' : 'بحث عن منتج بالاسم أو الكود',
+              ),
+              onChanged: (v) => update(() => query = v.trim()),
+              onSubmitted: (_) {
+                if (filtered.length == 1) Navigator.pop(dialog, filtered.first.id);
+              },
+            ),
+            const SizedBox(height: 8),
+            Expanded(child: filtered.isEmpty
+              ? const Center(child: Text('لا توجد نتائج'))
+              : ListView(children: filtered.map((p) {
+                  final d = p.data();
+                  return ListTile(
+                    leading: const Icon(Icons.inventory_2_outlined, color: gold),
+                    title: Text('${d['name'] ?? ''}'),
+                    subtitle: Text(widget.isSale
+                      ? 'سعر البيع: ${((d['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ج.م'
+                      : 'سعر الشراء: ${((d['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ج.م'),
+                    trailing: const Icon(Icons.add_circle, color: gold),
+                    onTap: () => Navigator.pop(dialog, p.id),
+                  );
+                }).toList())),
+          ])),
+        );
+      }));
+    if (result == null || !mounted) return;
+    final p = products.firstWhere((e) => e.id == result);
+    _addProduct(p);
+    productSearch.clear();
+  }
+
+  Future<void> _addFromSearch() async {
+    final q = productSearch.text.trim();
+    if (q.isEmpty) return _chooseProduct();
+    final matches = _matchingProducts(q);
+    if (matches.length == 1) {
+      _addProduct(matches.first);
+      productSearch.clear();
+    } else {
+      await _chooseProduct(scannerMode: true);
+    }
+  }
+
+  Future<void> _chooseAccount() async {
+    if (savedRef != null) return;
+    if (accounts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(widget.isSale ? 'لا يوجد عملاء مسجلون' : 'لا يوجد موردون مسجلون')));
+      return;
+    }
+    String query = '';
+    final result = await showModalBottomSheet<String>(context: context, isScrollControlled: true,
+      builder: (sheet) => StatefulBuilder(builder: (sheet, update) {
+        final filtered = accounts.where((a) {
+          final d = a.data();
+          final hay = '${d['name'] ?? ''} ${d['phone'] ?? ''}'.toLowerCase();
+          return hay.contains(query.toLowerCase());
+        }).toList();
+        return SafeArea(child: SizedBox(height: MediaQuery.sizeOf(sheet).height * .72,
+          child: Column(children: [
+            Padding(padding: const EdgeInsets.all(12), child: TextField(
+              autofocus: true,
+              decoration: InputDecoration(prefixIcon: const Icon(Icons.search),
+                labelText: widget.isSale ? 'بحث عن عميل' : 'بحث عن مورد'),
+              onChanged: (v) => update(() => query = v.trim()),
+            )),
+            Expanded(child: ListView(children: filtered.map((a) {
+              final d = a.data();
+              return ListTile(
+                leading: const Icon(Icons.person, color: gold),
+                title: Text('${d['name'] ?? ''}'),
+                subtitle: Text('هاتف: ${d['phone'] ?? ''} • الرصيد: ${((d['balance'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)} ج.م'),
+                onTap: () => Navigator.pop(sheet, a.id),
+              );
+            }).toList())),
+          ]));
+      }));
+    if (result != null && mounted) setState(() => selectedAccountId = result);
+  }
+
+  Future<void> _editLine(InvoiceLineDraft line) async {
+    if (savedRef != null) return;
+    final qty = TextEditingController(text: line.quantity.toString());
+    final price = TextEditingController(text: line.price.toStringAsFixed(2));
+    await showDialog<void>(context: context, builder: (dialog) => AlertDialog(
+      title: Text(line.name),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(controller: qty, keyboardType: TextInputType.number,
