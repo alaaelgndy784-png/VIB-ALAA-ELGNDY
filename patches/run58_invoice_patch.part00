@@ -131,25 +131,26 @@ class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
 
   int _availableFor(String productId) => stockAvailable[productId] ?? 0;
 
-  void _addProduct(QueryDocumentSnapshot<Map<String, dynamic>> p, {bool refresh = true}) {
+  void _addProduct(QueryDocumentSnapshot<Map<String, dynamic>> p, {bool refresh = true, int quantity = 1}) {
+    if (quantity <= 0) return;
     final existing = lines.where((e) => e.productId == p.id).toList();
     if (widget.isSale) {
       final already = existing.isEmpty ? 0 : existing.first.quantity;
       final available = _availableFor(p.id);
-      if (already >= available) {
+      if (already + quantity > available) {
         if (mounted && refresh) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            content: Text('لا يمكن إضافة كمية أخرى. المتوفر من ${p.data()['name'] ?? ''}: $available فقط')));
+            content: Text('الكمية المطلوبة ${already + quantity} أكبر من المتوفر $available فقط')));
         }
         return;
       }
     }
     if (existing.isNotEmpty) {
-      existing.first.quantity += 1;
+      existing.first.quantity += quantity;
     } else {
       final d = p.data();
       lines.add(InvoiceLineDraft(
         productId: p.id,
         name: '${d['name'] ?? ''}',
-        quantity: 1,
+        quantity: quantity,
         price: ((d[widget.isSale ? 'price' : 'purchasePrice'] as num?)?.toDouble() ?? 0),
