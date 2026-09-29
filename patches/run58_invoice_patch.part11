@@ -1,36 +1,4 @@
-# Put backup/reset directly on the visible RepairsPage and make AppSettings actions launch immediately.
-text = text.replace(
-    "class AppSettings extends StatefulWidget {\n  const AppSettings({super.key});",
-    "class AppSettings extends StatefulWidget {\n"
-    "  final String? initialAction;\n"
-    "  const AppSettings({super.key, this.initialAction});",
-    1
-)
-
-old_load_end = """    if (mounted) setState(() => loading = false);
-  }
-
-  Future<void> chooseLogo() async {"""
-new_load_end = """    if (mounted) {
-      setState(() => loading = false);
-      if (widget.initialAction != null) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          if (widget.initialAction == 'backup') {
-            createAndShareBackup();
-          } else if (widget.initialAction == 'reset') {
-            resetProgramData();
-          }
-        });
-      }
-    }
-  }
-
-  Future<void> chooseLogo() async {"""
-if old_load_end not in text:
-    raise RuntimeError('AppSettings load end not found')
-text = text.replace(old_load_end, new_load_end, 1)
-
+# Put backup/reset entries directly on the visible RepairsPage.
 repairs_old = """      const ListTile(
         leading: Icon(Icons.fingerprint, color: gold),
         title: Text('البصمة'),
@@ -53,7 +21,7 @@ repairs_new = """      const ListTile(
           style: TextStyle(fontWeight: FontWeight.bold),
         ),
         subtitle: const Text(
-          'يجمع بيانات البرنامج في ملف واحد ثم افتح Gmail وأرسله إلى إيميلك',
+          'اضغط هنا لفتح النسخ الاحتياطي ثم اختر Gmail لإرسال النسخة إلى إيميلك',
         ),
         trailing: const Icon(Icons.chevron_left, color: gold),
         onTap: () => Navigator.push(
@@ -61,37 +29,27 @@ repairs_new = """      const ListTile(
           MaterialPageRoute(
             builder: (_) => Scaffold(
               appBar: AppBar(title: const Text('النسخة الاحتياطية')),
-              body: const AppSettings(initialAction: 'backup'),
+              body: const AppSettings(),
             ),
           ),
         ),
       ),
       ListTile(
-        leading: const Icon(
-          Icons.restart_alt,
-          color: Colors.redAccent,
-          size: 30,
-        ),
+        leading: const Icon(Icons.restart_alt, color: Colors.redAccent, size: 30),
         title: const Text(
           'تصفير البرنامج',
-          style: TextStyle(
-            color: Colors.redAccent,
-            fontWeight: FontWeight.bold,
-          ),
+          style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold),
         ),
         subtitle: const Text(
-          'تصفير الفواتير والحركات والمخزون والأرصدة والصندوق مع الاحتفاظ بالأصناف والأسعار والإعدادات',
+          'اضغط هنا لتصفير الفواتير والحركات والمخزون والأرصدة والصندوق',
         ),
-        trailing: const Icon(
-          Icons.chevron_left,
-          color: Colors.redAccent,
-        ),
+        trailing: const Icon(Icons.chevron_left, color: Colors.redAccent),
         onTap: () => Navigator.push(
           context,
           MaterialPageRoute(
             builder: (_) => Scaffold(
-              appBar: AppBar(title: const Text('تصفير البرنامج')),
-              body: const AppSettings(initialAction: 'reset'),
+              appBar: AppBar(title: const Text('تصفير البرنامج والنسخ الاحتياطي')),
+              body: const AppSettings(),
             ),
           ),
         ),
@@ -103,6 +61,5 @@ repairs_new = """      const ListTile(
 if repairs_old not in text:
     raise RuntimeError('Visible RepairsPage marker not found')
 text = text.replace(repairs_old, repairs_new, 1)
-
 p.write_text(text, encoding='utf-8')
-print('visible RepairsPage backup/reset buttons added')
+print('visible RepairsPage backup/reset entries added')
