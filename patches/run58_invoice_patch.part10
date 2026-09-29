@@ -1,0 +1,88 @@
+# Put backup/reset access directly on the visible Repairs & Fixes screen.
+# This screen is from the original Run58 source, so locate it by its visible Arabic labels.
+needle = "فواتير المبيعات والمرتجعات"
+pos = text.find(needle)
+if pos < 0:
+    raise RuntimeError("Repairs screen marker not found")
+
+class_start = text.rfind("class ", 0, pos)
+next_class = text.find("\nclass ", pos)
+if next_class < 0:
+    next_class = len(text)
+segment = text[class_start:next_class]
+
+# Insert two visible cards immediately before the end of this screen's ListView children.
+# We navigate to AppSettings, where the working backup/reset actions are implemented.
+anchor = "البصمة"
+anchor_pos = segment.find(anchor)
+if anchor_pos < 0:
+    raise RuntimeError("Biometric marker not found in Repairs screen")
+
+# Find a safe insertion point after the biometric ListTile/card by locating the final children close.
+# Insert before the last closing list bracket in this class.
+insert_rel = segment.rfind("])")
+if insert_rel < 0:
+    raise RuntimeError("Repairs children close not found")
+
+cards = r'''
+          const SizedBox(height: 12),
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.cloud_upload, color: gold, size: 30),
+              title: const Text(
+                'عمل نسخة احتياطية للبرنامج',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              subtitle: const Text(
+                'فتح النسخ الاحتياطي وإرساله إلى Gmail أو البريد',
+              ),
+              trailing: const Icon(Icons.chevron_left, color: gold),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => Scaffold(
+                    appBar: AppBar(title: const Text('النسخ الاحتياطي')),
+                    body: const AppSettings(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+          Card(
+            child: ListTile(
+              leading: const Icon(
+                Icons.restart_alt,
+                color: Colors.redAccent,
+                size: 32,
+              ),
+              title: const Text(
+                'تصفير البرنامج بضغطة واحدة',
+                style: TextStyle(
+                  color: Colors.redAccent,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              subtitle: const Text(
+                'فتح شاشة التصفير مع التأكيد قبل حذف بيانات التشغيل',
+              ),
+              trailing: const Icon(
+                Icons.chevron_left,
+                color: Colors.redAccent,
+              ),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => Scaffold(
+                    appBar: AppBar(title: const Text('تصفير البرنامج')),
+                    body: const AppSettings(),
+                  ),
+                ),
+              ),
+            ),
+          ),
+'''
+
+segment = segment[:insert_rel] + cards + segment[insert_rel:]
+text = text[:class_start] + segment + text[next_class:]
+p.write_text(text, encoding='utf-8')
+print('repairs screen backup/reset buttons patched')
