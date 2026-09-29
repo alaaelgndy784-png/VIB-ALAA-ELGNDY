@@ -39,6 +39,12 @@ jobs:
           mkdir -p assets/fonts
           cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf assets/fonts/DejaVuSans.ttf
 
+      - name: Upload patched source for inspection
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-RUN58-PATCHED-SOURCE
+          path: VIB-SALES-RUN58/lib/main.dart
+
       - name: Create Android platform
         working-directory: VIB-SALES-RUN58
         run: flutter create --platforms=android --org com.alaa.vibsales --project-name manager .
