@@ -479,6 +479,7 @@ class Management extends StatelessWidget {
     Card(child: ListTile(leading: const Icon(Icons.history, color: gold), title: const Text('سجل حركات الحسابات'), subtitle: const Text('التحصيلات والمدفوعات محفوظة بالتاريخ'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('حركات الحسابات')), body: const AccountMovements()))))),
     Card(child: ListTile(leading: const Icon(Icons.swap_vert, color: gold), title: const Text('تقرير حركة صنف'), subtitle: const Text('مبيعات ومشتريات ومرتجعات ورصيد كل حركة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير حركة صنف')), body: const ItemMovementReport()))))),
     Card(child: ListTile(leading: const Icon(Icons.settings, color: gold), title: const Text('الإعدادات والطباعة'), subtitle: const Text('بيانات الشركة وتجهيز الفواتير للطباعة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الإعدادات')), body: const AppSettings()))))),
+    Card(child: ListTile(leading: const Icon(Icons.backup_outlined, color: gold), title: const Text('النسخ الاحتياطي'), subtitle: const Text('حفظ نسخة من بيانات البرنامج'), onTap: () => createCloudBackup(context))),
   ]);
 }
 
@@ -1172,6 +1173,22 @@ Future<void> cashDialog(BuildContext context, bool deposit) async {
   ));
 }
 
+Future<void> createCloudBackup(BuildContext context) async {
+  try {
+    final names=['products','stock','invoiceHeaders','sales','purchases','salesReturns','purchaseReturns','accountMovements','customers','suppliers','branches'];
+    final data=<String,dynamic>{};
+    for(final name in names){
+      final q=await db.collection(name).get();
+      data[name]=q.docs.map((d)=>{'id':d.id,...d.data()}).toList();
+    }
+    final main=(await db.collection('settings').doc('main').get()).data();
+    final cash=(await db.collection('settings').doc('cash').get()).data();
+    await db.collection('backups').add({'createdAt':FieldValue.serverTimestamp(),'createdBy':FirebaseAuth.instance.currentUser!.uid,'settingsMain':main,'settingsCash':cash,'data':data});
+    if(context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تم إنشاء النسخة الاحتياطية بنجاح')));
+  } catch(e) {
+    if(context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر إنشاء النسخة الاحتياطية: $e')));
+  }
+}
 class AppSettings extends StatefulWidget {
   const AppSettings({super.key});
   @override State<AppSettings> createState() => _AppSettingsState();
