@@ -1003,8 +1003,54 @@ class Management extends StatelessWidget {
     Card(child: ListTile(leading: const Icon(Icons.people, color: gold), title: const Text('الموظفون والصلاحيات'), subtitle: const Text('تفعيل الموظف وتحديد فرعه'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الموظفون')), body: const Staff()))))),
     Card(child: ListTile(leading: const Icon(Icons.history, color: gold), title: const Text('سجل حركات الحسابات'), subtitle: const Text('التحصيلات والمدفوعات محفوظة بالتاريخ'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('حركات الحسابات')), body: const AccountMovements()))))),
     Card(child: ListTile(leading: const Icon(Icons.swap_vert, color: gold), title: const Text('تقرير حركة صنف'), subtitle: const Text('مبيعات ومشتريات ومرتجعات ورصيد كل حركة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير حركة صنف')), body: const ItemMovementReport()))))),
+    Card(child: ListTile(leading: const Icon(Icons.build_circle, color: gold), title: const Text('الضبط والإصلاحات'), subtitle: const Text('إرجاع فواتير المبيعات والمشتريات'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RepairsPage())))),
     Card(child: ListTile(leading: const Icon(Icons.settings, color: gold), title: const Text('الإعدادات والطباعة'), subtitle: const Text('بيانات الشركة وتجهيز الفواتير للطباعة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الإعدادات')), body: const AppSettings()))))),
   ]);
+}
+
+class RepairsPage extends StatelessWidget {
+  const RepairsPage({super.key});
+  @override Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('الضبط والإصلاحات')),
+    body: ListView(padding: const EdgeInsets.all(16), children: [
+      Card(child: ListTile(leading: const Icon(Icons.undo, color: gold), title: const Text('إرجاع فاتورة المبيعات'), subtitle: const Text('اختيار فاتورة وإرجاع المخزون وحساب العميل'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ReturnInvoicePicker(type: 'sales'))))),
+      Card(child: ListTile(leading: const Icon(Icons.undo, color: gold), title: const Text('إرجاع فاتورة المشتريات'), subtitle: const Text('اختيار فاتورة وإرجاع المخزون وحساب المورد'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ReturnInvoicePicker(type: 'purchases'))))),
+    ]),
+  );
+}
+class ReturnInvoicePicker extends StatefulWidget {
+  final String type;
+  const ReturnInvoicePicker({super.key, required this.type});
+  @override State<ReturnInvoicePicker> createState() => _ReturnInvoicePickerState();
+}
+class _ReturnInvoicePickerState extends State<ReturnInvoicePicker> {
+  String search = '';
+  @override Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(widget.type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات')),
+    body: Column(children: [
+      Padding(padding: const EdgeInsets.all(12), child: TextField(decoration: const InputDecoration(prefixIcon: Icon(Icons.search), labelText: 'بحث برقم الفاتورة أو الاسم'), onChanged: (v) => setState(() => search = v.trim().toLowerCase()))),
+      Expanded(child: StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
+        stream: db.collection('invoiceHeaders').where('type', isEqualTo: widget.type).snapshots(),
+        builder: (context, snap) {
+          if (snap.hasError) return const Center(child: Text('تعذر تحميل الفواتير'));
+          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          final rows = snap.data!.docs.where((d) {
+            final x=d.data();
+            final hay=(x['invoiceNumber'].toString()+' '+(x['customerName'] ?? '').toString()+' '+(x['supplierName'] ?? '').toString()).toLowerCase();
+            return search.isEmpty || hay.contains(search);
+          }).toList()..sort((a,b)=>((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch??0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch??0));
+          if (rows.isEmpty) return const Center(child: Text('لا توجد فواتير مطابقة'));
+          return ListView(children: rows.map((d) {
+            final x=d.data(), returned=x['status']=='returned';
+            final name=widget.type=='sales' ? (x['customerName'] ?? '') : (x['supplierName'] ?? '');
+            final number=(x['invoiceNumber'] ?? d.id.substring(0,6)).toString();
+            final total=((x['total'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
+            return Card(child: ListTile(title: Text('فاتورة '+number+' • '+name.toString()), subtitle: Text(formatDate(x['createdAt'])+(returned ? ' • مرتجع' : '')), trailing: Text(total+' ج.م'), enabled: !returned, onTap: returned ? null : () => confirmReturn(context, widget.type, d.id, x)));
+          }).toList());
+        },
+      )),
+    ]),
+  );
 }
 
 class InventoryAudit extends StatefulWidget {
