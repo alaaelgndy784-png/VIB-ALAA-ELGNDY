@@ -1,0 +1,21 @@
+      'paymentStatus': currentDue <= 0 ? 'مدفوع' : paid <= 0 ? 'آجل' : 'جزئي',
+      'status': 'completed',
+      'actorId': actor,
+      'grouped': true,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+
+    tx.set(db.collection('accountMovements').doc(), {
+      'accountType': 'suppliers', 'accountId': supplierId, 'accountName': supplier['name'],
+      'kind': 'purchase', 'amount': total, 'paid': paid, 'balanceBefore': previous,
+      'balanceAfter': finalBalance, 'referenceId': invoice.id,
+      'createdAt': FieldValue.serverTimestamp(), 'actorId': actor,
+    });
+  });
+  return invoice;
+}'''
+replace_between('Future<DocumentReference<Map<String, dynamic>>> saveManagerGroupedPurchase({',
+                'String _ocrKey', purchase_save)
+
+p.write_text(text, encoding='utf-8')
+print('patched', len(text), 'chars')
