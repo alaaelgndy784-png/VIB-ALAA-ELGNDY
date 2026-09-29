@@ -1,4 +1,4 @@
-name: Build Independent VIB Sales Apps
+name: Build VIB Icons Receipts Backup
 
 on:
   workflow_dispatch:
