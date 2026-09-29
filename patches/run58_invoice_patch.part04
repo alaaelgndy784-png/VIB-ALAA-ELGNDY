@@ -63,7 +63,14 @@
         centerTitle: true,
         leading: IconButton(icon: const Icon(Icons.arrow_back, color: gold), onPressed: () => Navigator.pop(context)),
         actions: [Padding(padding: const EdgeInsetsDirectional.only(end: 8), child: FilledButton.icon(
-          onPressed: _printDraft, icon: const Icon(Icons.print), label: const Text('طباعة')))],
+          style: FilledButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+            minimumSize: const Size(0, 40),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          ),
+          onPressed: _printDraft,
+          icon: const Icon(Icons.print, size: 18),
+          label: const Text('طباعة', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600))))],
       ),
       body: SingleChildScrollView(padding: const EdgeInsets.all(14), child: Column(children: [
         _topCard(), const SizedBox(height: 14),
