@@ -1,4 +1,4 @@
-name: Build VIB Requested Icon Dashboard
+name: Build VIB Dashboard Features 2
 
 on:
   workflow_dispatch:
