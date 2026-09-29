@@ -1,0 +1,332 @@
+# Add backup-to-email/share and one-button reset to settings.
+if "package:share_plus/share_plus.dart" not in text:
+    text = text.replace(
+        "import 'package:url_launcher/url_launcher.dart';",
+        "import 'package:url_launcher/url_launcher.dart';\n"
+        "import 'package:path_provider/path_provider.dart';\n"
+        "import 'package:share_plus/share_plus.dart';"
+    )
+
+text = text.replace(
+    "  bool loading = true, saving = false;",
+    "  bool loading = true, saving = false, backingUp = false, resetting = false;",
+    1
+)
+
+settings_build_marker = "  @override Widget build(BuildContext context) => loading ? const Center(child: CircularProgressIndicator()) : ListView(padding: const EdgeInsets.all(16), children: ["
+settings_start = text.index("class _AppSettingsState extends State<AppSettings> {")
+settings_build = text.index(settings_build_marker, settings_start)
+
+methods = r'''
+  dynamic _backupSafeValue(dynamic value) {
+    if (value == null || value is String || value is num || value is bool) {
+      return value;
+    }
+    if (value is Timestamp) {
+      return {
+        '__vibType': 'timestamp',
+        'iso': value.toDate().toUtc().toIso8601String(),
+      };
+    }
+    if (value is GeoPoint) {
+      return {
+        '__vibType': 'geopoint',
+        'latitude': value.latitude,
+        'longitude': value.longitude,
+      };
+    }
+    if (value is DocumentReference) {
+      return {
+        '__vibType': 'reference',
+        'path': value.path,
+      };
+    }
+    if (value is Blob) {
+      return {
+        '__vibType': 'blob',
+        'base64': base64Encode(value.bytes),
+      };
+    }
+    if (value is Map) {
+      return value.map(
+        (key, item) => MapEntry('$key', _backupSafeValue(item)),
+      );
+    }
+    if (value is Iterable) {
+      return value.map(_backupSafeValue).toList();
+    }
+    return value.toString();
+  }
+
+  Future<void> createAndShareBackup() async {
+    if (backingUp || resetting) return;
+    setState(() => backingUp = true);
+
+    try {
+      const collections = <String>[
+        'products',
+        'stock',
+        'branches',
+        'customers',
+        'suppliers',
+        'sales',
+        'purchases',
+        'salesReturns',
+        'purchaseReturns',
+        'stockAdjustments',
+        'stockMovements',
+        'accountMovements',
+        'settings',
+        'users',
+      ];
+
+      final backupCollections = <String, dynamic>{};
+      var documentCount = 0;
+
+      for (final collectionName in collections) {
+        final snapshot = await db.collection(collectionName).get();
+        documentCount += snapshot.docs.length;
+        backupCollections[collectionName] = snapshot.docs
+            .map((doc) => {
+                  'id': doc.id,
+                  'data': _backupSafeValue(doc.data()),
+                })
+            .toList();
+      }
+
+      final now = DateTime.now();
+      final backup = <String, dynamic>{
+        'backupFormat': 'VIB_SALES_BACKUP',
+        'backupVersion': 1,
+        'createdAt': now.toUtc().toIso8601String(),
+        'createdByUid': FirebaseAuth.instance.currentUser?.uid,
+        'createdByEmail': FirebaseAuth.instance.currentUser?.email,
+        'documentCount': documentCount,
+        'collections': backupCollections,
+      };
+
+      final directory = await getTemporaryDirectory();
+      final stamp = DateFormat('yyyyMMdd_HHmmss').format(now);
+      final file = File('${directory.path}/VIB_BACKUP_$stamp.json');
+      await file.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(backup),
+        flush: true,
+      );
+
+      if (!mounted) return;
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path)],
+          subject: 'نسخة احتياطية VIB - ${DateFormat('dd/MM/yyyy HH:mm').format(now)}',
+          text:
+              'نسخة احتياطية كاملة لبرنامج VIB. اختر Gmail أو البريد واحفظ الملف في إيميلك. عدد السجلات: $documentCount',
+        ),
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'تم تجهيز النسخة الاحتياطية ($documentCount سجل). اختر Gmail لإرسالها إلى إيميلك.',
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر إنشاء النسخة الاحتياطية: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => backingUp = false);
+    }
+  }
+
+  Future<void> _deleteCollectionDocs(String collectionName) async {
+    while (true) {
+      final snapshot = await db.collection(collectionName).limit(350).get();
+      if (snapshot.docs.isEmpty) return;
+
+      final batch = db.batch();
+      for (final doc in snapshot.docs) {
+        batch.delete(doc.reference);
+      }
+      await batch.commit();
+    }
+  }
+
+  Future<void> _zeroAccountBalances(String collectionName) async {
+    final snapshot = await db.collection(collectionName).get();
+    for (var offset = 0; offset < snapshot.docs.length; offset += 350) {
+      final batch = db.batch();
+      final end = (offset + 350 < snapshot.docs.length)
+          ? offset + 350
+          : snapshot.docs.length;
+      for (var i = offset; i < end; i++) {
+        batch.set(
+          snapshot.docs[i].reference,
+          {
+            'balance': 0,
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true),
+        );
+      }
+      await batch.commit();
+    }
+  }
+
+  Future<void> resetProgramData() async {
+    if (resetting || backingUp) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Row(children: [
+          Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+          SizedBox(width: 8),
+          Expanded(child: Text('تصفير البرنامج')),
+        ]),
+        content: const Text(
+          'سيتم حذف كل فواتير المبيعات والمشتريات والحركات والمصروفات '
+          'وتصفير المخزون وأرصدة العملاء والموردين والصندوق.\n\n'
+          'الأصناف والأسعار وأسماء العملاء والموردين والموظفين وإعدادات الطباعة '
+          'ستظل موجودة.\n\n'
+          'يفضل عمل نسخة احتياطية قبل التصفير.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(dialog, true),
+            icon: const Icon(Icons.restart_alt),
+            label: const Text('تصفير البرنامج'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+    setState(() => resetting = true);
+
+    try {
+      const collectionsToClear = <String>[
+        'sales',
+        'purchases',
+        'salesReturns',
+        'purchaseReturns',
+        'stockAdjustments',
+        'stockMovements',
+        'accountMovements',
+        'stock',
+      ];
+
+      for (final collectionName in collectionsToClear) {
+        await _deleteCollectionDocs(collectionName);
+      }
+
+      await _zeroAccountBalances('customers');
+      await _zeroAccountBalances('suppliers');
+
+      await db.collection('settings').doc('cash').set(
+        {
+          'balance': 0,
+          'updatedAt': FieldValue.serverTimestamp(),
+          'resetBy': FirebaseAuth.instance.currentUser?.uid,
+        },
+        SetOptions(merge: true),
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تم تصفير البرنامج بنجاح وأصبح جاهزًا لبدء حسابات جديدة'),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر تصفير البرنامج: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => resetting = false);
+    }
+  }
+
+'''
+
+text = text[:settings_build] + methods + text[settings_build:]
+
+old_tail = """    const Text('طابعة البلوتوث تظهر في شاشة الطباعة إذا كانت متصلة بالموبايل ولها خدمة طباعة متوافقة.'),
+    const SizedBox(height: 14), const Card(child: ListTile(leading: Icon(Icons.cloud_done, color: gold), title: Text('حفظ البيانات طويل المدة'), subtitle: Text('الفواتير والحركات لا تُحذف وتظل محفوظة في قاعدة البيانات.'))),
+  ]);"""
+
+new_tail = """    const Text('طابعة البلوتوث تظهر في شاشة الطباعة إذا كانت متصلة بالموبايل ولها خدمة طباعة متوافقة.'),
+    const SizedBox(height: 18),
+    const Divider(),
+    const SizedBox(height: 8),
+    const Text('النسخ الاحتياطي وتصفير البرنامج',
+      style: TextStyle(color: gold, fontSize: 20, fontWeight: FontWeight.bold)),
+    const SizedBox(height: 10),
+    Card(
+      child: ListTile(
+        leading: const Icon(Icons.cloud_upload, color: gold, size: 30),
+        title: const Text('عمل نسخة احتياطية وإرسالها للإيميل',
+          style: TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: const Text(
+          'يجمع بيانات البرنامج في ملف واحد ثم يفتح المشاركة؛ اختر Gmail وأرسل الملف إلى إيميلك.',
+        ),
+        trailing: backingUp
+          ? const SizedBox(width: 24, height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2, color: gold))
+          : const Icon(Icons.chevron_left),
+        onTap: backingUp || resetting ? null : createAndShareBackup,
+      ),
+    ),
+    const SizedBox(height: 8),
+    Card(
+      child: ListTile(
+        leading: const Icon(Icons.restart_alt, color: Colors.redAccent, size: 32),
+        title: const Text('تصفير البرنامج',
+          style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+        subtitle: const Text(
+          'يمسح الفواتير والحركات والمصروفات ويصفر المخزون والأرصدة والصندوق، مع الاحتفاظ بالأصناف والأسعار والإعدادات.',
+        ),
+        trailing: resetting
+          ? const SizedBox(width: 24, height: 24,
+              child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.chevron_left, color: Colors.redAccent),
+        onTap: resetting || backingUp ? null : resetProgramData,
+      ),
+    ),
+    const SizedBox(height: 14),
+    const Card(child: ListTile(
+      leading: Icon(Icons.shield_outlined, color: gold),
+      title: Text('حماية البيانات'),
+      subtitle: Text('زر التصفير يطلب تأكيدًا قبل التنفيذ. اعمل نسخة احتياطية قبل أي تصفير نهائي.'),
+    )),
+  ]);"""
+
+if old_tail not in text:
+    raise RuntimeError('AppSettings tail marker not found')
+text = text.replace(old_tail, new_tail, 1)
+
+# Rename the settings entry so the user can find backup/reset under ضبط وصلاحيات.
+text = text.replace(
+    "title: const Text('الإعدادات والطباعة'), subtitle: const Text('بيانات الشركة وتجهيز الفواتير للطباعة')",
+    "title: const Text('الضبط والصلاحيات'), subtitle: const Text('الإعدادات والطباعة والنسخ الاحتياطي وتصفير البرنامج')",
+    1
+)
+text = text.replace(
+    "Scaffold(appBar: AppBar(title: const Text('الإعدادات')), body: const AppSettings())",
+    "Scaffold(appBar: AppBar(title: const Text('الضبط والصلاحيات')), body: const AppSettings())",
+    1
+)
+
+p.write_text(text, encoding='utf-8')
+print('backup/reset settings patched')
