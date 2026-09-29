@@ -1,0 +1,447 @@
+# Inventory audit enhancements requested after invoice table fixes.
+start = text.index('class _InventoryAuditState extends State<InventoryAudit> {')
+end = text.index('class ProfitReport extends StatefulWidget', start)
+
+inventory_audit = r'''class _InventoryAuditState extends State<InventoryAudit> {
+  String category = 'الكل';
+  bool showAudit = false;
+
+  Future<void> _deleteFromInventory(
+    String productId,
+    String productName,
+    int quantity,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialog) => AlertDialog(
+        title: const Text('حذف الصنف من الجرد'),
+        content: Text(
+          'هل تريد حذف "$productName" من الجرد؟\n'
+          'الكمية الحالية: $quantity\n\n'
+          'سيتم تصفير/حذف مخزونه وإخفاؤه من الأصناف النشطة، '
+          'مع الاحتفاظ بالفواتير والحركات القديمة.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialog, false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
+            onPressed: () => Navigator.pop(dialog, true),
+            icon: const Icon(Icons.delete_forever),
+            label: const Text('حذف من الجرد'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final stockDocs = await db
+          .collection('stock')
+          .where('productId', isEqualTo: productId)
+          .get();
+      final batch = db.batch();
+      final actor = FirebaseAuth.instance.currentUser!.uid;
+
+      batch.update(db.collection('products').doc(productId), {
+        'active': false,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      for (final stockDoc in stockDocs.docs) {
+        batch.delete(stockDoc.reference);
+      }
+
+      final movementRef = db.collection('stockMovements').doc();
+      batch.set(movementRef, {
+        'productId': productId,
+        'productName': productName,
+        'branchId': 'all',
+        'kind': 'inventory_delete',
+        'quantity': -quantity,
+        'balanceAfter': 0,
+        'referenceId': productId,
+        'actorId': actor,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      await batch.commit();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تم حذف $productName من الجرد')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('تعذر حذف الصنف من الجرد: $e')),
+        );
+      }
+    }
+  }
+
+  Widget _totalCard(String title, double value, IconData icon) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+    decoration: BoxDecoration(
+      border: Border.all(color: gold.withValues(alpha: .65)),
+      borderRadius: BorderRadius.circular(14),
+      color: gold.withValues(alpha: .07),
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(children: [
+          Icon(icon, color: gold, size: 20),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              title,
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+            ),
+          ),
+        ]),
+        const SizedBox(height: 7),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(
+            '${value.toStringAsFixed(2)} ج.م',
+            style: const TextStyle(
+              color: gold,
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  @override
+  Widget build(BuildContext context) =>
+      StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: db.collection('products').snapshots(),
+        builder: (context, products) {
+          if (products.hasError) {
+            return const Center(child: Text('تعذر تحميل الأصناف'));
+          }
+          if (!products.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final rows = products.data!.docs
+              .where((p) => p.data()['active'] == true)
+              .toList();
+          final categories = {
+            'الكل',
+            ...rows.map((p) => '${p.data()['category'] ?? 'غير مصنف'}'),
+          }.toList()
+            ..sort();
+          final selected =
+              categories.contains(category) ? category : 'الكل';
+
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: db.collection('stock').snapshots(),
+            builder: (context, stock) {
+              if (stock.hasError) {
+                return const Center(child: Text('تعذر تحميل المخزون'));
+              }
+              if (!stock.hasData) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              final amounts = <String, int>{};
+              final mainAmounts = <String, int>{};
+              for (final entry in stock.data!.docs) {
+                final data = entry.data();
+                final id = '${data['productId'] ?? ''}';
+                if (id.isNotEmpty) {
+                  final quantity =
+                      (data['quantity'] as num?)?.toInt() ?? 0;
+                  amounts[id] = (amounts[id] ?? 0) + quantity;
+                  if (data['branchId'] == 'main') {
+                    mainAmounts[id] =
+                        (mainAmounts[id] ?? 0) + quantity;
+                  }
+                }
+              }
+
+              final filtered = rows
+                  .where((p) =>
+                      selected == 'الكل' ||
+                      '${p.data()['category'] ?? 'غير مصنف'}' == selected)
+                  .toList()
+                ..sort((a, b) => '${a.data()['name']}'
+                    .compareTo('${b.data()['name']}'));
+
+              final totalQuantity = filtered.fold<int>(
+                0,
+                (sum, p) => sum + (amounts[p.id] ?? 0),
+              );
+              final knownCost = filtered.fold<double>(0, (sum, p) {
+                final cost = p.data()['purchasePrice'];
+                return sum +
+                    (cost is num
+                        ? (amounts[p.id] ?? 0) * cost.toDouble()
+                        : 0);
+              });
+              final saleValue = filtered.fold<double>(
+                0,
+                (sum, p) =>
+                    sum +
+                    (amounts[p.id] ?? 0) *
+                        ((p.data()['price'] as num?)?.toDouble() ?? 0),
+              );
+              final missingCost = filtered
+                  .where((p) =>
+                      p.data()['purchasePrice'] is! num &&
+                      (amounts[p.id] ?? 0) > 0)
+                  .length;
+
+              return Column(children: [
+                Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(children: [
+                    Row(children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          icon: const Icon(Icons.inventory_2),
+                          label: Text(
+                            showAudit ? 'إخفاء الجرد' : 'جرد المخزون',
+                          ),
+                          onPressed: () =>
+                              setState(() => showAudit = !showAudit),
+                        ),
+                      ),
+                    ]),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String>(
+                      value: selected,
+                      decoration:
+                          const InputDecoration(labelText: 'الفئة'),
+                      items: categories
+                          .map((v) => DropdownMenuItem(
+                                value: v,
+                                child: Text(v),
+                              ))
+                          .toList(),
+                      onChanged: (v) =>
+                          setState(() => category = v ?? 'الكل'),
+                    ),
+                    if (showAudit) ...[
+                      const SizedBox(height: 12),
+                      Row(children: [
+                        Expanded(
+                          child: _totalCard(
+                            'إجمالي الجرد بسعر التكلفة',
+                            knownCost,
+                            Icons.shopping_cart_checkout,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _totalCard(
+                            'إجمالي الجرد بسعر البيع',
+                            saleValue,
+                            Icons.sell,
+                          ),
+                        ),
+                      ]),
+                      const SizedBox(height: 10),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 9,
+                        ),
+                        decoration: BoxDecoration(
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: .14),
+                          ),
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          'عدد الأصناف: ${filtered.length}  •  إجمالي الكمية: $totalQuantity',
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      if (missingCost > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 8),
+                          child: Text(
+                            'تنبيه: تكلفة الشراء غير مسجلة لـ $missingCost أصناف؛ إجمالي التكلفة جزئي.',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              color: Colors.orangeAccent,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ]),
+                ),
+                Expanded(
+                  child: !showAudit
+                      ? const Center(
+                          child: Text(
+                            'اضغط «جرد المخزون» لعرض الكميات والقيم',
+                          ),
+                        )
+                      : ListView.separated(
+                          padding: const EdgeInsets.fromLTRB(10, 0, 10, 18),
+                          itemCount: filtered.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(height: 7),
+                          itemBuilder: (context, index) {
+                            final p = filtered[index];
+                            final data = p.data();
+                            final quantity = amounts[p.id] ?? 0;
+                            final cost =
+                                (data['purchasePrice'] as num?)?.toDouble();
+                            final price =
+                                (data['price'] as num?)?.toDouble() ?? 0;
+
+                            return Card(
+                              margin: EdgeInsets.zero,
+                              child: Padding(
+                                padding: const EdgeInsets.all(11),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.start,
+                                  children: [
+                                    Row(children: [
+                                      Container(
+                                        width: 34,
+                                        height: 34,
+                                        alignment: Alignment.center,
+                                        decoration: BoxDecoration(
+                                          color: gold.withValues(alpha: .13),
+                                          borderRadius:
+                                              BorderRadius.circular(9),
+                                        ),
+                                        child: Text(
+                                          '${index + 1}',
+                                          style: const TextStyle(
+                                            color: gold,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 9),
+                                      Expanded(
+                                        child: Text(
+                                          '${data['name']}',
+                                          style: const TextStyle(
+                                            color: gold,
+                                            fontSize: 16,
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'حذف من الجرد',
+                                        onPressed: () =>
+                                            _deleteFromInventory(
+                                          p.id,
+                                          '${data['name']}',
+                                          quantity,
+                                        ),
+                                        icon: const Icon(
+                                          Icons.delete_forever,
+                                          color: Colors.redAccent,
+                                        ),
+                                      ),
+                                    ]),
+                                    const SizedBox(height: 5),
+                                    Text(
+                                      'الفئة: ${data['category'] ?? 'غير مصنف'}',
+                                    ),
+                                    Text(
+                                      'الكمية المتوفرة: $quantity  •  الرئيسي: ${mainAmounts[p.id] ?? 0}',
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                    Text(
+                                      'سعر التكلفة: ${cost?.toStringAsFixed(2) ?? 'غير مسجل'} ج.م  •  سعر البيع: ${price.toStringAsFixed(2)} ج.م',
+                                    ),
+                                    Text(
+                                      'إجمالي التكلفة للصنف: ${cost == null ? 'غير محسوب' : (quantity * cost).toStringAsFixed(2)} ج.م',
+                                    ),
+                                    Text(
+                                      'إجمالي البيع للصنف: ${(quantity * price).toStringAsFixed(2)} ج.م',
+                                    ),
+                                    const SizedBox(height: 7),
+                                    Wrap(
+                                      spacing: 8,
+                                      runSpacing: 4,
+                                      children: [
+                                        TextButton.icon(
+                                          icon:
+                                              const Icon(Icons.edit, size: 19),
+                                          label: const Text(
+                                            'تعديل البند والأسعار',
+                                          ),
+                                          onPressed: () => productDialog(
+                                            context,
+                                            id: p.id,
+                                            data: data,
+                                          ),
+                                        ),
+                                        TextButton.icon(
+                                          icon: const Icon(
+                                            Icons.inventory,
+                                            size: 19,
+                                          ),
+                                          label: const Text(
+                                            'تعديل كمية الرئيسي',
+                                          ),
+                                          onPressed: () => mainStockDialog(
+                                            context,
+                                            p.id,
+                                            '${data['name']}',
+                                          ),
+                                        ),
+                                        TextButton.icon(
+                                          style: TextButton.styleFrom(
+                                            foregroundColor:
+                                                Colors.redAccent,
+                                          ),
+                                          icon: const Icon(
+                                            Icons.delete_outline,
+                                            size: 19,
+                                          ),
+                                          label:
+                                              const Text('حذف من الجرد'),
+                                          onPressed: () =>
+                                              _deleteFromInventory(
+                                            p.id,
+                                            '${data['name']}',
+                                            quantity,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ]);
+            },
+          );
+        },
+      );
+}'''
+
+text = text[:start] + inventory_audit.rstrip() + '\n\n' + text[end:]
+p.write_text(text, encoding='utf-8')
+print('inventory audit patched')
