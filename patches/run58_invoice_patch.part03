@@ -1,0 +1,102 @@
+        final account = selectedAccount?.data() ?? <String, dynamic>{};
+        if (widget.owner) {
+          ref = await saveManagerGroupedSale(
+            entries: entries,
+            products: await db.collection('products').where('active', isEqualTo: true).get(),
+            branchId: widget.branchId,
+            invoiceNumber: invoiceNumber.text.trim(),
+            customerId: selectedAccountId,
+            customerName: '${account['name'] ?? ''}',
+            customerPhone: '${account['phone'] ?? ''}',
+            paid: paidNow,
+          );
+        } else {
+          ref = await saveGroupedSale(
+            entries: entries,
+            products: await db.collection('products').where('active', isEqualTo: true).get(),
+            branchId: widget.branchId,
+            owner: false,
+            customerId: null,
+            customerName: '',
+            customerPhone: '',
+            paid: invoiceTotal,
+          );
+        }
+      } else {
+        final entries = lines.map((e) => (id: e.productId, qty: e.quantity, cost: e.price)).toList();
+        ref = await saveManagerGroupedPurchase(
+          entries: entries,
+          supplierId: selectedAccountId!,
+          suppliers: await db.collection('suppliers').get(),
+          products: await db.collection('products').where('active', isEqualTo: true).get(),
+          invoiceNumber: invoiceNumber.text.trim(),
+          paid: paidNow,
+          markupPercent: null,
+          source: 'manual',
+        );
+      }
+      final snap = await ref.get();
+      if (!mounted) return;
+      setState(() { savedRef = ref; savedData = snap.data() ?? _draftData(); saving = false; });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ الفاتورة كاملة وتحديث المخزون والحساب')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر حفظ الفاتورة: $e')));
+    }
+  }
+
+  Widget _money(double value, {Color? color, double size = 16}) => Text(
+    '${value.toStringAsFixed(2)} ج.م',
+    style: TextStyle(fontSize: size, fontWeight: FontWeight.bold, color: color));
+
+  Widget _topCard() {
+    final account = selectedAccount?.data();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(border: Border.all(color: gold.withValues(alpha: .65)),
+        borderRadius: BorderRadius.circular(18)),
+      child: Column(children: [
+        Wrap(spacing: 14, runSpacing: 10, crossAxisAlignment: WrapCrossAlignment.center, children: [
+          FilledButton.icon(onPressed: widget.isSale && !widget.owner ? null : _chooseAccount,
+            icon: const Icon(Icons.person), label: Text(widget.isSale ? 'اختيار عميل' : 'اختيار مورد')),
+          SizedBox(width: 300, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${account?['name'] ?? (widget.isSale ? 'لم يتم اختيار العميل' : 'لم يتم اختيار المورد')}',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            if (account != null && '${account['phone'] ?? ''}'.isNotEmpty) Text('هاتف: ${account['phone']}'),
+          ])),
+          SizedBox(width: 160, child: TextField(controller: invoiceNumber, enabled: savedRef == null,
+            textAlign: TextAlign.center, decoration: const InputDecoration(labelText: 'رقم الفاتورة'))),
+          Text('التاريخ\n${DateFormat('dd/MM/yyyy').format(DateTime.now())}', textAlign: TextAlign.center),
+        ]),
+        const Divider(),
+        Row(children: [
+          Text(widget.isSale ? 'الرصيد السابق على العميل:' : 'الرصيد السابق على المورد:'),
+          const SizedBox(width: 8), _money(previousBalance, color: gold, size: 19),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _productToolbar() => Row(children: [
+    FilledButton.icon(onPressed: savedRef == null ? () => _chooseProduct(scannerMode: true) : null,
+      icon: const Icon(Icons.qr_code_scanner), label: const Text('ماسح')),
+    const SizedBox(width: 10),
+    Expanded(child: TextField(controller: productSearch, enabled: savedRef == null,
+      onSubmitted: (_) => _addFromSearch(),
+      decoration: InputDecoration(prefixIcon: const Icon(Icons.search),
+        hintText: 'بحث عن منتج بالاسم أو الكود',
+        suffixIcon: IconButton(onPressed: savedRef == null ? _addFromSearch : null, icon: const Icon(Icons.search))))),
+    const SizedBox(width: 10),
+    FilledButton.icon(onPressed: savedRef == null ? _addFromSearch : null,
+      icon: const Icon(Icons.add), label: const Text('إضافة منتج')),
+  ]);
+
+  Widget _itemsTable() => SingleChildScrollView(scrollDirection: Axis.horizontal, child: ConstrainedBox(
+    constraints: const BoxConstraints(minWidth: 760),
+    child: Container(decoration: BoxDecoration(border: Border.all(color: gold.withValues(alpha: .55)),
+      borderRadius: BorderRadius.circular(16)), child: Column(children: [
+      Container(padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+        decoration: const BoxDecoration(color: gold, borderRadius: BorderRadius.vertical(top: Radius.circular(15))),
+        child: const Row(children: [
