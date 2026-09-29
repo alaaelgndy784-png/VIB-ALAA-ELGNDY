@@ -472,6 +472,7 @@ class Management extends StatelessWidget {
     Card(child: ListTile(leading: const Icon(Icons.inventory_2, color: gold), title: const Text('جرد المخزون حسب الفئة'), subtitle: const Text('المتاح وسعر الشراء وسعر البيع لكل صنف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('جرد المخزون')), body: const InventoryAudit()))))),
     Card(child: ListTile(leading: const Icon(Icons.trending_up, color: gold), title: const Text('تقرير الأرباح'), subtitle: const Text('يومي وأسبوعي وشهري حسب تكلفة شراء الأصناف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير الأرباح')), body: const ProfitReport()))))),
     Card(child: ListTile(leading: const Icon(Icons.payments, color: gold), title: const Text('الصندوق'), subtitle: const Text('إضافة وخصم ومراجعة الحركات'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الصندوق')), body: const CashBox()))))),
+    Card(child: ListTile(leading: const Icon(Icons.receipt_long, color: gold), title: const Text('سندات القبض والصرف'), subtitle: const Text('تسجيل سند قبض أو سند صرف ومراجعته في الصندوق'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('سندات القبض والصرف')), body: const ReceiptVouchers()))))),
     Card(child: ListTile(leading: const Icon(Icons.receipt, color: gold), title: const Text('المصروفات'), subtitle: const Text('مصروفات المحل والرواتب وخصمها من الصندوق'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('المصروفات')), body: const Expenses()))))),
     Card(child: ListTile(leading: const Icon(Icons.store, color: gold), title: const Text('الفروع والمخزون'), subtitle: const Text('إضافة الفروع ونقل البضاعة إليها'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الفروع')), body: const Branches()))))),
     Card(child: ListTile(leading: const Icon(Icons.people, color: gold), title: const Text('الموظفون والصلاحيات'), subtitle: const Text('تفعيل الموظف وتحديد فرعه'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الموظفون')), body: const Staff()))))),
@@ -1055,6 +1056,38 @@ Future<void> accountDialog(BuildContext context, String collection, String id, M
   ));
 }
 
+class ReceiptVouchers extends StatelessWidget {
+  const ReceiptVouchers({super.key});
+  @override Widget build(BuildContext context) => Column(children: [
+    Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 10, children: [
+      FilledButton.icon(onPressed: () => receiptVoucherDialog(context, true), icon: const Icon(Icons.call_received), label: const Text('سند قبض')),
+      OutlinedButton.icon(onPressed: () => receiptVoucherDialog(context, false), icon: const Icon(Icons.call_made), label: const Text('سند صرف')),
+    ])),
+    Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'cash').snapshots(), builder: (context, snap) {
+      if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+      final rows = snap.data!.docs.where((d) => d.data()['kind'] == 'receipt_voucher' || d.data()['kind'] == 'payment_voucher').toList()..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+      if (rows.isEmpty) return const Center(child: Text('لا توجد سندات حتى الآن'));
+      return ListView(children: rows.map((d) { final x=d.data(); return ListTile(leading: Icon(x['kind']=='receipt_voucher' ? Icons.call_received : Icons.call_made, color: gold), title: Text('${x['kind']=='receipt_voucher' ? 'سند قبض' : 'سند صرف'} • ${x['partyName'] ?? ''}'), subtitle: Text('${x['reason'] ?? ''}\n${formatDate(x['createdAt'])}'), isThreeLine: true, trailing: Text('${x['amount'] ?? 0} ج.م')); }).toList());
+    }))
+  ]);
+}
+
+Future<void> receiptVoucherDialog(BuildContext context, bool receipt) async {
+  final party = TextEditingController(), amount = TextEditingController(), reason = TextEditingController();
+  await showDialog<void>(context: context, builder: (c) => AlertDialog(title: Text(receipt ? 'سند قبض' : 'سند صرف'), content: Column(mainAxisSize: MainAxisSize.min, children: [
+    TextField(controller: party, decoration: const InputDecoration(labelText: 'الاسم / الجهة')),
+    TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'المبلغ')),
+    TextField(controller: reason, decoration: const InputDecoration(labelText: 'البيان')),
+  ]), actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')), FilledButton(onPressed: () async {
+    final value=double.tryParse(amount.text.trim()); if(value==null || value<=0 || party.text.trim().isEmpty) return;
+    try { await db.runTransaction((tx) async {
+      final cashRef=db.collection('settings').doc('cash'), snap=await tx.get(cashRef); final before=(snap.data()?['balance'] as num?)?.toDouble() ?? 0; final delta=receipt ? value : -value;
+      if(before+delta<0) throw Exception('رصيد الصندوق لا يكفي');
+      tx.set(cashRef, {'balance':before+delta,'updatedAt':FieldValue.serverTimestamp()}, SetOptions(merge:true));
+      tx.set(db.collection('accountMovements').doc(), {'accountType':'cash','kind':receipt?'receipt_voucher':'payment_voucher','partyName':party.text.trim(),'reason':reason.text.trim(),'amount':value,'delta':delta,'balanceBefore':before,'balanceAfter':before+delta,'actorId':FirebaseAuth.instance.currentUser!.uid,'createdAt':FieldValue.serverTimestamp()});
+    }); if(c.mounted) Navigator.pop(c); } catch(e) { if(c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text('تعذر حفظ السند: $e'))); }
+  }, child: const Text('حفظ السند'))]));
+}
 class CashBox extends StatelessWidget {
   const CashBox({super.key});
   @override
