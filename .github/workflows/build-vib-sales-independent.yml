@@ -1,4 +1,4 @@
-name: Build Independent VIB Sales Apps
+name: Build VIB Requested Icon Dashboard
 
 on:
   workflow_dispatch:
