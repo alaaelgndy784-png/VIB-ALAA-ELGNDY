@@ -276,7 +276,7 @@ class Products extends StatelessWidget {
             ? Wrap(children: [IconButton(tooltip: 'تعديل', icon: const Icon(Icons.edit), onPressed: () => productDialog(context, id: d.id, data: p)), IconButton(tooltip: 'المخزون الرئيسي', icon: const Icon(Icons.warehouse), onPressed: () => mainStockDialog(context, d.id, '${p['name']}'))])
             : FilledButton.icon(icon: const Icon(Icons.receipt_long),
                 label: const Text('فاتورة بيع'),
-                onPressed: () => saleDialog(context, d.id, p, uid, branchId)));
+                onPressed: () => openDetailedInvoice(context, isSale: true, owner: owner, branchId: branchId, initialProductId: d.id)));
         })),
       ]);
     },
@@ -360,34 +360,575 @@ Future<void> saleDialog(BuildContext context, String productId, Map<String, dyna
     }, child: const Text('تأكيد البيع'))])));
 }
 
+
+class InvoiceLineDraft {
+  final String productId;
+  final String name;
+  int quantity;
+  double price;
+  final double? unitCost;
+  InvoiceLineDraft({required this.productId, required this.name, required this.quantity, required this.price, this.unitCost});
+  double get total => quantity * price;
+  Map<String, dynamic> asMap(bool isSale) => {
+    'productId': productId,
+    'productName': name,
+    'quantity': quantity,
+    isSale ? 'unitPrice' : 'unitCost': price,
+    'total': total,
+    if (isSale && unitCost != null) 'unitCost': unitCost,
+  };
+}
+
+Future<void> openDetailedInvoice(BuildContext context, {required bool isSale, required bool owner, required String branchId, String? initialProductId}) async {
+  await Navigator.push(context, MaterialPageRoute(builder: (_) => DetailedInvoicePage(
+    isSale: isSale, owner: owner, branchId: owner ? 'main' : branchId, initialProductId: initialProductId)));
+}
+
+class DetailedInvoicePage extends StatefulWidget {
+  final bool isSale;
+  final bool owner;
+  final String branchId;
+  final String? initialProductId;
+  const DetailedInvoicePage({super.key, required this.isSale, required this.owner, required this.branchId, this.initialProductId});
+  @override State<DetailedInvoicePage> createState() => _DetailedInvoicePageState();
+}
+
+class _DetailedInvoicePageState extends State<DetailedInvoicePage> {
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> products = [];
+  List<QueryDocumentSnapshot<Map<String, dynamic>>> accounts = [];
+  final List<InvoiceLineDraft> lines = [];
+  final paid = TextEditingController(text: '0');
+  final invoiceNumber = TextEditingController();
+  bool loading = true, saving = false;
+  String? selectedAccountId;
+  String? savedId;
+
+  @override void initState() {
+    super.initState();
+    invoiceNumber.text = DateFormat('yyyyMMddHHmmss').format(DateTime.now());
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final results = await Future.wait([
+        db.collection('products').get(),
+        db.collection(widget.isSale ? 'customers' : 'suppliers').get(),
+      ]);
+      products = (results[0] as QuerySnapshot<Map<String, dynamic>>).docs.where((p) => p.data()['active'] == true).toList();
+      accounts = (results[1] as QuerySnapshot<Map<String, dynamic>>).docs.where((a) => a.data()['active'] != false).toList();
+      if (accounts.isNotEmpty) selectedAccountId = accounts.first.id;
+      if (widget.initialProductId != null) {
+        final matches = products.where((p) => p.id == widget.initialProductId).toList();
+        if (matches.isNotEmpty) _addProduct(matches.first, refresh: false);
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر تحميل بيانات الفاتورة: ' + e.toString())));
+    }
+    if (mounted) setState(() => loading = false);
+  }
+
+  QueryDocumentSnapshot<Map<String, dynamic>>? get selectedAccount {
+    if (selectedAccountId == null) return null;
+    for (final a in accounts) { if (a.id == selectedAccountId) return a; }
+    return null;
+  }
+
+  double get oldBalance => (selectedAccount?.data()['balance'] as num?)?.toDouble() ?? 0;
+  double get total => lines.fold<double>(0, (sum, e) => sum + e.total);
+  double get paidNow {
+    final v = double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? 0;
+    return v.isFinite && v > 0 ? v : 0;
+  }
+  double get currentDue => (total - paidNow).clamp(0, double.infinity).toDouble();
+  double get finalBalance => oldBalance + currentDue;
+  String get paymentStatus => paidNow <= 0 ? 'آجل' : paidNow >= total && total > 0 ? 'مدفوعة بالكامل' : 'مدفوع جزئي';
+
+  void _addProduct(QueryDocumentSnapshot<Map<String, dynamic>> p, {bool refresh = true}) {
+    final existing = lines.where((e) => e.productId == p.id).toList();
+    if (existing.isNotEmpty) {
+      existing.first.quantity += 1;
+    } else {
+      final d = p.data();
+      final value = ((d[widget.isSale ? 'price' : 'purchasePrice'] as num?)?.toDouble() ?? 0);
+      lines.add(InvoiceLineDraft(
+        productId: p.id,
+        name: (d['name'] ?? '').toString(),
+        quantity: 1,
+        price: value,
+        unitCost: (d['purchasePrice'] as num?)?.toDouble(),
+      ));
+    }
+    if (refresh && mounted) setState(() {});
+  }
+
+  Future<void> _chooseAccount() async {
+    if (savedId != null) return;
+    if (accounts.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(widget.isSale ? 'أضف عميلًا أولًا' : 'أضف موردًا أولًا')));
+      return;
+    }
+    final result = await showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheet) => SafeArea(child: SizedBox(
+        height: MediaQuery.sizeOf(sheet).height * .65,
+        child: Column(children: [
+          ListTile(title: Text(widget.isSale ? 'اختيار العميل' : 'اختيار المورد', style: const TextStyle(color: gold, fontWeight: FontWeight.bold))),
+          Expanded(child: ListView(children: accounts.map((a) {
+            final d = a.data();
+            return ListTile(
+              leading: const Icon(Icons.person, color: gold),
+              title: Text((d['name'] ?? '').toString()),
+              subtitle: Text('هاتف: ' + (d['phone'] ?? '').toString() + ' • الرصيد: ' + ((d['balance'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م'),
+              onTap: () => Navigator.pop(sheet, a.id),
+            );
+          }).toList())),
+        ]),
+      )),
+    );
+    if (result != null && mounted) setState(() => selectedAccountId = result);
+  }
+
+  Future<void> _chooseProduct({bool scannerMode = false}) async {
+    if (savedId != null) return;
+    String query = '';
+    await showDialog<void>(
+      context: context,
+      builder: (dialog) => StatefulBuilder(builder: (dialog, update) {
+        final filtered = products.where((p) {
+          final d = p.data();
+          final hay = ((d['name'] ?? '').toString() + ' ' + (d['barcode'] ?? '').toString() + ' ' + (d['code'] ?? '').toString()).toLowerCase();
+          return hay.contains(query.toLowerCase());
+        }).toList();
+        return AlertDialog(
+          title: Text(scannerMode ? 'ماسح / بحث بالكود' : 'إضافة منتج'),
+          content: SizedBox(width: 520, height: 480, child: Column(children: [
+            TextField(
+              autofocus: true,
+              decoration: InputDecoration(
+                prefixIcon: Icon(scannerMode ? Icons.qr_code_scanner : Icons.search),
+                labelText: scannerMode ? 'امسح الباركود أو اكتب الكود/الاسم' : 'بحث عن منتج بالاسم أو الكود',
+              ),
+              onChanged: (v) => update(() => query = v.trim()),
+              onSubmitted: (_) {
+                if (filtered.length == 1) {
+                  _addProduct(filtered.first);
+                  Navigator.pop(dialog);
+                }
+              },
+            ),
+            const SizedBox(height: 8),
+            Expanded(child: ListView(children: filtered.map((p) {
+              final d = p.data();
+              return ListTile(
+                title: Text((d['name'] ?? '').toString()),
+                subtitle: Text('سعر البيع: ' + ((d['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' • شراء: ' + ((d['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)),
+                trailing: const Icon(Icons.add_circle, color: gold),
+                onTap: () { _addProduct(p); Navigator.pop(dialog); },
+              );
+            }).toList())),
+          ])),
+        );
+      }),
+    );
+  }
+
+  Future<void> _editLine(InvoiceLineDraft line) async {
+    if (savedId != null) return;
+    final qty = TextEditingController(text: line.quantity.toString());
+    final price = TextEditingController(text: line.price.toStringAsFixed(2));
+    await showDialog<void>(context: context, builder: (dialog) => AlertDialog(
+      title: Text(line.name),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        TextField(controller: qty, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'العدد')),
+        TextField(
+          controller: price,
+          enabled: widget.owner || !widget.isSale,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(labelText: widget.isSale ? 'سعر البيع' : 'سعر الشراء'),
+        ),
+      ]),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء')),
+        FilledButton(onPressed: () {
+          final q = int.tryParse(qty.text.trim());
+          final p = double.tryParse(price.text.trim().replaceAll(',', '.'));
+          if (q == null || q <= 0 || p == null || !p.isFinite || p < 0) {
+            ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content: Text('راجع العدد والسعر')));
+            return;
+          }
+          setState(() { line.quantity = q; line.price = p; });
+          Navigator.pop(dialog);
+        }, child: const Text('تعديل')),
+      ],
+    ));
+  }
+
+  Map<String, dynamic> _draftData() {
+    final a = selectedAccount?.data() ?? <String, dynamic>{};
+    return {
+      'type': widget.isSale ? 'sales' : 'purchases',
+      'invoiceNumber': invoiceNumber.text.trim(),
+      'branchId': widget.branchId,
+      'customerId': widget.isSale ? (selectedAccountId ?? '') : '',
+      'customerName': widget.isSale ? (a['name'] ?? '') : '',
+      'customerPhone': widget.isSale ? (a['phone'] ?? '') : '',
+      'supplierId': widget.isSale ? '' : (selectedAccountId ?? ''),
+      'supplierName': widget.isSale ? '' : (a['name'] ?? ''),
+      'items': lines.map((e) => e.asMap(widget.isSale)).toList(),
+      'total': total,
+      'paid': paidNow.clamp(0, total),
+      'due': currentDue,
+      'balanceBefore': oldBalance,
+      'balanceAfter': finalBalance,
+      'paymentStatus': paymentStatus,
+      'status': 'completed',
+      'createdAt': Timestamp.now(),
+    };
+  }
+
+  Future<void> _sharePdf() async {
+    if (lines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف صنفًا أولًا')));
+      return;
+    }
+    await exportInvoicePdf(context, widget.isSale ? 'sales' : 'purchases', savedId ?? invoiceNumber.text.trim(), _draftData());
+  }
+
+  Future<void> _printDraft() async {
+    if (lines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف صنفًا أولًا')));
+      return;
+    }
+    await selectInvoicePaper(context, widget.isSale ? 'sales' : 'purchases', savedId ?? invoiceNumber.text.trim(), _draftData());
+  }
+
+  Future<void> _whatsAppDraft() async {
+    if (!widget.isSale) return;
+    final data = _draftData();
+    var phone = (data['customerPhone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('العميل ليس له رقم هاتف مسجل')));
+      return;
+    }
+    if (phone.startsWith('0')) phone = '20' + phone.substring(1);
+    if (phone.startsWith('00')) phone = phone.substring(2);
+    final body = <String>[
+      'فاتورة مبيعات VIB رقم ' + invoiceNumber.text.trim(),
+      for (var i = 0; i < lines.length; i++) (i + 1).toString() + '- ' + lines[i].name + ' × ' + lines[i].quantity.toString() + ' = ' + lines[i].total.toStringAsFixed(2) + ' ج.م',
+      'الإجمالي: ' + total.toStringAsFixed(2) + ' ج.م',
+      'المدفوع: ' + paidNow.clamp(0, total).toStringAsFixed(2) + ' ج.م',
+      'المتبقي: ' + finalBalance.toStringAsFixed(2) + ' ج.م',
+    ].join('\n');
+    final uri = Uri.parse('https://wa.me/' + phone + '?text=' + Uri.encodeComponent(body));
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر فتح واتساب')));
+    }
+  }
+
+  Future<void> _save() async {
+    if (savedId != null || saving) return;
+    if (selectedAccountId == null || lines.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(widget.isSale ? 'اختر العميل وأضف الأصناف' : 'اختر المورد وأضف الأصناف')));
+      return;
+    }
+    final payment = paidNow;
+    if (payment < 0 || payment > total) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('المدفوع لا يمكن أن يكون أكبر من إجمالي الفاتورة')));
+      return;
+    }
+    setState(() => saving = true);
+    final header = db.collection('invoiceHeaders').doc();
+    try {
+      await db.runTransaction((tx) async {
+        final accountCollection = widget.isSale ? 'customers' : 'suppliers';
+        final accountRef = db.collection(accountCollection).doc(selectedAccountId);
+        final accountSnap = await tx.get(accountRef);
+        if (!accountSnap.exists) throw Exception(widget.isSale ? 'العميل غير موجود' : 'المورد غير موجود');
+        final stocks = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+        for (final line in lines) {
+          stocks[line.productId] = await tx.get(db.collection('stock').doc((widget.isSale ? widget.branchId : 'main') + '_' + line.productId));
+        }
+        final before = (accountSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
+        final due = total - payment;
+        final actor = FirebaseAuth.instance.currentUser!.uid;
+        final account = accountSnap.data()!;
+        final items = lines.map((e) => e.asMap(widget.isSale)).toList();
+        tx.update(accountRef, {'balance': before + due, 'updatedAt': FieldValue.serverTimestamp()});
+        tx.set(header, {
+          'type': widget.isSale ? 'sales' : 'purchases',
+          'invoiceNumber': invoiceNumber.text.trim(),
+          'branchId': widget.branchId,
+          'actorId': actor,
+          'customerId': widget.isSale ? selectedAccountId : '',
+          'customerName': widget.isSale ? (account['name'] ?? '') : '',
+          'customerPhone': widget.isSale ? (account['phone'] ?? '') : '',
+          'supplierId': widget.isSale ? '' : selectedAccountId,
+          'supplierName': widget.isSale ? '' : (account['name'] ?? ''),
+          'items': items,
+          'total': total,
+          'paid': payment,
+          'due': due,
+          'balanceBefore': before,
+          'balanceAfter': before + due,
+          'paymentStatus': payment <= 0 ? 'آجل' : payment >= total ? 'مدفوع' : 'جزئي',
+          'status': 'completed',
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+        for (final line in lines) {
+          final stockRef = db.collection('stock').doc((widget.isSale ? widget.branchId : 'main') + '_' + line.productId);
+          final oldQty = (stocks[line.productId]?.data()?['quantity'] as num?)?.toInt() ?? 0;
+          if (widget.isSale) {
+            if (oldQty < line.quantity) throw Exception('الكمية غير متاحة: ' + line.name);
+            final lineRef = db.collection('sales').doc();
+            final after = oldQty - line.quantity;
+            tx.set(stockRef, {'branchId': widget.branchId, 'productId': line.productId, 'quantity': after, 'lastSaleId': lineRef.id}, SetOptions(merge: true));
+            tx.set(lineRef, {
+              'invoiceId': header.id,
+              'branchId': widget.branchId,
+              'employeeId': actor,
+              'customerPhone': account['phone'] ?? '',
+              'productId': line.productId,
+              'productName': line.name,
+              'quantity': line.quantity,
+              'unitPrice': line.price,
+              'total': line.total,
+              if (line.unitCost != null) 'unitCost': line.unitCost,
+              'status': 'completed',
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+            tx.set(db.collection('stockMovements').doc(), {
+              'productId': line.productId, 'productName': line.name, 'branchId': widget.branchId,
+              'kind': 'sale', 'quantity': -line.quantity, 'balanceAfter': after,
+              'referenceId': lineRef.id, 'invoiceId': header.id, 'actorId': actor,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+          } else {
+            final lineRef = db.collection('purchases').doc();
+            final after = oldQty + line.quantity;
+            tx.set(stockRef, {'branchId': 'main', 'productId': line.productId, 'quantity': after}, SetOptions(merge: true));
+            tx.update(db.collection('products').doc(line.productId), {'purchasePrice': line.price, 'updatedAt': FieldValue.serverTimestamp()});
+            tx.set(lineRef, {
+              'invoiceId': header.id,
+              'invoiceNumber': invoiceNumber.text.trim(),
+              'supplierId': selectedAccountId,
+              'supplierName': account['name'] ?? '',
+              'productId': line.productId,
+              'productName': line.name,
+              'quantity': line.quantity,
+              'unitCost': line.price,
+              'total': line.total,
+              'paid': 0,
+              'due': line.total,
+              'status': 'completed',
+              'actorId': actor,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+            tx.set(db.collection('stockMovements').doc(), {
+              'productId': line.productId, 'productName': line.name, 'branchId': 'main',
+              'kind': 'purchase', 'quantity': line.quantity, 'balanceAfter': after,
+              'referenceId': lineRef.id, 'invoiceId': header.id, 'actorId': actor,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
+          }
+        }
+        if (widget.owner) {
+          tx.set(db.collection('accountMovements').doc(), {
+            'accountType': accountCollection,
+            'accountId': selectedAccountId,
+            'accountName': account['name'] ?? '',
+            'kind': widget.isSale ? 'sale' : 'purchase',
+            'amount': due,
+            'balanceBefore': before,
+            'balanceAfter': before + due,
+            'referenceId': header.id,
+            'paid': payment,
+            'createdAt': FieldValue.serverTimestamp(),
+            'actorId': actor,
+          });
+        }
+      });
+      if (!mounted) return;
+      setState(() { saving = false; savedId = header.id; });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ الفاتورة كاملة وتحديث المخزون والحساب')));
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر حفظ الفاتورة: ' + e.toString())));
+    }
+  }
+
+  Widget _money(double value, {Color? color}) => Text(value.toStringAsFixed(2) + ' ج.م', style: TextStyle(fontWeight: FontWeight.bold, color: color));
+
+  @override Widget build(BuildContext context) {
+    final account = selectedAccount?.data();
+    if (loading) return const Scaffold(body: Center(child: CircularProgressIndicator(color: gold)));
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.isSale ? 'فاتورة مبيعات' : 'فاتورة مشتريات', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        centerTitle: true,
+        leading: IconButton(icon: const Icon(Icons.arrow_back, color: gold), onPressed: () => Navigator.pop(context)),
+        actions: [Padding(padding: const EdgeInsetsDirectional.only(end: 8), child: FilledButton.icon(onPressed: _printDraft, icon: const Icon(Icons.print), label: const Text('طباعة')))],
+      ),
+      body: SingleChildScrollView(padding: const EdgeInsets.all(14), child: Column(children: [
+        Container(
+          decoration: BoxDecoration(border: Border.all(color: gold.withValues(alpha: .55)), borderRadius: BorderRadius.circular(18)),
+          padding: const EdgeInsets.all(14),
+          child: Column(children: [
+            Row(children: [
+              Expanded(child: FilledButton.icon(onPressed: _chooseAccount, icon: const Icon(Icons.person), label: Text(widget.isSale ? 'اختيار عميل' : 'اختيار مورد'))),
+              const SizedBox(width: 12),
+              Expanded(flex: 2, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text((account?['name'] ?? (widget.isSale ? 'لم يتم اختيار العميل' : 'لم يتم اختيار المورد')).toString(), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                if (account != null) Text('هاتف: ' + (account['phone'] ?? '').toString()),
+              ])),
+              const SizedBox(width: 12),
+              SizedBox(width: 140, child: TextField(controller: invoiceNumber, enabled: savedId == null, textAlign: TextAlign.center, decoration: const InputDecoration(labelText: 'رقم الفاتورة'))),
+            ]),
+            const SizedBox(height: 10),
+            Row(children: [const Text('الرصيد السابق: '), _money(oldBalance, color: gold), const Spacer(), Text(DateFormat('dd/MM/yyyy').format(DateTime.now()))]),
+          ]),
+        ),
+        const SizedBox(height: 14),
+        Row(children: [
+          Expanded(child: OutlinedButton.icon(onPressed: () => _chooseProduct(scannerMode: true), icon: const Icon(Icons.qr_code_scanner), label: const Text('ماسح'))),
+          const SizedBox(width: 10),
+          Expanded(flex: 2, child: OutlinedButton.icon(onPressed: () => _chooseProduct(), icon: const Icon(Icons.search), label: const Text('بحث عن منتج بالاسم أو الكود'))),
+          const SizedBox(width: 10),
+          Expanded(child: FilledButton.icon(onPressed: () => _chooseProduct(), icon: const Icon(Icons.add), label: const Text('إضافة منتج'))),
+        ]),
+        const SizedBox(height: 12),
+        Container(
+          decoration: BoxDecoration(border: Border.all(color: gold.withValues(alpha: .5)), borderRadius: BorderRadius.circular(16)),
+          child: Column(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
+              decoration: const BoxDecoration(color: gold, borderRadius: BorderRadius.vertical(top: Radius.circular(15))),
+              child: const Row(children: [
+                SizedBox(width: 34, child: Text('م', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
+                Expanded(flex: 3, child: Text('المنتج', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
+                Expanded(child: Text('السعر', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
+                Expanded(child: Text('العدد', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
+                Expanded(child: Text('الإجمالي', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
+                SizedBox(width: 44, child: Text('حذف', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold))),
+              ]),
+            ),
+            if (lines.isEmpty) const Padding(padding: EdgeInsets.all(28), child: Text('أضف الأصناف إلى الفاتورة')),
+            for (var i = 0; i < lines.length; i++) InkWell(
+              onTap: () => _editLine(lines[i]),
+              child: Padding(padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8), child: Row(children: [
+                SizedBox(width: 34, child: Text((i + 1).toString())),
+                Expanded(flex: 3, child: Text(lines[i].name)),
+                Expanded(child: Text(lines[i].price.toStringAsFixed(2))),
+                Expanded(child: Text(lines[i].quantity.toString())),
+                Expanded(child: Text(lines[i].total.toStringAsFixed(2), style: const TextStyle(fontWeight: FontWeight.bold))),
+                SizedBox(width: 44, child: IconButton(
+                  onPressed: savedId == null ? () => setState(() => lines.removeAt(i)) : null,
+                  icon: const Icon(Icons.delete, color: Colors.redAccent),
+                )),
+              ])),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 14),
+        Container(
+          width: double.infinity, padding: const EdgeInsets.all(18),
+          decoration: BoxDecoration(border: Border.all(color: gold), borderRadius: BorderRadius.circular(18)),
+          child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+            const Text('إجمالي الفاتورة الحالية', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            _money(total, color: gold),
+          ]),
+        ),
+        const SizedBox(height: 14),
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(border: Border.all(color: gold.withValues(alpha: .55)), borderRadius: BorderRadius.circular(18)),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const Text('تفاصيل السداد والرصيد', style: TextStyle(color: gold, fontSize: 18, fontWeight: FontWeight.bold)),
+            const Divider(),
+            ListTile(title: Text(widget.isSale ? 'الرصيد السابق للعميل' : 'الرصيد السابق للمورد'), trailing: _money(oldBalance)),
+            ListTile(title: const Text('إجمالي المستحق (السابق + الحالي)'), trailing: _money(oldBalance + total)),
+            Row(children: [
+              const Expanded(child: Text('المدفوع نقدًا الآن', style: TextStyle(fontSize: 16))),
+              SizedBox(width: 180, child: TextField(
+                controller: paid,
+                enabled: savedId == null,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                onChanged: (_) => setState(() {}),
+                textAlign: TextAlign.center,
+                decoration: const InputDecoration(suffixText: 'ج.م'),
+              )),
+            ]),
+            ListTile(title: const Text('باقي هذه الفاتورة'), trailing: _money(currentDue, color: currentDue == 0 ? Colors.greenAccent : gold)),
+            ListTile(title: Text(widget.isSale ? 'المتبقي إجمالي على العميل' : 'المتبقي إجمالي على المورد'), trailing: _money(finalBalance, color: gold)),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(color: paymentStatus == 'مدفوعة بالكامل' ? Colors.green.withValues(alpha: .18) : gold.withValues(alpha: .10), borderRadius: BorderRadius.circular(14)),
+              child: Text('حالة الفاتورة الحالية: ' + paymentStatus, textAlign: TextAlign.center, style: TextStyle(color: paymentStatus == 'مدفوعة بالكامل' ? Colors.greenAccent : gold, fontWeight: FontWeight.bold)),
+            ),
+          ]),
+        ),
+        const SizedBox(height: 16),
+        Row(children: [
+          Expanded(child: OutlinedButton.icon(onPressed: _sharePdf, icon: const Icon(Icons.picture_as_pdf), label: const Text('حفظ كـ PDF'))),
+          if (widget.isSale) ...[
+            const SizedBox(width: 10),
+            Expanded(child: FilledButton.icon(onPressed: _whatsAppDraft, icon: const Icon(Icons.chat), label: const Text('إرسال واتساب'))),
+          ],
+          const SizedBox(width: 10),
+          Expanded(child: FilledButton.icon(
+            onPressed: savedId == null ? _save : null,
+            icon: Icon(savedId == null ? Icons.save : Icons.check_circle),
+            label: Text(saving ? 'جاري الحفظ...' : savedId == null ? 'حفظ الفاتورة' : 'تم الحفظ'),
+          )),
+        ]),
+        const SizedBox(height: 24),
+      ])),
+    );
+  }
+
+  @override void dispose() { paid.dispose(); invoiceNumber.dispose(); super.dispose(); }
+}
+
+
+
 class Sales extends StatelessWidget {
   final bool owner;
   final String branchId;
   const Sales({super.key, required this.owner, required this.branchId});
   @override
   Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-    stream: (owner ? db.collection('sales') : db.collection('sales').where('branchId', isEqualTo: branchId)).snapshots(),
+    stream: (owner
+      ? db.collection('invoiceHeaders').where('type', isEqualTo: 'sales')
+      : db.collection('invoiceHeaders').where('branchId', isEqualTo: branchId)),
     builder: (context, snap) {
-    if (snap.hasError) return const Center(child: Text('تعذر عرض المبيعات'));
-    if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-    final rows = snap.data!.docs.where((d) => owner || d.data()['branchId'] == branchId).toList()..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
-    return Column(children: [Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(icon: const Icon(Icons.add_shopping_cart), label: const Text('عملية بيع جديدة'), onPressed: () => newSaleDialog(context, owner, branchId))), Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد مبيعات بعد')) : ListView(children: rows.map((d) { final s = d.data(); return ListTile(
-      title: Text('${s['productName']} × ${s['quantity']}'),
-      subtitle: Text('فرع: ${s['branchId']} • ${formatDate(s['createdAt'])}${s['status'] == 'returned' ? ' • مرتجع' : ''}'),
-      trailing: Text('${s['total']} ج.م'),
-      onTap: () => invoiceActions(context, 'sales', d.id, s, canReturn: owner),
-    ); }).toList()))]);
-  });
+      if (snap.hasError) return const Center(child: Text('تعذر عرض فواتير المبيعات'));
+      if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+      final rows = snap.data!.docs.where((d) => d.data()['type'] == 'sales' && (owner || d.data()['branchId'] == branchId)).toList()
+        ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+      return Column(children: [
+        Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(
+          icon: const Icon(Icons.add_shopping_cart), label: const Text('عمل فاتورة بيع'),
+          onPressed: () => openDetailedInvoice(context, isSale: true, owner: owner, branchId: branchId))),
+        Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد فواتير مبيعات بعد')) : ListView(children: rows.map((d) {
+          final s=d.data(), items=(s['items'] as List?) ?? const [];
+          return Card(child: ListTile(
+            title: Text('فاتورة ' + (s['invoiceNumber'] ?? d.id.substring(0,6)).toString() + ' • ' + (s['customerName'] ?? '').toString()),
+            subtitle: Text('عدد البنود: ' + items.length.toString() + ' • ' + formatDate(s['createdAt']) + (s['status']=='returned' ? ' • مرتجع' : '')),
+            trailing: Text(((s['total'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+            onTap: () => invoiceActions(context, 'sales', d.id, s, canReturn: owner),
+          ));
+        }).toList())),
+      ]);
+    },
+  );
 }
 
-Future<void> newSaleDialog(BuildContext context, bool owner, String branchId) async {
-  try {
-    final products = await db.collection('products').get();
-    if (!context.mounted) return;
-    final available = products.docs.where((p) => p.data()['active'] == true).toList();
-    await showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (sheet) => SafeArea(child: SizedBox(height: MediaQuery.sizeOf(sheet).height * .7, child: Column(children: [const ListTile(title: Text('اختار الصنف لعملية البيع')), Expanded(child: ListView(children: available.map((p) => ListTile(title: Text('${p.data()['name']}'), subtitle: Text('${p.data()['price'] ?? 0} ج.م'), onTap: () { Navigator.pop(sheet); saleDialog(context, p.id, p.data(), FirebaseAuth.instance.currentUser!.uid, owner ? 'main' : branchId, owner: owner); })).toList()))]))));
-  } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر تحميل الأصناف: $e'))); }
-}
+Future<void> newSaleDialog(BuildContext context, bool owner, String branchId) =>
+  openDetailedInvoice(context, isSale: true, owner: owner, branchId: branchId);
+
 
 class Branches extends StatelessWidget {
   const Branches({super.key});
@@ -598,30 +1139,37 @@ class _ProfitReportState extends State<ProfitReport> {
   }
 }
 
+
 class Purchases extends StatelessWidget {
   const Purchases({super.key});
   @override
   Widget build(BuildContext context) => Column(children: [
-    Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, children: [
+    Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, runSpacing: 8, children: [
       FilledButton.icon(onPressed: () => purchaseDialog(context), icon: const Icon(Icons.add), label: const Text('فاتورة مشتريات جديدة')),
       OutlinedButton.icon(onPressed: () => scannedPurchaseDialog(context), icon: const Icon(Icons.camera_alt), label: const Text('تصوير فاتورة مشتريات')),
     ])),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: db.collection('purchases').orderBy('createdAt', descending: true).limit(300).snapshots(),
+      stream: db.collection('invoiceHeaders').where('type', isEqualTo: 'purchases').snapshots(),
       builder: (context, snap) {
         if (snap.hasError) return const Center(child: Text('تعذر تحميل المشتريات'));
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-        if (snap.data!.docs.isEmpty) return const Center(child: Text('لا توجد فواتير مشتريات بعد'));
-        return ListView(children: snap.data!.docs.map((d) { final p = d.data(); return Card(child: ListTile(
-          title: Text('فاتورة ${p['invoiceNumber'] ?? d.id.substring(0, 6)} • ${p['supplierName'] ?? ''}'),
-          subtitle: Text('${p['productName'] ?? ''} × ${p['quantity'] ?? 0}\n${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),
-          isThreeLine: true, trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
-          onTap: () => invoiceActions(context, 'purchases', d.id, p),
-        )); }).toList());
+        final rows=snap.data!.docs.toList()..sort((a,b)=>((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch??0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch??0));
+        if (rows.isEmpty) return const Center(child: Text('لا توجد فواتير مشتريات بعد'));
+        return ListView(children: rows.map((d) {
+          final p=d.data(), items=(p['items'] as List?)??const[];
+          return Card(child: ListTile(
+            title: Text('فاتورة ' + (p['invoiceNumber'] ?? d.id.substring(0,6)).toString() + ' • ' + (p['supplierName'] ?? '').toString()),
+            subtitle: Text('عدد البنود: ' + items.length.toString() + '\n' + formatDate(p['createdAt']) + (p['status']=='returned' ? ' • مرتجع' : '')),
+            isThreeLine: true,
+            trailing: Text(((p['total'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+            onTap: () => invoiceActions(context, 'purchases', d.id, p),
+          ));
+        }).toList());
       },
     )),
   ]);
 }
+
 
 String formatDate(dynamic value) => value is Timestamp ? DateFormat('dd/MM/yyyy HH:mm').format(value.toDate()) : 'جارٍ الحفظ';
 
@@ -761,49 +1309,10 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
   invoice.dispose(); paid.dispose(); markup.dispose();
 }
 
-Future<void> purchaseDialog(BuildContext context) async {
-  final products = await db.collection('products').where('active', isEqualTo: true).get();
-  final suppliers = await db.collection('suppliers').get();
-  if (!context.mounted) return;
-  if (products.docs.isEmpty || suppliers.docs.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف منتجًا وموردًا أولًا')));
-    return;
-  }
-  String productId = products.docs.first.id, supplierId = suppliers.docs.first.id;
-  final quantity = TextEditingController(text: '1'), cost = TextEditingController(), paid = TextEditingController(text: '0'), invoice = TextEditingController();
-  await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(builder: (c, setLocal) => AlertDialog(
-    title: const Text('فاتورة مشتريات جديدة'),
-    content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-      DropdownButtonFormField<String>(initialValue: supplierId, decoration: const InputDecoration(labelText: 'المورد'), items: suppliers.docs.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}'))).toList(), onChanged: (v) { if (v != null) setLocal(() => supplierId = v); }),
-      DropdownButtonFormField<String>(initialValue: productId, decoration: const InputDecoration(labelText: 'المنتج'), items: products.docs.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}'))).toList(), onChanged: (v) { if (v != null) setLocal(() => productId = v); }),
-      TextField(controller: quantity, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الكمية')),
-      TextField(controller: cost, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'سعر الشراء للوحدة')),
-      TextField(controller: paid, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'المدفوع الآن')),
-      TextField(controller: invoice, decoration: const InputDecoration(labelText: 'رقم فاتورة المورد (اختياري)')),
-    ])),
-    actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')), FilledButton(onPressed: () async {
-      final qty = int.tryParse(quantity.text.trim()), unitCost = double.tryParse(cost.text.trim()), paidNow = double.tryParse(paid.text.trim()) ?? 0;
-      if (qty == null || qty <= 0 || unitCost == null || unitCost < 0 || paidNow < 0 || paidNow > qty * unitCost) return;
-      final product = products.docs.firstWhere((d) => d.id == productId).data(), supplier = suppliers.docs.firstWhere((d) => d.id == supplierId).data();
-      try {
-        await db.runTransaction((tx) async {
-          final stockRef = db.collection('stock').doc('main_$productId'), supplierRef = db.collection('suppliers').doc(supplierId);
-          final stockSnap = await tx.get(stockRef), supplierSnap = await tx.get(supplierRef);
-          final oldQty = (stockSnap.data()?['quantity'] as num?)?.toInt() ?? 0;
-          final oldBalance = (supplierSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
-          final total = qty * unitCost, due = total - paidNow, purchaseRef = db.collection('purchases').doc();
-          tx.set(stockRef, {'branchId': 'main', 'productId': productId, 'quantity': oldQty + qty}, SetOptions(merge: true));
-          tx.update(db.collection('products').doc(productId), {'purchasePrice': unitCost, 'updatedAt': FieldValue.serverTimestamp()});
-          tx.update(supplierRef, {'balance': oldBalance + due, 'updatedAt': FieldValue.serverTimestamp()});
-          tx.set(purchaseRef, {'invoiceNumber': invoice.text.trim(), 'supplierId': supplierId, 'supplierName': supplier['name'], 'productId': productId, 'productName': product['name'], 'quantity': qty, 'unitCost': unitCost, 'total': total, 'paid': paidNow, 'due': due, 'status': 'completed', 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
-          tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': product['name'], 'branchId': 'main', 'kind': 'purchase', 'quantity': qty, 'balanceAfter': oldQty + qty, 'referenceId': purchaseRef.id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
-          tx.set(db.collection('accountMovements').doc(), {'accountType': 'suppliers', 'accountId': supplierId, 'accountName': supplier['name'], 'kind': 'purchase', 'amount': due, 'balanceBefore': oldBalance, 'balanceAfter': oldBalance + due, 'referenceId': purchaseRef.id, 'createdAt': FieldValue.serverTimestamp(), 'actorId': FirebaseAuth.instance.currentUser!.uid});
-        });
-        if (c.mounted) Navigator.pop(c);
-      } catch (e) { if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر حفظ الفاتورة: $e'))); }
-    }, child: const Text('حفظ الفاتورة'))],
-  )));
-}
+
+Future<void> purchaseDialog(BuildContext context) =>
+  openDetailedInvoice(context, isSale: false, owner: true, branchId: 'main');
+
 
 class AccountMovements extends StatelessWidget {
   const AccountMovements({super.key});
@@ -1176,19 +1685,22 @@ Future<void> printTestPage(BuildContext context, String paper) async {
   }
 }
 
+
 Future<void> invoiceActions(BuildContext context, String type, String id, Map<String, dynamic> data, {bool canReturn = true}) async {
   final returned = data['status'] == 'returned';
   final profile = (await db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid).get()).data();
   if (!context.mounted) return;
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
+  final grouped = data['items'] is List;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
     ListTile(leading: const Icon(Icons.picture_as_pdf, color: gold), title: const Text('حفظ أو مشاركة الفاتورة PDF'), onTap: () { Navigator.pop(c); exportInvoicePdf(context, type, id, data); }),
-    if (type == 'sales' && profile?['role'] == 'owner' && !returned) ListTile(leading: const Icon(Icons.edit_note, color: gold), title: const Text('تصحيح فاتورة البيع'), onTap: () { Navigator.pop(c); correctSaleDialog(context, id, data); }),
+    if (type == 'sales' && profile?['role'] == 'owner' && !returned && !grouped) ListTile(leading: const Icon(Icons.edit_note, color: gold), title: const Text('تصحيح فاتورة البيع'), onTap: () { Navigator.pop(c); correctSaleDialog(context, id, data); }),
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
-    if (type == 'sales' && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال للزبون على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
+    if (type == 'sales' && (data['customerPhone'] ?? '').toString().trim().isNotEmpty) ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال للعميل على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
     if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
   ])));
 }
+
 
 Future<void> correctSaleDialog(BuildContext context, String id, Map<String, dynamic> data) async {
   final quantity = TextEditingController(text: '${data['quantity'] ?? 1}');
@@ -1233,14 +1745,35 @@ Future<void> correctSaleDialog(BuildContext context, String id, Map<String, dyna
   }, child: const Text('حفظ التصحيح'))]));
 }
 
+
 Future<void> sendInvoiceWhatsApp(BuildContext context, String id, Map<String, dynamic> data) async {
-  var phone = '${data['customerPhone'] ?? ''}'.replaceAll(RegExp(r'\D'), '');
-  if (phone.startsWith('0')) phone = '20${phone.substring(1)}';
+  var phone = (data['customerPhone'] ?? '').toString().replaceAll(RegExp(r'\D'), '');
+  if (phone.startsWith('0')) phone = '20' + phone.substring(1);
   if (phone.startsWith('00')) phone = phone.substring(2);
-  final message = 'فاتورة مبيعات VIB رقم $id\nالصنف: ${data['productName']}\nالكمية: ${data['quantity']}\nالإجمالي: ${data['total']} ج.م\nشكراً لتعاملكم معنا';
-  final uri = Uri.parse('https://wa.me/$phone?text=${Uri.encodeComponent(message)}');
-  if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر فتح واتساب')));
+  final rawItems = data['items'] as List?;
+  final lines = <String>[];
+  if (rawItems != null) {
+    for (var i=0;i<rawItems.length;i++) {
+      final e=Map<String,dynamic>.from(rawItems[i] as Map);
+      lines.add((i+1).toString() + '- ' + (e['productName'] ?? '').toString() + ' × ' + (e['quantity'] ?? 0).toString() + ' = ' + ((e['total'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م');
+    }
+  } else {
+    lines.add((data['productName'] ?? '').toString() + ' × ' + (data['quantity'] ?? 0).toString());
+  }
+  final message = [
+    'فاتورة مبيعات VIB رقم ' + ((data['invoiceNumber'] ?? id).toString()),
+    ...lines,
+    'الإجمالي: ' + ((data['total'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م',
+    'المدفوع: ' + ((data['paid'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م',
+    'المتبقي: ' + ((data['balanceAfter'] as num?)?.toDouble() ?? (data['due'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م',
+    'شكراً لتعاملكم معنا',
+  ].join('\n');
+  final uri = Uri.parse('https://wa.me/' + phone + '?text=' + Uri.encodeComponent(message));
+  if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر فتح واتساب')));
+  }
 }
+
 
 Future<void> selectInvoicePaper(BuildContext context, String type, String id, Map<String, dynamic> data) async {
   final selected = await showModalBottomSheet<String>(context: context, builder: (sheet) => SafeArea(child: Wrap(children: [
@@ -1250,37 +1783,79 @@ Future<void> selectInvoicePaper(BuildContext context, String type, String id, Ma
   if (selected != null && context.mounted) await printInvoice(context, type, id, data, paperChoice: selected);
 }
 
+
 Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> data, {String? paperChoice}) async {
-    Map<String, dynamic> settings = {};
-    try {
-      settings = (await db.collection('settings').doc('main').get()).data() ?? {};
-    } catch (_) {
-      // The employee may print an authorized sale even if company settings are owner-only.
-    }
-    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-    final logo = pw.MemoryImage((await rootBundle.load('assets/icons/manager/mipmap-xxxhdpi/ic_launcher.png')).buffer.asUint8List());
-    final pdf = pw.Document();
-    final isSale = type == 'sales';
-    final unit = data[isSale ? 'unitPrice' : 'unitCost'] ?? 0;
-    final paper = paperChoice ?? (['a4', '58', '80'].contains(settings['paperSize']) ? '${settings['paperSize']}' : 'a4');
-    final thermal = paper != 'a4';
-    pdf.addPage(pw.Page(pageFormat: invoicePageFormat(paper), theme: pw.ThemeData.withFont(base: font, bold: font), build: (_) => pw.Directionality(textDirection: pw.TextDirection.rtl, child: pw.Padding(padding: pw.EdgeInsets.all(thermal ? 2 : 28), child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+  Map<String, dynamic> settings = {};
+  try { settings = (await db.collection('settings').doc('main').get()).data() ?? {}; } catch (_) {}
+  final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+  final logo = pw.MemoryImage((await rootBundle.load('assets/icons/manager/mipmap-xxxhdpi/ic_launcher.png')).buffer.asUint8List());
+  final pdf = pw.Document();
+  final isSale = type == 'sales';
+  final paper = paperChoice ?? (['a4','58','80'].contains(settings['paperSize']) ? settings['paperSize'].toString() : 'a4');
+  final thermal = paper != 'a4';
+  final rawItems = data['items'] as List?;
+  final items = rawItems != null && rawItems.isNotEmpty
+    ? rawItems.map((e) => Map<String, dynamic>.from(e as Map)).toList()
+    : [<String,dynamic>{
+        'productName': data['productName'] ?? '',
+        'quantity': data['quantity'] ?? 0,
+        isSale ? 'unitPrice' : 'unitCost': data[isSale ? 'unitPrice' : 'unitCost'] ?? 0,
+        'total': data['total'] ?? 0,
+      }];
+  final title = isSale ? 'فاتورة مبيعات' : 'فاتورة مشتريات';
+  final party = isSale ? (data['customerName'] ?? '') : (data['supplierName'] ?? '');
+  pdf.addPage(pw.MultiPage(
+    pageFormat: invoicePageFormat(paper),
+    theme: pw.ThemeData.withFont(base: font, bold: font),
+    build: (_) => [pw.Directionality(textDirection: pw.TextDirection.rtl, child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
       pw.Center(child: pw.Image(logo, width: thermal ? 34 : 76, height: thermal ? 34 : 76)),
-      pw.SizedBox(height: 8),
-      pw.Center(child: pw.Text('${settings['companyName'] ?? 'VIB للتجارة والتوزيع'}', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: thermal ? 11 : 24, fontWeight: pw.FontWeight.bold))),
-      pw.SizedBox(height: 6), pw.Center(child: pw.Text('${settings['address'] ?? ''}  ${settings['phone'] ?? ''}')),
-      pw.Divider(), pw.Text(isSale ? 'فاتورة مبيعات' : 'فاتورة مشتريات', style: pw.TextStyle(fontSize: thermal ? 12 : 20, fontWeight: pw.FontWeight.bold)),
-      pw.Text('رقم الفاتورة: ${data['invoiceNumber']?.toString().isNotEmpty == true ? data['invoiceNumber'] : id}', style: pw.TextStyle(fontSize: thermal ? 8 : 12)), pw.Text('التاريخ: ${formatDate(data['createdAt'])}', style: pw.TextStyle(fontSize: thermal ? 9 : 12)),
-      if (!isSale) pw.Text('المورد: ${data['supplierName'] ?? ''}'), pw.SizedBox(height: 18),
-      if (thermal) pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [pw.Text('الصنف: ${data['productName'] ?? ''}', style: const pw.TextStyle(fontSize: 9)), pw.Text('الكمية: ${data['quantity'] ?? 0} × $unit ج.م', style: const pw.TextStyle(fontSize: 9)), pw.Divider()]) else pw.Table(border: pw.TableBorder.all(), children: [
-        pw.TableRow(children: ['الإجمالي', 'سعر الوحدة', 'الكمية', 'الصنف'].map((v) => pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text(v, textAlign: pw.TextAlign.center, style: pw.TextStyle(fontWeight: pw.FontWeight.bold)))).toList()),
-        pw.TableRow(children: ['${data['total'] ?? 0}', '$unit', '${data['quantity'] ?? 0}', '${data['productName'] ?? ''}'].map((v) => pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text(v, textAlign: pw.TextAlign.center))).toList()),
-      ]), pw.SizedBox(height: thermal ? 6 : 16), pw.Text('الإجمالي: ${data['total'] ?? 0} ج.م', style: pw.TextStyle(fontSize: thermal ? 11 : 18, fontWeight: pw.FontWeight.bold)),
-      if (!isSale) pw.Text('المدفوع: ${data['paid'] ?? 0} ج.م     المتبقي: ${data['due'] ?? 0} ج.م'),
-      if (data['status'] == 'returned') pw.Text('فاتورة مرتجعة', style: const pw.TextStyle(color: PdfColors.red, fontSize: 18)),
-    ])))));
-    return pdf.save();
+      pw.SizedBox(height: 6),
+      pw.Center(child: pw.Text((settings['companyName'] ?? 'VIB للتجارة والتوزيع').toString(), style: pw.TextStyle(fontSize: thermal ? 11 : 24, fontWeight: pw.FontWeight.bold))),
+      pw.Center(child: pw.Text((settings['address'] ?? '').toString() + '  ' + (settings['phone'] ?? '').toString())),
+      pw.Divider(),
+      pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
+        pw.Text(title, style: pw.TextStyle(fontSize: thermal ? 12 : 20, fontWeight: pw.FontWeight.bold)),
+        pw.Text('رقم: ' + ((data['invoiceNumber'] ?? id).toString())),
+      ]),
+      pw.Text((isSale ? 'العميل: ' : 'المورد: ') + party.toString()),
+      pw.Text('التاريخ: ' + formatDate(data['createdAt'])),
+      pw.SizedBox(height: 10),
+      if (thermal)
+        ...items.asMap().entries.map((entry) {
+          final e=entry.value;
+          final unit=(e[isSale ? 'unitPrice' : 'unitCost'] as num?)?.toDouble() ?? 0;
+          return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+            pw.Text((entry.key+1).toString() + '- ' + (e['productName'] ?? '').toString()),
+            pw.Text('العدد ' + (e['quantity'] ?? 0).toString() + ' × ' + unit.toStringAsFixed(2) + ' = ' + ((e['total'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م'),
+            pw.Divider(),
+          ]);
+        })
+      else
+        pw.Table(border: pw.TableBorder.all(), children: [
+          pw.TableRow(children: ['م','المنتج','السعر','العدد','الإجمالي'].map((v)=>pw.Padding(padding: const pw.EdgeInsets.all(7), child: pw.Text(v, textAlign: pw.TextAlign.center, style: pw.TextStyle(fontWeight: pw.FontWeight.bold)))).toList()),
+          for (var i=0;i<items.length;i++)
+            pw.TableRow(children: [
+              (i+1).toString(),
+              (items[i]['productName'] ?? '').toString(),
+              ((items[i][isSale ? 'unitPrice' : 'unitCost'] as num?)?.toDouble() ?? 0).toStringAsFixed(2),
+              (items[i]['quantity'] ?? 0).toString(),
+              ((items[i]['total'] as num?)?.toDouble() ?? 0).toStringAsFixed(2),
+            ].map((v)=>pw.Padding(padding: const pw.EdgeInsets.all(7), child: pw.Text(v, textAlign: pw.TextAlign.center))).toList()),
+        ]),
+      pw.SizedBox(height: 12),
+      pw.Text('إجمالي الفاتورة الحالية: ' + ((data['total'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+      pw.Text('الرصيد السابق: ' + ((data['balanceBefore'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م'),
+      pw.Text('إجمالي المستحق: ' + (((data['balanceBefore'] as num?)?.toDouble() ?? 0) + ((data['total'] as num?)?.toDouble() ?? 0)).toStringAsFixed(2) + ' ج.م'),
+      pw.Text('المدفوع نقدًا: ' + ((data['paid'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م'),
+      pw.Text('باقي هذه الفاتورة: ' + ((data['due'] as num?)?.toDouble() ?? 0).toStringAsFixed(2) + ' ج.م'),
+      pw.Text('المتبقي الإجمالي: ' + ((data['balanceAfter'] as num?)?.toDouble() ?? ((data['due'] as num?)?.toDouble() ?? 0)).toStringAsFixed(2) + ' ج.م', style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+      pw.Text('حالة الفاتورة: ' + (data['paymentStatus'] ?? '').toString()),
+      if (data['status'] == 'returned') pw.Text('فاتورة مرتجعة', style: const pw.TextStyle(color: PdfColors.red)),
+    ]))],
+  ));
+  return pdf.save();
 }
+
 
 Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<String, dynamic> data) async {
   try {
@@ -1291,50 +1866,110 @@ Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<
   }
 }
 
+
 Future<void> printInvoice(BuildContext context, String type, String id, Map<String, dynamic> data, {String? paperChoice}) async {
   try {
     final bytes = await createInvoicePdf(type, id, data, paperChoice: paperChoice);
-    await Printing.layoutPdf(name: '${type == 'sales' ? 'VIB-SALE' : 'VIB-PURCHASE'}-$id.pdf', onLayout: (_) async => bytes);
-    await db.collection(type).doc(id).set({'printedAt': FieldValue.serverTimestamp(), 'printedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
-  } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e'))); }
+    await Printing.layoutPdf(name: (type == 'sales' ? 'VIB-SALE-' : 'VIB-PURCHASE-') + id + '.pdf', onLayout: (_) async => bytes);
+    final collection = data['items'] is List ? 'invoiceHeaders' : type;
+    await db.collection(collection).doc(id).set({'printedAt': FieldValue.serverTimestamp(), 'printedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: ' + e.toString())));
+  }
 }
+
+
 
 Future<void> confirmReturn(BuildContext context, String type, String id, Map<String, dynamic> data) async {
-  final yes = await showDialog<bool>(context: context, builder: (c) => AlertDialog(title: const Text('تأكيد المرتجع'), content: const Text('سيتم عكس حركة المخزون والحساب، وستظل الفاتورة الأصلية محفوظة.'), actions: [TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')), FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('تأكيد المرتجع'))])) ?? false;
+  final yes = await showDialog<bool>(context: context, builder: (c) => AlertDialog(
+    title: const Text('تأكيد المرتجع'),
+    content: const Text('سيتم عكس حركة المخزون والحساب، وستظل الفاتورة الأصلية محفوظة.'),
+    actions: [TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')), FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('تأكيد المرتجع'))])) ?? false;
   if (!yes || !context.mounted) return;
   try {
-    await returnInvoice(type, id);
+    await returnInvoice(type, id, grouped: data['items'] is List);
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تسجيل المرتجع وحفظ الفاتورة الأصلية')));
-  } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر المرتجع: $e'))); }
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر المرتجع: ' + e.toString())));
+  }
 }
 
-Future<void> returnInvoice(String type, String id) async {
+Future<void> returnInvoice(String type, String id, {bool grouped = false}) async {
   await db.runTransaction((tx) async {
-    final invoiceRef = db.collection(type).doc(id), invoiceSnap = await tx.get(invoiceRef), d = invoiceSnap.data();
+    if (!grouped) {
+      final invoiceRef = db.collection(type).doc(id), invoiceSnap = await tx.get(invoiceRef), d = invoiceSnap.data();
+      if (d == null) throw Exception('الفاتورة غير موجودة');
+      if (d['status'] == 'returned') throw Exception('الفاتورة مرتجعة بالفعل');
+      final qty = (d['quantity'] as num).toInt(), productId = d['productId'].toString(), now = FieldValue.serverTimestamp();
+      if (type == 'sales') {
+        final stockRef = db.collection('stock').doc(d['branchId'].toString() + '_' + productId), stock = await tx.get(stockRef), before = (stock.data()?['quantity'] as num?)?.toInt() ?? 0;
+        final ret = db.collection('salesReturns').doc();
+        tx.set(stockRef, {'branchId': d['branchId'], 'productId': productId, 'quantity': before + qty}, SetOptions(merge: true));
+        tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+        tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': d['productName'], 'branchId': d['branchId'], 'kind': 'sales_return', 'quantity': qty, 'balanceAfter': before + qty, 'referenceId': ret.id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+        tx.update(invoiceRef, {'status': 'returned', 'returnedAt': now, 'returnId': ret.id});
+      } else {
+        final stockRef = db.collection('stock').doc('main_' + productId), stock = await tx.get(stockRef), before = (stock.data()?['quantity'] as num?)?.toInt() ?? 0;
+        if (before < qty) throw Exception('المخزون الرئيسي لا يكفي لإرجاع الفاتورة');
+        final supplierRef = db.collection('suppliers').doc(d['supplierId'].toString()), supplier = await tx.get(supplierRef), oldBalance = (supplier.data()?['balance'] as num?)?.toDouble() ?? 0, due = (d['due'] as num?)?.toDouble() ?? 0;
+        final ret = db.collection('purchaseReturns').doc();
+        tx.set(stockRef, {'branchId': 'main', 'productId': productId, 'quantity': before - qty}, SetOptions(merge: true));
+        tx.update(supplierRef, {'balance': oldBalance - due, 'updatedAt': now});
+        tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+        tx.set(db.collection('accountMovements').doc(), {'accountType': 'suppliers', 'accountId': d['supplierId'], 'accountName': d['supplierName'], 'kind': 'purchase_return', 'amount': due, 'balanceBefore': oldBalance, 'balanceAfter': oldBalance - due, 'referenceId': ret.id, 'createdAt': now, 'actorId': FirebaseAuth.instance.currentUser!.uid});
+        tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': d['productName'], 'branchId': 'main', 'kind': 'purchase_return', 'quantity': -qty, 'balanceAfter': before - qty, 'referenceId': ret.id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+        tx.update(invoiceRef, {'status': 'returned', 'returnedAt': now, 'returnId': ret.id});
+      }
+      return;
+    }
+
+    final headerRef = db.collection('invoiceHeaders').doc(id);
+    final headerSnap = await tx.get(headerRef);
+    final d = headerSnap.data();
     if (d == null) throw Exception('الفاتورة غير موجودة');
     if (d['status'] == 'returned') throw Exception('الفاتورة مرتجعة بالفعل');
-    final qty = (d['quantity'] as num).toInt(), productId = '${d['productId']}', now = FieldValue.serverTimestamp();
-    if (type == 'sales') {
-      final stockRef = db.collection('stock').doc('${d['branchId']}_$productId'), stock = await tx.get(stockRef), before = (stock.data()?['quantity'] as num?)?.toInt() ?? 0;
-      final ret = db.collection('salesReturns').doc();
-      tx.set(stockRef, {'branchId': d['branchId'], 'productId': productId, 'quantity': before + qty}, SetOptions(merge: true));
-      tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
-      tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': d['productName'], 'branchId': d['branchId'], 'kind': 'sales_return', 'quantity': qty, 'balanceAfter': before + qty, 'referenceId': ret.id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
-      tx.update(invoiceRef, {'status': 'returned', 'returnedAt': now, 'returnId': ret.id});
-    } else {
-      final stockRef = db.collection('stock').doc('main_$productId'), stock = await tx.get(stockRef), before = (stock.data()?['quantity'] as num?)?.toInt() ?? 0;
-      if (before < qty) throw Exception('المخزون الرئيسي لا يكفي لإرجاع الفاتورة');
-      final supplierRef = db.collection('suppliers').doc('${d['supplierId']}'), supplier = await tx.get(supplierRef), oldBalance = (supplier.data()?['balance'] as num?)?.toDouble() ?? 0, due = (d['due'] as num?)?.toDouble() ?? 0;
-      final ret = db.collection('purchaseReturns').doc();
-      tx.set(stockRef, {'branchId': 'main', 'productId': productId, 'quantity': before - qty}, SetOptions(merge: true));
-      tx.update(supplierRef, {'balance': oldBalance - due, 'updatedAt': now});
-      tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
-      tx.set(db.collection('accountMovements').doc(), {'accountType': 'suppliers', 'accountId': d['supplierId'], 'accountName': d['supplierName'], 'kind': 'purchase_return', 'amount': due, 'balanceBefore': oldBalance, 'balanceAfter': oldBalance - due, 'referenceId': ret.id, 'createdAt': now, 'actorId': FirebaseAuth.instance.currentUser!.uid});
-      tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': d['productName'], 'branchId': 'main', 'kind': 'purchase_return', 'quantity': -qty, 'balanceAfter': before - qty, 'referenceId': ret.id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
-      tx.update(invoiceRef, {'status': 'returned', 'returnedAt': now, 'returnId': ret.id});
+    final items = (d['items'] as List).map((e) => Map<String,dynamic>.from(e as Map)).toList();
+    final stocks = <String, DocumentSnapshot<Map<String,dynamic>>>{};
+    for (final item in items) {
+      final productId = item['productId'].toString();
+      final stockId = (type == 'sales' ? d['branchId'].toString() : 'main') + '_' + productId;
+      stocks[productId] = await tx.get(db.collection('stock').doc(stockId));
     }
+    final accountCollection = type == 'sales' ? 'customers' : 'suppliers';
+    final accountId = type == 'sales' ? d['customerId'].toString() : d['supplierId'].toString();
+    final accountRef = db.collection(accountCollection).doc(accountId);
+    final accountSnap = await tx.get(accountRef);
+    final oldBalance = (accountSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
+    final due = (d['due'] as num?)?.toDouble() ?? 0;
+    final now = FieldValue.serverTimestamp();
+    for (final item in items) {
+      final productId = item['productId'].toString();
+      final qty = (item['quantity'] as num).toInt();
+      final branch = type == 'sales' ? d['branchId'].toString() : 'main';
+      final stockRef = db.collection('stock').doc(branch + '_' + productId);
+      final before = (stocks[productId]?.data()?['quantity'] as num?)?.toInt() ?? 0;
+      final after = type == 'sales' ? before + qty : before - qty;
+      if (after < 0) throw Exception('المخزون لا يكفي لإرجاع: ' + (item['productName'] ?? '').toString());
+      tx.set(stockRef, {'branchId': branch, 'productId': productId, 'quantity': after}, SetOptions(merge: true));
+      tx.set(db.collection('stockMovements').doc(), {
+        'productId': productId, 'productName': item['productName'], 'branchId': branch,
+        'kind': type == 'sales' ? 'sales_return' : 'purchase_return',
+        'quantity': type == 'sales' ? qty : -qty, 'balanceAfter': after,
+        'referenceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now,
+      });
+    }
+    tx.update(accountRef, {'balance': oldBalance - due, 'updatedAt': now});
+    tx.update(headerRef, {'status': 'returned', 'returnedAt': now, 'returnId': id});
+    tx.set(db.collection('accountMovements').doc(), {
+      'accountType': accountCollection, 'accountId': accountId,
+      'accountName': type == 'sales' ? d['customerName'] : d['supplierName'],
+      'kind': type == 'sales' ? 'sales_return' : 'purchase_return',
+      'amount': due, 'balanceBefore': oldBalance, 'balanceAfter': oldBalance - due,
+      'referenceId': id, 'createdAt': now, 'actorId': FirebaseAuth.instance.currentUser!.uid,
+    });
   });
 }
+
 
 class ItemMovementReport extends StatefulWidget {
   const ItemMovementReport({super.key});
