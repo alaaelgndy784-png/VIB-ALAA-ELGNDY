@@ -46,7 +46,7 @@ jobs:
           sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
           sed -i 's/android:label="manager"/android:label="VIB MANAGER FINAL"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/applicationId = "com.alaa.vibsales.manager"/applicationId = "com.alaa.vibsales.managerfinal20260930"/' android/app/build.gradle.kts
-          grep -q 'applicationId = "com.alaa.vibsales.manageraudit20260928"' android/app/build.gradle.kts
+          grep -q 'applicationId = "com.alaa.vibsales.managerfinal20260930"' android/app/build.gradle.kts
           sed -i 's/import io.flutter.embedding.android.FlutterActivity/import io.flutter.embedding.android.FlutterFragmentActivity/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
           sed -i 's/FlutterActivity()/FlutterFragmentActivity()/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
           sed -i '/<manifest/a\    <uses-permission android:name="android.permission.USE_BIOMETRIC" />' android/app/src/main/AndroidManifest.xml
