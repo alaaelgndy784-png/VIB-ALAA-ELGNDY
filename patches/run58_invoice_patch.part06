@@ -1,0 +1,119 @@
+      tx.update(customerRef, {'balance': finalBalance, 'updatedAt': FieldValue.serverTimestamp()});
+      tx.set(db.collection('accountMovements').doc(), {
+        'accountType': 'customers', 'accountId': customerId, 'accountName': customerName,
+        'kind': 'sale', 'amount': total, 'paid': paid, 'balanceBefore': previous,
+        'balanceAfter': finalBalance, 'referenceId': invoice.id,
+        'createdAt': FieldValue.serverTimestamp(), 'actorId': actor,
+      });
+    }
+
+    tx.set(invoice, {
+      'invoiceNumber': invoiceNumber,
+      'branchId': branchId,
+      'employeeId': actor,
+      'customerId': customerId ?? '',
+      'customerName': customerName,
+      'customerPhone': customerPhone,
+      'items': items,
+      'total': total,
+      'paid': paid,
+      'due': currentDue,
+      'previousBalance': previous,
+      'balanceAfter': finalBalance,
+      'paymentStatus': currentDue <= 0 ? 'مدفوع' : paid <= 0 ? 'آجل' : 'جزئي',
+      'status': 'completed',
+      'grouped': true,
+      'createdAt': FieldValue.serverTimestamp(),
+    });
+  });
+  return invoice;
+}'''
+replace_between('Future<DocumentReference<Map<String, dynamic>>> saveManagerGroupedSale({',
+                '// Employee grouped sales keep the existing line-per-sale structure', sale_save)
+
+purchase_wrapper = r'''Future<void> groupedPurchaseDialog(BuildContext context) async {
+  await Navigator.push<void>(context, MaterialPageRoute(
+    builder: (_) => const DetailedInvoicePage(isSale: false, owner: true, branchId: 'main'),
+  ));
+}'''
+replace_between('Future<void> groupedPurchaseDialog(BuildContext context) async {',
+                'Future<DocumentReference<Map<String, dynamic>>> saveManagerGroupedPurchase({', purchase_wrapper)
+
+purchase_save = r'''Future<DocumentReference<Map<String, dynamic>>> saveManagerGroupedPurchase({
+  required List<({String id, int qty, double cost})> entries,
+  required String supplierId,
+  required QuerySnapshot<Map<String, dynamic>> suppliers,
+  required QuerySnapshot<Map<String, dynamic>> products,
+  required String invoiceNumber,
+  required double paid,
+  double? markupPercent,
+  required String source,
+}) async {
+  final supplier = suppliers.docs.firstWhere((d) => d.id == supplierId).data();
+  final invoice = db.collection('purchases').doc();
+  final total = entries.fold<double>(0, (sum, e) => sum + e.qty * e.cost);
+  final actor = FirebaseAuth.instance.currentUser!.uid;
+
+  await db.runTransaction((tx) async {
+    final supplierRef = db.collection('suppliers').doc(supplierId);
+    final supplierSnap = await tx.get(supplierRef);
+    if (!supplierSnap.exists) throw StateError('المورد غير موجود');
+    final previous = (supplierSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
+
+    final cashRef = db.collection('settings').doc('cash');
+    final cash = await tx.get(cashRef);
+    final beforeCash = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
+    final maxPayment = previous + total;
+    if (paid < 0 || paid > maxPayment || beforeCash < paid) throw StateError('راجع المدفوع ورصيد الصندوق');
+
+    final stocks = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+    for (final e in entries) {
+      stocks[e.id] = await tx.get(db.collection('stock').doc('main_${e.id}'));
+    }
+    final items = <Map<String, dynamic>>[];
+    final currentDue = (total - paid).clamp(0, double.infinity).toDouble();
+    final finalBalance = (previous + total - paid).clamp(0, double.infinity).toDouble();
+
+    tx.update(supplierRef, {'balance': finalBalance, 'updatedAt': FieldValue.serverTimestamp()});
+
+    if (paid > 0) {
+      tx.set(cashRef, {'balance': beforeCash - paid, 'updatedAt': FieldValue.serverTimestamp()},
+        SetOptions(merge: true));
+      tx.set(db.collection('accountMovements').doc(), {
+        'accountType': 'cash', 'kind': 'invoicePurchase', 'referenceId': invoice.id,
+        'amount': paid, 'delta': -paid, 'balanceBefore': beforeCash, 'balanceAfter': beforeCash - paid,
+        'actorId': actor, 'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    for (final e in entries) {
+      final product = products.docs.firstWhere((d) => d.id == e.id).data();
+      final old = (stocks[e.id]?.data()?['quantity'] as num?)?.toInt() ?? 0;
+      final amount = e.qty * e.cost;
+      items.add({'productId': e.id, 'productName': product['name'], 'quantity': e.qty,
+        'unitCost': e.cost, 'total': amount});
+      tx.set(db.collection('stock').doc('main_${e.id}'),
+        {'branchId': 'main', 'productId': e.id, 'quantity': old + e.qty}, SetOptions(merge: true));
+      tx.update(db.collection('products').doc(e.id), {
+        'purchasePrice': e.cost,
+        if (markupPercent != null) 'price': double.parse((e.cost * (1 + markupPercent / 100)).toStringAsFixed(2)),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      tx.set(db.collection('stockMovements').doc(), {
+        'productId': e.id, 'productName': product['name'], 'branchId': 'main',
+        'kind': 'purchase', 'quantity': e.qty, 'balanceAfter': old + e.qty,
+        'referenceId': invoice.id, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp(),
+      });
+    }
+
+    tx.set(invoice, {
+      'invoiceNumber': invoiceNumber,
+      'source': source,
+      'supplierId': supplierId,
+      'supplierName': supplier['name'],
+      'items': items,
+      'total': total,
+      'paid': paid,
+      'due': currentDue,
+      'previousBalance': previous,
+      'balanceAfter': finalBalance,
