@@ -22,6 +22,12 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Restore stable Android signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.config/.android/debug.keystore
+          key: vib-sales-stable-android-signing-v1
+
       - name: Extract independent sales project
         run: |
           mkdir VIB-SALES-INDEPENDENT
@@ -79,20 +85,34 @@ jobs:
         working-directory: VIB-SALES-INDEPENDENT
         run: |
           mkdir -p dist
-          if [ -f "$HOME/.android/debug.keystore" ]; then
-            {
-              echo "VIB SALES ANDROID SIGNING FINGERPRINTS"
-              echo "Generated from the keystore used by this build"
-              keytool -list -v \
-                -keystore "$HOME/.android/debug.keystore" \
-                -alias androiddebugkey \
-                -storepass android \
-                -keypass android
-            } | tee dist/VIB-SALES-SHA.txt
-          else
-            echo "Debug keystore not found at $HOME/.android/debug.keystore" | tee dist/VIB-SALES-SHA.txt
-            find "$HOME" -maxdepth 4 -type f \( -name "*.keystore" -o -name "*.jks" \) -print | tee -a dist/VIB-SALES-SHA.txt || true
+          KEYSTORE=""
+          for candidate in \
+            "$HOME/.config/.android/debug.keystore" \
+            "$HOME/.android/debug.keystore"; do
+            if [ -f "$candidate" ]; then
+              KEYSTORE="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$KEYSTORE" ]; then
+            KEYSTORE="$(find "$HOME" -maxdepth 5 -type f -name "debug.keystore" -print -quit 2>/dev/null || true)"
           fi
+
+          if [ -z "$KEYSTORE" ]; then
+            echo "Android signing keystore not found" | tee dist/VIB-SALES-SHA.txt
+            exit 1
+          fi
+
+          {
+            echo "VIB SALES ANDROID SIGNING FINGERPRINTS"
+            echo "Keystore: $KEYSTORE"
+            keytool -list -v \
+              -keystore "$KEYSTORE" \
+              -alias androiddebugkey \
+              -storepass android \
+              -keypass android
+          } | tee dist/VIB-SALES-SHA.txt
 
       - name: Upload Android signing fingerprints
         uses: actions/upload-artifact@v4
