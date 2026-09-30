@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:convert';
 import 'dart:io';
 import 'package:tesseract_ocr/tesseract_ocr.dart';
 import 'package:tesseract_ocr/ocr_engine_config.dart';
@@ -14,6 +15,9 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1841,6 +1845,19 @@ class _AppSettingsState extends State<AppSettings> {
     const SizedBox(height: 14),
     const Card(child: ListTile(leading: Icon(Icons.cloud_done, color: gold), title: Text('حفظ البيانات طويل المدة'), subtitle: Text('الفواتير والحركات لا تُحذف وتظل محفوظة في قاعدة البيانات.'))),
     const SizedBox(height: 10),
+    Card(child: ListTile(
+      leading: const Icon(Icons.cloud_upload, color: gold),
+      title: const Text('إضافة نسخة احتياطية على Google Drive'),
+      subtitle: const Text('يتم إنشاء ملف نسخة احتياطية ثم اختيار Google Drive من شاشة المشاركة.'),
+      onTap: () => backupToDrive(context),
+    )),
+    Card(child: ListTile(
+      leading: const Icon(Icons.cloud_download, color: gold),
+      title: const Text('سحب نسخة احتياطية من Google Drive'),
+      subtitle: const Text('اختر ملف VIB Backup من Google Drive أو ملفات الهاتف لاسترجاع البيانات.'),
+      onTap: () => restoreFromDrive(context),
+    )),
+    const SizedBox(height: 10),
     Card(
       child: ListTile(
         leading: const Icon(Icons.restart_alt, color: Colors.redAccent),
@@ -1850,6 +1867,166 @@ class _AppSettingsState extends State<AppSettings> {
       ),
     ),
   ]);
+}
+
+const _backupCollections = <String>[
+  'products',
+  'stock',
+  'stockMovements',
+  'stockAdjustments',
+  'sales',
+  'purchases',
+  'salesReturns',
+  'purchaseReturns',
+  'customers',
+  'suppliers',
+  'accountMovements',
+  'branches',
+  'settings',
+];
+
+dynamic _encodeBackupValue(dynamic value) {
+  if (value is Timestamp) {
+    return {'__vibType': 'timestamp', 'milliseconds': value.millisecondsSinceEpoch};
+  }
+  if (value is Map) {
+    return value.map((key, item) => MapEntry('$key', _encodeBackupValue(item)));
+  }
+  if (value is Iterable) {
+    return value.map(_encodeBackupValue).toList();
+  }
+  return value;
+}
+
+dynamic _decodeBackupValue(dynamic value) {
+  if (value is Map) {
+    if (value['__vibType'] == 'timestamp' && value['milliseconds'] is num) {
+      return Timestamp.fromMillisecondsSinceEpoch((value['milliseconds'] as num).toInt());
+    }
+    return value.map((key, item) => MapEntry('$key', _decodeBackupValue(item)));
+  }
+  if (value is List) return value.map(_decodeBackupValue).toList();
+  return value;
+}
+
+Future<void> backupToDrive(BuildContext context) async {
+  final messenger = ScaffoldMessenger.of(context);
+  final notice = messenger.showSnackBar(const SnackBar(content: Text('جاري تجهيز النسخة الاحتياطية...'), duration: Duration(minutes: 2)));
+  try {
+    final collections = <String, dynamic>{};
+    for (final name in _backupCollections) {
+      final snap = await db.collection(name).get();
+      collections[name] = {
+        for (final doc in snap.docs) doc.id: _encodeBackupValue(doc.data()),
+      };
+    }
+
+    final payload = {
+      'app': 'VIB Sales',
+      'version': 1,
+      'createdAt': DateTime.now().toIso8601String(),
+      'projectId': firebaseOptions.projectId,
+      'collections': collections,
+    };
+
+    final dir = await getTemporaryDirectory();
+    final stamp = DateFormat('yyyyMMdd-HHmmss').format(DateTime.now());
+    final file = File('${dir.path}/VIB-BACKUP-$stamp.json');
+    await file.writeAsString(jsonEncode(payload), flush: true);
+
+    notice.close();
+    await Share.shareXFiles([XFile(file.path)], text: 'نسخة احتياطية VIB Sales - اختر Google Drive للحفظ');
+  } catch (e) {
+    notice.close();
+    if (context.mounted) messenger.showSnackBar(SnackBar(content: Text('تعذر إنشاء النسخة الاحتياطية: $e')));
+  }
+}
+
+Future<void> _clearCollectionForRestore(String name) async {
+  while (true) {
+    final snap = await db.collection(name).limit(400).get();
+    if (snap.docs.isEmpty) break;
+    final batch = db.batch();
+    for (final doc in snap.docs) {
+      batch.delete(doc.reference);
+    }
+    await batch.commit();
+    if (snap.docs.length < 400) break;
+  }
+}
+
+Future<void> restoreFromDrive(BuildContext context) async {
+  final picked = await FilePicker.platform.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: const ['json'],
+    withData: true,
+  );
+  if (picked == null || picked.files.isEmpty || !context.mounted) return;
+
+  Uint8List? bytes = picked.files.single.bytes;
+  final path = picked.files.single.path;
+  if (bytes == null && path != null) bytes = await File(path).readAsBytes();
+  if (bytes == null) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر قراءة ملف النسخة الاحتياطية')));
+    return;
+  }
+
+  Map<String, dynamic> payload;
+  try {
+    final raw = jsonDecode(utf8.decode(bytes));
+    if (raw is! Map) throw const FormatException('صيغة غير صحيحة');
+    payload = Map<String, dynamic>.from(raw);
+    if (payload['app'] != 'VIB Sales' || payload['collections'] is! Map) throw const FormatException('الملف ليس نسخة VIB Sales');
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('ملف النسخة الاحتياطية غير صالح: $e')));
+    return;
+  }
+
+  final yes = await showDialog<bool>(
+    context: context,
+    builder: (c) => AlertDialog(
+      title: const Text('استرجاع النسخة الاحتياطية'),
+      content: const Text('سيتم استبدال بيانات التشغيل الحالية بالبيانات الموجودة داخل ملف النسخة الاحتياطية. تسجيل الدخول لن يتم حذفه.'),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')),
+        FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('استرجاع')),
+      ],
+    ),
+  ) ?? false;
+  if (!yes || !context.mounted) return;
+
+  final messenger = ScaffoldMessenger.of(context);
+  final notice = messenger.showSnackBar(const SnackBar(content: Text('جاري استرجاع النسخة الاحتياطية...'), duration: Duration(minutes: 3)));
+
+  try {
+    final collections = Map<String, dynamic>.from(payload['collections'] as Map);
+    for (final name in _backupCollections) {
+      await _clearCollectionForRestore(name);
+      final rawDocs = collections[name];
+      if (rawDocs is! Map || rawDocs.isEmpty) continue;
+
+      var batch = db.batch();
+      var count = 0;
+      for (final entry in rawDocs.entries) {
+        final data = entry.value;
+        if (data is! Map) continue;
+        batch.set(db.collection(name).doc('${entry.key}'), Map<String, dynamic>.from(_decodeBackupValue(data) as Map));
+        count++;
+        if (count == 400) {
+          await batch.commit();
+          batch = db.batch();
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    }
+
+    notice.close();
+    if (context.mounted) messenger.showSnackBar(const SnackBar(content: Text('تم استرجاع النسخة الاحتياطية بنجاح')));
+  } catch (e) {
+    notice.close();
+    if (context.mounted) messenger.showSnackBar(SnackBar(content: Text('تعذر استرجاع النسخة الاحتياطية: $e')));
+  }
 }
 
 Future<void> resetProgram(BuildContext context) async {
