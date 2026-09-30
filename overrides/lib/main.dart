@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:io';
@@ -51,6 +52,168 @@ class _VibBootstrapState extends State<VibBootstrap> {
 
 const gold = Color(0xFFD6AC55);
 final db = FirebaseFirestore.instance;
+
+String _smsAuthMessage(Object error) {
+  if (error is FirebaseAuthException) {
+    return switch (error.code) {
+      'invalid-verification-code' => 'كود الرسالة غير صحيح',
+      'session-expired' => 'انتهت صلاحية الكود؛ اطلب رسالة جديدة',
+      'too-many-requests' => 'تم إرسال محاولات كثيرة؛ جرّب لاحقًا',
+      'quota-exceeded' => 'تم تجاوز حد رسائل SMS في Firebase',
+      'operation-not-allowed' => 'خدمة تسجيل الدخول برقم الهاتف غير مفعّلة في Firebase',
+      'app-not-authorized' || 'missing-client-identifier' => 'نسخة التطبيق غير معتمدة لإرسال SMS في Firebase',
+      'credential-already-in-use' => 'رقم الهاتف مربوط بحساب آخر',
+      'provider-already-linked' => 'الاسترجاع بالرسالة مفعّل بالفعل',
+      _ => error.message ?? 'تعذر إتمام التحقق برسالة SMS',
+    };
+  }
+  return error.toString().replaceFirst('Exception: ', '');
+}
+
+Future<FirebaseAuth> _smsRecoveryAuth() async {
+  FirebaseApp app;
+  try {
+    app = Firebase.app('vibSmsRecovery');
+  } catch (_) {
+    app = await Firebase.initializeApp(name: 'vibSmsRecovery', options: firebaseOptions);
+  }
+  return FirebaseAuth.instanceFor(app: app);
+}
+
+Future<PhoneAuthCredential?> _requestSmsCredential(
+  BuildContext context,
+  FirebaseAuth auth,
+  String phoneNumber, {
+  String title = 'تأكيد رقم الهاتف',
+}) async {
+  final completer = Completer<PhoneAuthCredential?>();
+  var codeDialogOpen = false;
+
+  await auth.verifyPhoneNumber(
+    phoneNumber: phoneNumber,
+    timeout: const Duration(seconds: 60),
+    verificationCompleted: (credential) {
+      if (!codeDialogOpen && !completer.isCompleted) completer.complete(credential);
+    },
+    verificationFailed: (e) {
+      if (!completer.isCompleted) completer.completeError(e);
+    },
+    codeSent: (verificationId, resendToken) async {
+      if (completer.isCompleted) return;
+      if (!context.mounted) {
+        completer.complete(null);
+        return;
+      }
+
+      codeDialogOpen = true;
+      final code = TextEditingController();
+      String? localError;
+      final entered = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialog) => StatefulBuilder(builder: (dialog, update) => AlertDialog(
+          title: Text(title),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('تم إرسال كود SMS إلى $phoneNumber'),
+            const SizedBox(height: 10),
+            TextField(
+              controller: code,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              maxLength: 6,
+              decoration: InputDecoration(labelText: 'كود التحقق', errorText: localError),
+            ),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء')),
+            FilledButton(
+              onPressed: () {
+                final value = code.text.replaceAll(RegExp(r'\D'), '');
+                if (value.length != 6) {
+                  update(() => localError = 'اكتب كود الرسالة المكوّن من 6 أرقام');
+                  return;
+                }
+                Navigator.pop(dialog, value);
+              },
+              child: const Text('تأكيد الكود'),
+            ),
+          ],
+        )),
+      );
+      codeDialogOpen = false;
+      code.dispose();
+
+      if (completer.isCompleted) return;
+      if (entered == null) {
+        completer.complete(null);
+      } else {
+        completer.complete(PhoneAuthProvider.credential(
+          verificationId: verificationId,
+          smsCode: entered,
+        ));
+      }
+    },
+    codeAutoRetrievalTimeout: (_) {},
+  );
+
+  return completer.future;
+}
+
+Future<void> enableSmsRecoveryForCurrentUser(BuildContext context, {bool askFirst = false}) async {
+  final user = FirebaseAuth.instance.currentUser;
+  if (user == null) return;
+  await user.reload();
+  final fresh = FirebaseAuth.instance.currentUser;
+  if (fresh == null) return;
+
+  if (fresh.providerData.any((p) => p.providerId == 'phone')) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('استرجاع كلمة السر برسالة SMS مفعّل بالفعل')));
+    }
+    return;
+  }
+
+  final profile = await db.collection('users').doc(fresh.uid).get();
+  final phone = '${profile.data()?['phone'] ?? ''}'.trim();
+  if (phone.isEmpty) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا يوجد رقم هاتف محفوظ لهذا الحساب')));
+    return;
+  }
+
+  if (askFirst && context.mounted) {
+    final yes = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('تفعيل استرجاع كلمة السر برسالة'),
+        content: Text('سيتم إرسال كود SMS إلى $phone لربط الرقم بالحساب. بعد التفعيل تقدر تستخدم «نسيت كلمة السر» وتعمل رقم سري جديد من الرسالة.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('ليس الآن')),
+          FilledButton.icon(onPressed: () => Navigator.pop(c, true), icon: const Icon(Icons.sms), label: const Text('إرسال الكود')),
+        ],
+      ),
+    ) ?? false;
+    if (!yes) return;
+  }
+
+  try {
+    final credential = await _requestSmsCredential(context, FirebaseAuth.instance, phone, title: 'تفعيل الاسترجاع برسالة');
+    if (credential == null) return;
+    await fresh.linkWithCredential(credential);
+    await fresh.reload();
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تفعيل استرجاع كلمة السر برسالة SMS')));
+  } catch (e) {
+    if (context.mounted) {
+      await showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('تعذر تفعيل الرسائل'),
+          content: Text(_smsAuthMessage(e)),
+          actions: [FilledButton(onPressed: () => Navigator.pop(c), child: const Text('إغلاق'))],
+        ),
+      );
+    }
+  }
+}
 
 class VibApp extends StatelessWidget {
   const VibApp({super.key});
@@ -212,32 +375,83 @@ class _LoginPageState extends State<LoginPage> {
       if (mounted) setState(() => busy = false);
     }
   }
-  Future<void> recoverSavedLogin() async {
+  Future<void> recoverPasswordBySms() async {
     if (busy) return;
     setState(() { busy = true; error = null; });
+    FirebaseAuth? recoveryAuth;
     try {
-      final local = LocalAuthentication();
-      final available = await local.canCheckBiometrics && await local.isDeviceSupported();
-      if (!available) throw Exception('البصمة غير متاحة على هذا الجهاز');
-      final ok = await local.authenticate(
-        localizedReason: 'استخدم بصمتك لاسترجاع دخول VIB',
-        options: const AuthenticationOptions(biometricOnly: true, stickyAuth: true),
-      );
-      if (!ok) throw Exception('لم يتم التحقق من البصمة');
-      final savedPhone = await _secure.read(key: 'vib_saved_phone');
-      final savedPin = await _secure.read(key: 'vib_saved_pin');
-      if (savedPhone == null || savedPin == null) {
-        throw Exception('لا توجد بيانات دخول محفوظة على هذا الجهاز. سجل دخول مرة واحدة أولًا.');
+      final number = normalizedPhone();
+      if (number == null) throw Exception('اكتب رقم الموبايل المسجل أولًا');
+      recoveryAuth = await _smsRecoveryAuth();
+      await recoveryAuth.signOut();
+      final credential = await _requestSmsCredential(context, recoveryAuth, number, title: 'استرجاع كلمة السر');
+      if (credential == null) return;
+      final result = await recoveryAuth.signInWithCredential(credential);
+      final expectedEmail = emailFor(number).toLowerCase();
+      final actualEmail = (result.user?.email ?? '').toLowerCase();
+
+      if (actualEmail != expectedEmail) {
+        if (result.additionalUserInfo?.isNewUser == true) {
+          try { await result.user?.delete(); } catch (_) {}
+        }
+        try { await recoveryAuth.signOut(); } catch (_) {}
+        throw Exception('الاسترجاع بالرسالة غير مفعّل لهذا الرقم بعد. سجّل دخولك بالطريقة العادية مرة واحدة وفعّل SMS من الإعدادات.');
       }
-      phone.text = savedPhone;
-      pin.text = savedPin;
-      if (mounted) setState(() => busy = false);
-      await login(create: false);
-      return;
+
+      if (!mounted) return;
+      final newPin = TextEditingController();
+      final confirmPin = TextEditingController();
+      String? localError;
+      final replacement = await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialog) => StatefulBuilder(builder: (dialog, update) => AlertDialog(
+          title: const Text('اكتب رقم سري جديد'),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(controller: newPin, obscureText: true, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الرقم السري الجديد')),
+            const SizedBox(height: 8),
+            TextField(controller: confirmPin, obscureText: true, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'تأكيد الرقم السري', errorText: localError)),
+          ]),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء')),
+            FilledButton(
+              onPressed: () {
+                final a = newPin.text.trim();
+                final b = confirmPin.text.trim();
+                if (!RegExp(r'^\d{6,}$').hasMatch(a)) {
+                  update(() => localError = 'الرقم السري لازم يكون 6 أرقام على الأقل');
+                  return;
+                }
+                if (a != b) {
+                  update(() => localError = 'الرقمان غير متطابقين');
+                  return;
+                }
+                Navigator.pop(dialog, a);
+              },
+              child: const Text('حفظ الرقم السري الجديد'),
+            ),
+          ],
+        )),
+      );
+      newPin.dispose();
+      confirmPin.dispose();
+
+      if (replacement == null) {
+        await recoveryAuth.signOut();
+        return;
+      }
+      await result.user!.updatePassword(replacement);
+      await _secure.write(key: 'vib_saved_phone', value: number);
+      await _secure.write(key: 'vib_saved_pin', value: replacement);
+      await recoveryAuth.signOut();
+      phone.text = number;
+      pin.text = replacement;
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تغيير الرقم السري بنجاح. اضغط دخول.')));
     } catch (e) {
-      if (mounted) setState(() => error = e.toString().replaceFirst('Exception: ', ''));
+      if (recoveryAuth != null) { try { await recoveryAuth.signOut(); } catch (_) {} }
+      if (mounted) setState(() => error = _smsAuthMessage(e));
     } finally {
-      if (mounted && busy) setState(() => busy = false);
+      if (mounted) setState(() => busy = false);
     }
   }
   @override
@@ -252,9 +466,9 @@ class _LoginPageState extends State<LoginPage> {
       if (error != null) Text(error!, style: const TextStyle(color: Colors.redAccent)),
       const SizedBox(height: 18),
       FilledButton(onPressed: busy ? null : () => login(create: false), child: const Text('دخول')),
-      TextButton.icon(onPressed: busy ? null : recoverSavedLogin, icon: const Icon(Icons.fingerprint), label: const Text('نسيت كلمة السر؟')),
+      TextButton.icon(onPressed: busy ? null : recoverPasswordBySms, icon: const Icon(Icons.sms_outlined), label: const Text('نسيت كلمة السر؟ إرسال كود SMS')),
       TextButton(onPressed: busy ? null : () => login(create: true), child: const Text('إنشاء حساب جديد')),
-      const Text('التسجيل مجاني ولا يرسل رسالة SMS. المدير يفعّل حساب الموظف ويحدد فرعه.'),
+      const Text('رسائل SMS تُستخدم لتفعيل واسترجاع كلمة السر. المدير يفعّل حساب الموظف ويحدد فرعه.'),
     ]),
   ))));
 }
@@ -268,6 +482,21 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> {
   int page = 0;
+  bool _smsRecoveryPrompted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _offerSmsRecovery());
+  }
+
+  Future<void> _offerSmsRecovery() async {
+    if (_smsRecoveryPrompted || !mounted) return;
+    _smsRecoveryPrompted = true;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.providerData.any((p) => p.providerId == 'phone')) return;
+    await enableSmsRecoveryForCurrentUser(context, askFirst: true);
+  }
 
   void openPage(String title, Widget child) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
@@ -2395,6 +2624,13 @@ class _AppSettingsState extends State<AppSettings> {
     const SizedBox(height: 12), OutlinedButton.icon(onPressed: () => printTestPage(context, paper), icon: const Icon(Icons.print), label: const Text('اختيار الطابعة وطباعة صفحة تجربة')),
     const Text('طابعة البلوتوث تظهر في شاشة الطباعة إذا كانت متصلة بالموبايل ولها خدمة طباعة متوافقة.'),
     const SizedBox(height: 14),
+    Card(child: ListTile(
+      leading: const Icon(Icons.sms_outlined, color: gold),
+      title: const Text('تفعيل استرجاع كلمة السر برسالة SMS'),
+      subtitle: const Text('ربط رقم الدخول بالحساب مرة واحدة، وبعدها نسيت كلمة السر يرسل كود على نفس الرقم.'),
+      onTap: () => enableSmsRecoveryForCurrentUser(context),
+    )),
+    const SizedBox(height: 8),
     const Card(child: ListTile(leading: Icon(Icons.cloud_done, color: gold), title: Text('حفظ البيانات طويل المدة'), subtitle: Text('الفواتير والحركات لا تُحذف وتظل محفوظة في قاعدة البيانات.'))),
     const SizedBox(height: 10),
     Card(child: ListTile(
