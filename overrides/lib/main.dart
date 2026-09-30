@@ -474,24 +474,84 @@ Future<void> productDialog(BuildContext context, {String? id, Map<String, dynami
 }
 
 Future<void> archiveProduct(BuildContext context, String id, String name) async {
-  final yes = await showDialog<bool>(context: context, builder: (c) => AlertDialog(
-    title: const Text('حذف المنتج'),
-    content: Text('سيتم حذف "$name" من القوائم الجديدة مع الاحتفاظ بالفواتير والحركات القديمة.'),
-    actions: [
-      TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')),
-      FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('حذف')),
-    ],
-  )) ?? false;
+  final yes = await showDialog<bool>(
+    context: context,
+    builder: (c) => AlertDialog(
+      title: const Row(children: [
+        Icon(Icons.delete_forever, color: Colors.redAccent),
+        SizedBox(width: 8),
+        Expanded(child: Text('حذف المنتج فعليًا')),
+      ]),
+      content: Text(
+        'سيتم حذف "$name" من المنتجات ومن أرصدة المخزون الحالية.\n\n'
+        'الفواتير والحركات القديمة ستظل محفوظة كسجل ولن يتم حذفها.',
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+          onPressed: () => Navigator.pop(c, true),
+          icon: const Icon(Icons.delete_forever),
+          label: const Text('حذف فعلي'),
+        ),
+      ],
+    ),
+  ) ?? false;
+
   if (!yes || !context.mounted) return;
+
+  final messenger = ScaffoldMessenger.of(context);
+  messenger.hideCurrentSnackBar();
+  final notice = messenger.showSnackBar(
+    const SnackBar(content: Text('جاري حذف المنتج...'), duration: Duration(minutes: 1)),
+  );
+
   try {
-    await db.collection('products').doc(id).set({
-      'active': false,
-      'deletedAt': FieldValue.serverTimestamp(),
-      'deletedBy': FirebaseAuth.instance.currentUser!.uid,
-    }, SetOptions(merge: true));
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حذف المنتج من القوائم')));
+    final stockDocs = await db.collection('stock').where('productId', isEqualTo: id).get();
+
+    var batch = db.batch();
+    var ops = 0;
+
+    for (final doc in stockDocs.docs) {
+      batch.delete(doc.reference);
+      ops++;
+      if (ops == 450) {
+        await batch.commit();
+        batch = db.batch();
+        ops = 0;
+      }
+    }
+
+    batch.delete(db.collection('products').doc(id));
+    ops++;
+
+    if (ops > 0) await batch.commit();
+
+    final productCheck = await db.collection('products').doc(id).get();
+    final stockCheck = await db.collection('stock').where('productId', isEqualTo: id).limit(1).get();
+
+    if (productCheck.exists || stockCheck.docs.isNotEmpty) {
+      throw Exception('الحذف لم يكتمل بالكامل');
+    }
+
+    notice.close();
+    if (context.mounted) {
+      messenger.showSnackBar(const SnackBar(content: Text('تم حذف المنتج ومخزونه فعليًا')));
+    }
   } catch (e) {
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر حذف المنتج: $e')));
+    notice.close();
+    if (context.mounted) {
+      await showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('تعذر الحذف'),
+          content: SelectableText('السبب: $e'),
+          actions: [
+            FilledButton(onPressed: () => Navigator.pop(c), child: const Text('إغلاق')),
+          ],
+        ),
+      );
+    }
   }
 }
 
@@ -709,7 +769,7 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
                   constraints: const BoxConstraints.tightFor(width: 34, height: 34),
                   tooltip: 'حذف البند',
                   icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
-                  onPressed: saving || lines.length == 1 ? null : () {
+                  onPressed: saving ? null : () {
                     final removed = lines.removeAt(i);
                     removed.dispose();
                     update(() {});
@@ -789,6 +849,10 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
         actions: [
           TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
+            if (lines.isEmpty) {
+              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('أضف منتجًا واحدًا على الأقل قبل حفظ الفاتورة')));
+              return;
+            }
             final entries = <({String id, String name, int qty, double price, double? cost})>[];
             double total = 0;
 
@@ -1460,7 +1524,7 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
       DropdownButtonFormField<String>(initialValue: supplierId, isExpanded: true, decoration: const InputDecoration(labelText: 'المورد *'), items: suppliers.docs.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(), onChanged: saving ? null : (v) => update(() => supplierId = v)),
       TextField(controller: invoice, decoration: const InputDecoration(labelText: 'رقم فاتورة المورد')),
       for (var i = 0; i < lines.length; i++) Card(key: ObjectKey(lines[i]), child: Padding(padding: const EdgeInsets.all(8), child: Column(children: [
-        Row(children: [Expanded(child: Text('الصنف ${i + 1}')), IconButton(icon: const Icon(Icons.delete), onPressed: saving || lines.length == 1 ? null : () => update(() => lines.removeAt(i).dispose()))]),
+        Row(children: [Expanded(child: Text('الصنف ${i + 1}')), IconButton(icon: const Icon(Icons.delete, color: Colors.redAccent), onPressed: saving ? null : () => update(() => lines.removeAt(i).dispose()))]),
         DropdownButtonFormField<String>(initialValue: lines[i].productId, isExpanded: true, decoration: const InputDecoration(labelText: 'الصنف المسجل *'), items: products.docs.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(), onChanged: saving ? null : (v) => update(() => lines[i].productId = v)),
         TextField(controller: lines[i].quantity, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الكمية *')),
         TextField(controller: lines[i].cost, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'سعر الشراء للوحدة *')),
@@ -1777,7 +1841,7 @@ Future<void> purchaseDialog(BuildContext context) async {
                   constraints: const BoxConstraints.tightFor(width: 34, height: 34),
                   tooltip: 'حذف البند',
                   icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
-                  onPressed: saving || lines.length == 1 ? null : () {
+                  onPressed: saving ? null : () {
                     final removed = lines.removeAt(i);
                     removed.dispose();
                     setLocal(() {});
@@ -1836,6 +1900,10 @@ Future<void> purchaseDialog(BuildContext context) async {
         actions: [
           TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
+            if (lines.isEmpty) {
+              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('أضف منتجًا واحدًا على الأقل قبل حفظ الفاتورة')));
+              return;
+            }
             final entries = <({String id, int qty, double cost})>[];
             double total = 0;
             for (final row in lines) {
