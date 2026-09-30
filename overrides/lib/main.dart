@@ -519,28 +519,135 @@ Future<void> expenseDialog(BuildContext context) async {
 
 class _InventoryAuditState extends State<InventoryAudit> {
   String category = 'الكل';
-  @override Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-    stream: db.collection('products').snapshots(), builder: (context, products) {
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+    stream: db.collection('products').snapshots(),
+    builder: (context, products) {
       if (products.hasError) return const Center(child: Text('تعذر تحميل الأصناف'));
       if (!products.hasData) return const Center(child: CircularProgressIndicator());
+
       final rows = products.data!.docs.where((p) => p.data()['active'] == true).toList();
       final categories = {'الكل', ...rows.map((p) => '${p.data()['category'] ?? 'غير مصنف'}')}.toList()..sort();
       final selected = categories.contains(category) ? category : 'الكل';
-      return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('stock').snapshots(), builder: (context, stock) {
-        if (stock.hasError) return const Center(child: Text('تعذر تحميل المخزون'));
-        if (!stock.hasData) return const Center(child: CircularProgressIndicator());
-        final amounts = <String, int>{};
-        for (final entry in stock.data!.docs) {
-          final data = entry.data();
-          final id = '${data['productId'] ?? ''}';
-          if (id.isNotEmpty) amounts[id] = (amounts[id] ?? 0) + ((data['quantity'] as num?)?.toInt() ?? 0);
-        }
-        final filtered = rows.where((p) => selected == 'الكل' || '${p.data()['category'] ?? 'غير مصنف'}' == selected).toList()..sort((a,b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
-        return Column(children: [Padding(padding: const EdgeInsets.all(12), child: DropdownButtonFormField<String>(value: selected, decoration: const InputDecoration(labelText: 'الفئة'), items: categories.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(), onChanged: (v) => setState(() => category = v ?? 'الكل'))),
-          Text('عدد الأصناف: ${filtered.length}'), Expanded(child: ListView(children: filtered.map((p) { final data = p.data(); return Card(child: ListTile(title: Text('${data['name']}'), subtitle: Text('الفئة: ${data['category'] ?? 'غير مصنف'}\nسعر الشراء: ${data['purchasePrice'] ?? 'غير مسجل'} ج.م • سعر البيع: ${data['price'] ?? 0} ج.م'), isThreeLine: true, trailing: Text('متوفر\n${amounts[p.id] ?? 0}', textAlign: TextAlign.center, style: const TextStyle(color: gold)))); }).toList())) ]);
-      });
-    });
+
+      return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: db.collection('stock').snapshots(),
+        builder: (context, stock) {
+          if (stock.hasError) return const Center(child: Text('تعذر تحميل المخزون'));
+          if (!stock.hasData) return const Center(child: CircularProgressIndicator());
+
+          final amounts = <String, int>{};
+          for (final entry in stock.data!.docs) {
+            final data = entry.data();
+            final id = '${data['productId'] ?? ''}';
+            if (id.isNotEmpty) {
+              amounts[id] = (amounts[id] ?? 0) + ((data['quantity'] as num?)?.toInt() ?? 0);
+            }
+          }
+
+          final filtered = rows
+              .where((p) => selected == 'الكل' || '${p.data()['category'] ?? 'غير مصنف'}' == selected)
+              .toList()
+            ..sort((a, b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
+
+          final auditRows = filtered.map((p) {
+            final data = p.data();
+            return <String, dynamic>{
+              'id': p.id,
+              'name': data['name'] ?? '',
+              'category': data['category'] ?? 'غير مصنف',
+              'purchasePrice': (data['purchasePrice'] as num?)?.toDouble() ?? 0,
+              'price': (data['price'] as num?)?.toDouble() ?? 0,
+              'quantity': amounts[p.id] ?? 0,
+            };
+          }).toList();
+
+          final totalCost = auditRows.fold<double>(0, (sum, row) => sum + ((row['purchasePrice'] as num).toDouble() * (row['quantity'] as num).toDouble()));
+          final totalSale = auditRows.fold<double>(0, (sum, row) => sum + ((row['price'] as num).toDouble() * (row['quantity'] as num).toDouble()));
+
+          return Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+              child: DropdownButtonFormField<String>(
+                value: selected,
+                decoration: const InputDecoration(labelText: 'الفئة'),
+                items: categories.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
+                onChanged: (v) => setState(() => category = v ?? 'الكل'),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Card(child: Padding(padding: const EdgeInsets.all(10), child: Column(children: [
+                Text('عدد الأصناف: ${filtered.length}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                Text('إجمالي المخزون بسعر التكلفة: ${totalCost.toStringAsFixed(2)} ج.م'),
+                Text('إجمالي المخزون بسعر البيع: ${totalSale.toStringAsFixed(2)} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                Wrap(spacing: 8, children: [
+                  OutlinedButton.icon(onPressed: auditRows.isEmpty ? null : () => printInventoryAudit(context, selected, auditRows, 'a4'), icon: const Icon(Icons.picture_as_pdf), label: const Text('PDF A4')),
+                  OutlinedButton.icon(onPressed: auditRows.isEmpty ? null : () => printInventoryAudit(context, selected, auditRows, '80'), icon: const Icon(Icons.print), label: const Text('طباعة 80 مم')),
+                ]),
+              ]))),
+            ),
+            Expanded(
+              child: ListView(children: filtered.map((p) {
+                final data = p.data();
+                final qty = amounts[p.id] ?? 0;
+                return Card(child: ListTile(
+                  title: Text('${data['name']}'),
+                  subtitle: Text('الفئة: ${data['category'] ?? 'غير مصنف'}\nسعر الشراء: ${data['purchasePrice'] ?? 'غير مسجل'} ج.م • سعر البيع: ${data['price'] ?? 0} ج.م'),
+                  isThreeLine: true,
+                  trailing: SizedBox(width: 104, child: Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+                    Text('متوفر\n$qty', textAlign: TextAlign.center, style: const TextStyle(color: gold)),
+                    IconButton(tooltip: 'حذف المنتج', icon: const Icon(Icons.delete, color: Colors.redAccent), onPressed: () => archiveProduct(context, p.id, '${data['name'] ?? ''}')),
+                  ])),
+                ));
+              }).toList()),
+            ),
+          ]);
+        },
+      );
+    },
+  );
 }
+
+Future<void> printInventoryAudit(BuildContext context, String category, List<Map<String, dynamic>> rows, String paper) async {
+  try {
+    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final pdf = pw.Document();
+    final totalCost = rows.fold<double>(0, (sum, row) => sum + ((row['purchasePrice'] as num?)?.toDouble() ?? 0) * ((row['quantity'] as num?)?.toDouble() ?? 0));
+    final totalSale = rows.fold<double>(0, (sum, row) => sum + ((row['price'] as num?)?.toDouble() ?? 0) * ((row['quantity'] as num?)?.toDouble() ?? 0));
+    final thermal = paper != 'a4';
+
+    pdf.addPage(pw.MultiPage(
+      pageFormat: invoicePageFormat(paper),
+      theme: pw.ThemeData.withFont(base: font, bold: font),
+      build: (_) => [
+        pw.Directionality(textDirection: pw.TextDirection.rtl, child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+          pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: thermal ? 12 : 20, fontWeight: pw.FontWeight.bold)),
+          pw.Text('جرد المخزون - الفئة: $category', textAlign: pw.TextAlign.center),
+          pw.Text('التاريخ: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}', textAlign: pw.TextAlign.center),
+          pw.Divider(),
+          pw.Text('عدد الأصناف: ${rows.length}'),
+          pw.Text('الإجمالي بسعر التكلفة: ${totalCost.toStringAsFixed(2)} ج.م'),
+          pw.Text('الإجمالي بسعر البيع: ${totalSale.toStringAsFixed(2)} ج.م'),
+          pw.SizedBox(height: 8),
+        ])),
+        for (var i = 0; i < rows.length; i++)
+          pw.Directionality(textDirection: pw.TextDirection.rtl, child: pw.Container(
+            padding: pw.EdgeInsets.symmetric(vertical: thermal ? 3 : 5),
+            decoration: const pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(width: .4))),
+            child: pw.Text('${i + 1}- ${rows[i]['name']} | الكمية ${rows[i]['quantity']} | شراء ${rows[i]['purchasePrice']} | بيع ${rows[i]['price']}', style: pw.TextStyle(fontSize: thermal ? 8 : 10)),
+          )),
+      ],
+    ));
+
+    await Printing.layoutPdf(name: 'VIB-INVENTORY-${DateFormat('yyyyMMdd-HHmm').format(DateTime.now())}.pdf', onLayout: (_) => pdf.save());
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر إنشاء جرد المخزون: $e')));
+  }
+}
+
 
 class ProfitReport extends StatefulWidget {
   const ProfitReport({super.key});
@@ -1417,8 +1524,80 @@ class _AppSettingsState extends State<AppSettings> {
     const SizedBox(height: 20), FilledButton.icon(onPressed: saving ? null : save, icon: const Icon(Icons.save), label: const Text('حفظ الإعدادات')),
     const SizedBox(height: 12), OutlinedButton.icon(onPressed: () => printTestPage(context, paper), icon: const Icon(Icons.print), label: const Text('اختيار الطابعة وطباعة صفحة تجربة')),
     const Text('طابعة البلوتوث تظهر في شاشة الطباعة إذا كانت متصلة بالموبايل ولها خدمة طباعة متوافقة.'),
-    const SizedBox(height: 14), const Card(child: ListTile(leading: Icon(Icons.cloud_done, color: gold), title: Text('حفظ البيانات طويل المدة'), subtitle: Text('الفواتير والحركات لا تُحذف وتظل محفوظة في قاعدة البيانات.'))),
+    const SizedBox(height: 14),
+    const Card(child: ListTile(leading: Icon(Icons.cloud_done, color: gold), title: Text('حفظ البيانات طويل المدة'), subtitle: Text('الفواتير والحركات لا تُحذف وتظل محفوظة في قاعدة البيانات.'))),
+    const SizedBox(height: 10),
+    Card(
+      child: ListTile(
+        leading: const Icon(Icons.restart_alt, color: Colors.redAccent),
+        title: const Text('تصفير البرنامج'),
+        subtitle: const Text('يمسح بيانات التشغيل والحسابات والمخزون والفواتير مع الاحتفاظ بتسجيل الدخول وإعدادات الشركة والفروع والموظفين.'),
+        onTap: () => resetProgram(context),
+      ),
+    ),
   ]);
+}
+
+Future<void> resetProgram(BuildContext context) async {
+  final confirm = TextEditingController();
+  final accepted = await showDialog<bool>(
+    context: context,
+    builder: (c) => AlertDialog(
+      title: const Text('تصفير البرنامج بالكامل'),
+      content: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Text('سيتم مسح المنتجات والمخزون والفواتير والمصروفات وذمم العملاء والموردين وحركات الحساب. لن يتم مسح تسجيل الدخول أو إعدادات الشركة أو الفروع أو حسابات الموظفين.'),
+        const SizedBox(height: 12),
+        TextField(controller: confirm, decoration: const InputDecoration(labelText: 'اكتب كلمة: تصفير')),
+      ]),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')),
+        FilledButton(onPressed: () => Navigator.pop(c, confirm.text.trim() == 'تصفير'), child: const Text('تنفيذ التصفير')),
+      ],
+    ),
+  ) ?? false;
+  if (!accepted || !context.mounted) return;
+
+  final progress = ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('جاري تصفير بيانات البرنامج...'), duration: Duration(minutes: 2)));
+  try {
+    const collections = [
+      'products',
+      'stock',
+      'stockMovements',
+      'stockAdjustments',
+      'sales',
+      'purchases',
+      'salesReturns',
+      'purchaseReturns',
+      'customers',
+      'suppliers',
+      'accountMovements',
+    ];
+
+    for (final name in collections) {
+      while (true) {
+        final snap = await db.collection(name).limit(400).get();
+        if (snap.docs.isEmpty) break;
+        final batch = db.batch();
+        for (final doc in snap.docs) {
+          batch.delete(doc.reference);
+        }
+        await batch.commit();
+        if (snap.docs.length < 400) break;
+      }
+    }
+
+    await db.collection('settings').doc('cash').set({
+      'balance': 0,
+      'updatedAt': FieldValue.serverTimestamp(),
+      'resetBy': FirebaseAuth.instance.currentUser!.uid,
+    }, SetOptions(merge: true));
+
+    progress.close();
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تصفير البرنامج بنجاح')));
+  } catch (e) {
+    progress.close();
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر تصفير البرنامج: $e')));
+  }
 }
 
 PdfPageFormat invoicePageFormat(String paper) => switch (paper) {
