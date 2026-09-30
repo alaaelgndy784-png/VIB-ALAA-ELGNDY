@@ -2757,25 +2757,308 @@ class ItemMovementReport extends StatefulWidget {
   const ItemMovementReport({super.key});
   @override State<ItemMovementReport> createState() => _ItemMovementReportState();
 }
+
 class _ItemMovementReportState extends State<ItemMovementReport> {
   String? productId, branchId;
   DateTimeRange? range;
-  @override Widget build(BuildContext context) => Column(children: [
-    FutureBuilder<List<QuerySnapshot<Map<String, dynamic>>>>(future: Future.wait([db.collection('products').get(), db.collection('branches').get()]), builder: (context, snap) {
-      if (!snap.hasData) return const LinearProgressIndicator();
-      final products = snap.data![0].docs, branches = snap.data![1].docs;
-      return Padding(padding: const EdgeInsets.all(10), child: Column(children: [
-        DropdownButtonFormField<String>(initialValue: productId, decoration: const InputDecoration(labelText: 'الصنف'), items: products.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}'))).toList(), onChanged: (v) => setState(() => productId = v)),
-        DropdownButtonFormField<String>(initialValue: branchId, decoration: const InputDecoration(labelText: 'الفرع (الكل)'), items: [const DropdownMenuItem<String>(value: null, child: Text('كل الفروع')), const DropdownMenuItem(value: 'main', child: Text('المخزون الرئيسي')), ...branches.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}')))], onChanged: (v) => setState(() => branchId = v)),
-        TextButton.icon(onPressed: () async { final r = await showDateRangePicker(context: context, firstDate: DateTime(2020), lastDate: DateTime.now().add(const Duration(days: 1))); if (r != null) setState(() => range = r); }, icon: const Icon(Icons.date_range), label: Text(range == null ? 'كل الفترات' : '${DateFormat('dd/MM/yyyy').format(range!.start)} - ${DateFormat('dd/MM/yyyy').format(range!.end)}')),
-      ]));
-    }),
-    Expanded(child: productId == null ? const Center(child: Text('اختر الصنف لعرض حركته')) : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('stockMovements').where('productId', isEqualTo: productId).snapshots(), builder: (context, snap) {
-      if (snap.hasError) return const Center(child: Text('تعذر تحميل حركة الصنف'));
-      if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-      final rows = snap.data!.docs.where((d) { final x = d.data(), date = (x['createdAt'] as Timestamp?)?.toDate(); return (branchId == null || x['branchId'] == branchId) && (range == null || (date != null && !date.isBefore(range!.start) && date.isBefore(range!.end.add(const Duration(days: 1))))); }).toList()..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
-      final incoming = rows.fold<num>(0, (s,d) => s + ((d.data()['quantity'] as num?) ?? 0).clamp(0, 999999999)), outgoing = rows.fold<num>(0, (s,d) => s + (-((d.data()['quantity'] as num?) ?? 0)).clamp(0, 999999999));
-      return Column(children: [Padding(padding: const EdgeInsets.all(8), child: Text('داخل: $incoming   •   خارج: $outgoing   •   عدد الحركات: ${rows.length}', style: const TextStyle(color: gold, fontWeight: FontWeight.bold))), Expanded(child: ListView(children: rows.map((d) { final x=d.data(), q=(x['quantity'] as num?) ?? 0; return ListTile(leading: Icon(q >= 0 ? Icons.south : Icons.north, color: q >= 0 ? Colors.greenAccent : Colors.redAccent), title: Text('${movementName('${x['kind']}')} • ${x['branchId']}'), subtitle: Text(formatDate(x['createdAt'])), trailing: Text('${q >= 0 ? '+' : ''}$q\nرصيد ${x['balanceAfter'] ?? '-'}', textAlign: TextAlign.center)); }).toList()))]);
-    })),
+
+  Future<Map<String, String>> _movementCounterparties(List<QueryDocumentSnapshot<Map<String, dynamic>>> rows) async {
+    final result = <String, String>{};
+    for (final row in rows) {
+      final data = row.data();
+      final kind = '${data['kind'] ?? ''}';
+      final refId = '${data['referenceId'] ?? ''}';
+      if (refId.isEmpty) {
+        result[row.id] = _movementFallbackParty(data);
+        continue;
+      }
+
+      try {
+        String collection = '';
+        if (kind == 'sale' || kind == 'correction_sale' || kind == 'correction_return') {
+          collection = 'sales';
+        } else if (kind == 'purchase') {
+          collection = 'purchases';
+        } else if (kind == 'sales_return') {
+          collection = 'salesReturns';
+        } else if (kind == 'purchase_return') {
+          collection = 'purchaseReturns';
+        }
+
+        if (collection.isEmpty) {
+          result[row.id] = _movementFallbackParty(data);
+          continue;
+        }
+
+        final doc = await db.collection(collection).doc(refId).get();
+        final invoice = doc.data();
+        if (invoice == null) {
+          result[row.id] = _movementFallbackParty(data);
+          continue;
+        }
+
+        if (kind == 'purchase' || kind == 'purchase_return') {
+          final supplier = '${invoice['supplierName'] ?? ''}'.trim();
+          result[row.id] = supplier.isEmpty ? 'مورد غير مسجل' : 'المورد: $supplier';
+        } else {
+          final customer = '${invoice['customerName'] ?? ''}'.trim();
+          final phone = '${invoice['customerPhone'] ?? ''}'.trim();
+          result[row.id] = customer.isNotEmpty
+              ? 'العميل: $customer${phone.isNotEmpty ? ' • $phone' : ''}'
+              : (phone.isNotEmpty ? 'عميل هاتف: $phone' : 'بيع نقدي بدون عميل مسجل');
+        }
+      } catch (_) {
+        result[row.id] = _movementFallbackParty(data);
+      }
+    }
+    return result;
+  }
+
+  String _movementFallbackParty(Map<String, dynamic> data) {
+    final kind = '${data['kind'] ?? ''}';
+    if (kind == 'transfer_in') return 'تحويل وارد من المخزون';
+    if (kind == 'transfer_out') return 'تحويل إلى فرع';
+    if (kind == 'adjustment') {
+      final reason = '${data['reason'] ?? ''}'.trim();
+      return reason.isEmpty ? 'تسوية مخزون' : 'سبب التسوية: $reason';
+    }
+    return '';
+  }
+
+  Future<void> _printMovementReport(
+    BuildContext context,
+    String productName,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> rows,
+    Map<String, String> parties,
+    int currentQty,
+  ) async {
+    try {
+      final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+      final pdf = pw.Document();
+      final incoming = rows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).clamp(0, 999999999)));
+      final outgoing = rows.fold<num>(0, (sum, d) => sum + ((-((d.data()['quantity'] as num?) ?? 0)).clamp(0, 999999999)));
+
+      pdf.addPage(pw.MultiPage(
+        pageFormat: PdfPageFormat.a4,
+        theme: pw.ThemeData.withFont(base: font, bold: font),
+        build: (_) => [
+          pw.Directionality(
+            textDirection: pw.TextDirection.rtl,
+            child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+              pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
+              pw.SizedBox(height: 6),
+              pw.Text('تقرير حركة منتج: $productName', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
+              pw.Text('الرصيد الحالي: $currentQty'),
+              pw.Text('إجمالي الداخل: $incoming   •   إجمالي الخارج: $outgoing   •   عدد الحركات: ${rows.length}'),
+              pw.SizedBox(height: 8),
+            ]),
+          ),
+          pw.Directionality(
+            textDirection: pw.TextDirection.rtl,
+            child: pw.Table(
+              border: pw.TableBorder.all(width: .4),
+              children: [
+                pw.TableRow(children: ['الرصيد بعد الحركة', 'الكمية', 'الطرف/البيان', 'التاريخ', 'الحركة', 'م'].map((v) => pw.Padding(
+                  padding: const pw.EdgeInsets.all(5),
+                  child: pw.Text(v, textAlign: pw.TextAlign.center, style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                )).toList()),
+                for (var i = 0; i < rows.length; i++)
+                  pw.TableRow(children: [
+                    '${rows[i].data()['balanceAfter'] ?? '-'}',
+                    '${(rows[i].data()['quantity'] as num?) ?? 0}',
+                    parties[rows[i].id] ?? '',
+                    formatDate(rows[i].data()['createdAt']),
+                    movementName('${rows[i].data()['kind']}'),
+                    '${i + 1}',
+                  ].map((v) => pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Text(v, textAlign: pw.TextAlign.center))).toList()),
+              ],
+            ),
+          ),
+        ],
+      ));
+
+      await Printing.layoutPdf(
+        name: 'VIB-MOVEMENT-$productName-${DateFormat('yyyyMMdd-HHmm').format(DateTime.now())}.pdf',
+        onLayout: (_) => pdf.save(),
+      );
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر إنشاء تقرير حركة المنتج: $e')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    FutureBuilder<List<QuerySnapshot<Map<String, dynamic>>>>(
+      future: Future.wait([db.collection('products').get(), db.collection('branches').get()]),
+      builder: (context, snap) {
+        if (!snap.hasData) return const LinearProgressIndicator();
+        final products = snap.data![0].docs, branches = snap.data![1].docs;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+          child: Column(children: [
+            DropdownButtonFormField<String>(
+              initialValue: productId,
+              isExpanded: true,
+              decoration: _vibInvoiceInput('اختر المنتج', icon: Icons.inventory_2_outlined),
+              items: products.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(),
+              onChanged: (v) => setState(() => productId = v),
+            ),
+            const SizedBox(height: 6),
+            Row(children: [
+              Expanded(child: DropdownButtonFormField<String>(
+                initialValue: branchId,
+                isExpanded: true,
+                decoration: _vibInvoiceInput('الفرع'),
+                items: [
+                  const DropdownMenuItem<String>(value: null, child: Text('كل الفروع')),
+                  const DropdownMenuItem(value: 'main', child: Text('المخزون الرئيسي')),
+                  ...branches.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))),
+                ],
+                onChanged: (v) => setState(() => branchId = v),
+              )),
+              const SizedBox(width: 6),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final r = await showDateRangePicker(
+                    context: context,
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime.now().add(const Duration(days: 1)),
+                  );
+                  if (r != null) setState(() => range = r);
+                },
+                icon: const Icon(Icons.date_range, size: 18),
+                label: Text(range == null ? 'كل الفترات' : '${DateFormat('dd/MM').format(range!.start)} - ${DateFormat('dd/MM').format(range!.end)}'),
+              ),
+            ]),
+          ]),
+        );
+      },
+    ),
+    Expanded(
+      child: productId == null
+          ? const Center(child: Text('اختر المنتج لعرض تاريخه كامل'))
+          : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: db.collection('stockMovements').where('productId', isEqualTo: productId).snapshots(),
+              builder: (context, snap) {
+                if (snap.hasError) return const Center(child: Text('تعذر تحميل حركة المنتج'));
+                if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+
+                final rows = snap.data!.docs.where((d) {
+                  final x = d.data();
+                  final date = (x['createdAt'] as Timestamp?)?.toDate();
+                  return (branchId == null || x['branchId'] == branchId) &&
+                      (range == null || (date != null && !date.isBefore(range!.start) && date.isBefore(range!.end.add(const Duration(days: 1)))));
+                }).toList()
+                  ..sort((a, b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
+                      .compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+
+                final incoming = rows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).clamp(0, 999999999)));
+                final outgoing = rows.fold<num>(0, (sum, d) => sum + ((-((d.data()['quantity'] as num?) ?? 0)).clamp(0, 999999999)));
+
+                return FutureBuilder<List<dynamic>>(
+                  future: Future.wait([
+                    _movementCounterparties(rows),
+                    branchId == null
+                        ? db.collection('stock').where('productId', isEqualTo: productId).get()
+                        : db.collection('stock').doc('${branchId}_$productId').get(),
+                    db.collection('products').doc(productId).get(),
+                  ]),
+                  builder: (context, details) {
+                    if (!details.hasData) return const Center(child: CircularProgressIndicator());
+
+                    final parties = details.data![0] as Map<String, String>;
+                    int currentQty = 0;
+                    final stockResult = details.data![1];
+                    if (stockResult is QuerySnapshot<Map<String, dynamic>>) {
+                      currentQty = stockResult.docs.fold<int>(0, (sum, d) => sum + ((d.data()['quantity'] as num?)?.toInt() ?? 0));
+                    } else if (stockResult is DocumentSnapshot<Map<String, dynamic>>) {
+                      currentQty = (stockResult.data()?['quantity'] as num?)?.toInt() ?? 0;
+                    }
+
+                    final productSnap = details.data![2] as DocumentSnapshot<Map<String, dynamic>>;
+                    final productName = '${productSnap.data()?['name'] ?? 'المنتج'}';
+
+                    return Column(children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: _vibInvoicePanel(
+                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                          child: Column(children: [
+                            Row(children: [
+                              Expanded(child: Text(productName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+                              Text('الموجود الآن: $currentQty', style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 17)),
+                            ]),
+                            const SizedBox(height: 4),
+                            Row(children: [
+                              Expanded(child: Text('إجمالي الداخل: $incoming', style: const TextStyle(color: Colors.greenAccent))),
+                              Expanded(child: Text('إجمالي الخارج: $outgoing', style: const TextStyle(color: Colors.redAccent))),
+                              Text('الحركات: ${rows.length}'),
+                            ]),
+                            const SizedBox(height: 5),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: OutlinedButton.icon(
+                                onPressed: rows.isEmpty ? null : () => _printMovementReport(context, productName, rows, parties, currentQty),
+                                icon: const Icon(Icons.picture_as_pdf, size: 18),
+                                label: const Text('تقرير PDF'),
+                              ),
+                            ),
+                          ]),
+                        ),
+                      ),
+                      Expanded(
+                        child: rows.isEmpty
+                            ? const Center(child: Text('لا توجد حركات لهذا المنتج في الفترة المختارة'))
+                            : ListView.builder(
+                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                itemCount: rows.length,
+                                itemBuilder: (context, index) {
+                                  final row = rows[index];
+                                  final x = row.data();
+                                  final qty = (x['quantity'] as num?) ?? 0;
+                                  final positive = qty >= 0;
+                                  final party = parties[row.id] ?? '';
+                                  final kind = '${x['kind']}';
+                                  final action = movementName(kind);
+
+                                  return Card(
+                                    margin: const EdgeInsets.symmetric(vertical: 3),
+                                    child: ListTile(
+                                      dense: true,
+                                      visualDensity: const VisualDensity(vertical: -2),
+                                      leading: CircleAvatar(
+                                        radius: 18,
+                                        backgroundColor: positive ? const Color(0xFF123C25) : const Color(0xFF441B1B),
+                                        child: Icon(positive ? Icons.south : Icons.north, size: 18, color: positive ? Colors.greenAccent : Colors.redAccent),
+                                      ),
+                                      title: Text(action, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                      subtitle: Text([
+                                        if (party.isNotEmpty) party,
+                                        'التاريخ: ${formatDate(x['createdAt'])}',
+                                        'الفرع: ${x['branchId'] == 'main' ? 'المخزون الرئيسي' : x['branchId']}',
+                                      ].join('\n')),
+                                      isThreeLine: true,
+                                      trailing: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text('${positive ? '+' : ''}$qty', style: TextStyle(color: positive ? Colors.greenAccent : Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+                                          Text('الرصيد ${x['balanceAfter'] ?? '-'}', style: const TextStyle(fontSize: 11)),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ]);
+                  },
+                );
+              },
+            ),
+    ),
   ]);
 }
+
