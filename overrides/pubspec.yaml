@@ -19,6 +19,9 @@ dependencies:
   url_launcher: ^6.3.2
   image_picker: ^1.2.3
   tesseract_ocr: ^0.5.0
+  file_picker: ^8.1.7
+  path_provider: ^2.1.5
+  share_plus: ^10.1.4
 
 flutter:
   uses-material-design: true
