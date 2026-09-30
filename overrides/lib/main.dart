@@ -316,21 +316,40 @@ class OwnerDashboard extends StatelessWidget {
   final void Function(String title, Widget child) openPage;
   const OwnerDashboard({super.key, required this.uid, required this.branchId, required this.openPage});
 
-  Widget tile(String title, IconData icon, VoidCallback onTap) => InkWell(
-    borderRadius: BorderRadius.circular(22),
+  Widget tile(String title, IconData icon, VoidCallback onTap, {Color iconColor = gold}) => InkWell(
+    borderRadius: BorderRadius.circular(18),
     onTap: onTap,
     child: Container(
-      height: 150,
+      height: 128,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight, colors: [Color(0xFF17150F), Color(0xFF050505)]),
-        borderRadius: BorderRadius.circular(22),
-        border: Border.all(color: gold, width: 1.6),
-        boxShadow: const [BoxShadow(color: Color(0x665E4615), blurRadius: 14, spreadRadius: 1)],
+        gradient: const LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF1B1811), Color(0xFF050505)],
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFFC89B3C), width: 1.35),
+        boxShadow: const [
+          BoxShadow(color: Color(0x554C3510), blurRadius: 10, spreadRadius: .5),
+          BoxShadow(color: Color(0x22000000), blurRadius: 3, offset: Offset(0, 2)),
+        ],
       ),
       child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Icon(icon, color: gold, size: 54),
-        const SizedBox(height: 10),
-        Text(title, textAlign: TextAlign.center, style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 20)),
+        Container(
+          width: 58,
+          height: 58,
+          decoration: BoxDecoration(
+            color: const Color(0xFF0B0B0B),
+            borderRadius: BorderRadius.circular(15),
+            border: Border.all(color: const Color(0xFF8C6F2A), width: 1),
+          ),
+          child: Icon(icon, color: iconColor, size: 36),
+        ),
+        const SizedBox(height: 8),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 5),
+          child: Text(title, textAlign: TextAlign.center, maxLines: 2, style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 16)),
+        ),
       ]),
     ),
   );
@@ -379,9 +398,20 @@ class OwnerDashboard extends StatelessWidget {
         ]),
         const SizedBox(height: gap),
         Row(children: [
-          Expanded(child: tile('التقارير / الأرباح', Icons.analytics_rounded, () => openPage('التقارير / الأرباح', const ProfitReport()))),
+          Expanded(child: tile('تقرير حركة منتج', Icons.manage_search_rounded, () => openPage('تقرير حركة منتج', const ItemMovementReport()))),
           const SizedBox(width: gap),
+          Expanded(child: tile('التقارير / الأرباح', Icons.analytics_rounded, () => openPage('التقارير / الأرباح', const ProfitReport()))),
+        ]),
+        const SizedBox(height: gap),
+        Row(children: [
           Expanded(child: tile('الضبط والصلاحيات', Icons.settings_rounded, () => openPage('الضبط والصلاحيات', const Management()))),
+          const SizedBox(width: gap),
+          Expanded(child: tile(
+            'تصفير البرنامج',
+            Icons.restart_alt_rounded,
+            () => resetProgram(context),
+            iconColor: Colors.redAccent,
+          )),
         ]),
       ],
     );
@@ -2488,41 +2518,39 @@ Future<void> restoreFromDrive(BuildContext context) async {
 }
 
 Future<void> resetProgram(BuildContext context) async {
-  final confirm = TextEditingController();
   final accepted = await showDialog<bool>(
     context: context,
     barrierDismissible: false,
-    builder: (c) => StatefulBuilder(builder: (c, update) => AlertDialog(
-      title: const Text('تصفير البرنامج بالكامل'),
-      content: Column(mainAxisSize: MainAxisSize.min, children: [
-        const Text('سيتم مسح المنتجات والمخزون والفواتير والمصروفات وذمم العملاء والموردين وحركات الحساب. لن يتم مسح تسجيل الدخول أو إعدادات الشركة أو الفروع أو حسابات الموظفين.'),
-        const SizedBox(height: 12),
-        TextField(
-          controller: confirm,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'اكتب كلمة: تصفير'),
-          onChanged: (_) => update(() {}),
-        ),
-        const SizedBox(height: 8),
-        Text(
-          confirm.text.trim() == 'تصفير' ? 'جاهز للتنفيذ' : 'اكتب كلمة تصفير بالضبط لتفعيل الزر',
-          style: TextStyle(color: confirm.text.trim() == 'تصفير' ? Colors.greenAccent : Colors.orangeAccent, fontSize: 12),
-        ),
+    builder: (c) => AlertDialog(
+      title: const Row(children: [
+        Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
+        SizedBox(width: 8),
+        Expanded(child: Text('تصفير البرنامج')),
       ]),
+      content: const Text(
+        'سيتم مسح المنتجات والمخزون والفواتير والمصروفات وذمم العملاء والموردين وحركات الحساب والصندوق.\n\n'
+        'سيظل تسجيل الدخول وإعدادات الشركة والفروع والموظفون محفوظين.\n\n'
+        'هل تريد تنفيذ التصفير الآن؟',
+      ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')),
-        FilledButton(
-          onPressed: confirm.text.trim() == 'تصفير' ? () => Navigator.pop(c, true) : null,
-          child: const Text('تنفيذ التصفير'),
+        FilledButton.icon(
+          style: FilledButton.styleFrom(backgroundColor: Colors.redAccent, foregroundColor: Colors.white),
+          onPressed: () => Navigator.pop(c, true),
+          icon: const Icon(Icons.restart_alt),
+          label: const Text('نعم، صفّر البرنامج'),
         ),
       ],
-    )),
+    ),
   ) ?? false;
-  confirm.dispose();
   if (!accepted || !context.mounted) return;
 
   final messenger = ScaffoldMessenger.of(context);
-  final progress = messenger.showSnackBar(const SnackBar(content: Text('جاري تصفير بيانات البرنامج...'), duration: Duration(minutes: 3)));
+  messenger.hideCurrentSnackBar();
+  final progress = messenger.showSnackBar(
+    const SnackBar(content: Text('جاري مسح بيانات البرنامج...'), duration: Duration(minutes: 3)),
+  );
+
   try {
     const collections = [
       'products',
@@ -2542,26 +2570,58 @@ Future<void> resetProgram(BuildContext context) async {
       await _clearCollectionForRestore(name);
     }
 
+    await db.collection('settings').doc('cash').set({
+      'balance': 0,
+      'updatedAt': FieldValue.serverTimestamp(),
+      'resetBy': FirebaseAuth.instance.currentUser?.uid,
+    }, SetOptions(merge: true));
+
     final notEmpty = <String>[];
     for (final name in collections) {
       final check = await db.collection(name).limit(1).get();
       if (check.docs.isNotEmpty) notEmpty.add(name);
     }
-    if (notEmpty.isNotEmpty) throw Exception('بعض البيانات لم يتم مسحها: ${notEmpty.join(', ')}');
+    final cashCheck = await db.collection('settings').doc('cash').get();
+    final cashBalance = (cashCheck.data()?['balance'] as num?)?.toDouble() ?? 0;
 
-    await db.collection('settings').doc('cash').set({
-      'balance': 0,
-      'updatedAt': FieldValue.serverTimestamp(),
-      'resetBy': FirebaseAuth.instance.currentUser!.uid,
-    }, SetOptions(merge: true));
+    if (notEmpty.isNotEmpty || cashBalance != 0) {
+      throw Exception(
+        'لم يكتمل التصفير'
+        '${notEmpty.isNotEmpty ? ' - متبقي بيانات في: ${notEmpty.join(', ')}' : ''}'
+        '${cashBalance != 0 ? ' - رصيد الصندوق: $cashBalance' : ''}',
+      );
+    }
 
     progress.close();
-    if (context.mounted) messenger.showSnackBar(const SnackBar(content: Text('تم تصفير البرنامج فعليًا بنجاح')));
+    if (context.mounted) {
+      await showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('تم التصفير'),
+          content: const Text('تم مسح بيانات التشغيل فعليًا وإعادة رصيد الصندوق إلى صفر.'),
+          actions: [
+            FilledButton(onPressed: () => Navigator.pop(c), child: const Text('تم')),
+          ],
+        ),
+      );
+    }
   } catch (e) {
     progress.close();
-    if (context.mounted) messenger.showSnackBar(SnackBar(content: Text('تعذر تصفير البرنامج: $e')));
+    if (context.mounted) {
+      await showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('التصفير لم يكتمل'),
+          content: SelectableText('السبب: $e'),
+          actions: [
+            FilledButton(onPressed: () => Navigator.pop(c), child: const Text('إغلاق')),
+          ],
+        ),
+      );
+    }
   }
 }
+
 PdfPageFormat invoicePageFormat(String paper) => switch (paper) {
   '58' => PdfPageFormat(58 * PdfPageFormat.mm, 180 * PdfPageFormat.mm, marginAll: 3 * PdfPageFormat.mm),
   '80' => PdfPageFormat(80 * PdfPageFormat.mm, 180 * PdfPageFormat.mm, marginAll: 4 * PdfPageFormat.mm),
@@ -3092,8 +3152,15 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
     FutureBuilder<List<QuerySnapshot<Map<String, dynamic>>>>(
       future: Future.wait([db.collection('products').get(), db.collection('branches').get()]),
       builder: (context, snap) {
+        if (snap.hasError) {
+          return Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text('تعذر تحميل المنتجات أو الفروع: ${snap.error}', style: const TextStyle(color: Colors.redAccent)),
+          );
+        }
         if (!snap.hasData) return const LinearProgressIndicator();
-        final products = snap.data![0].docs, branches = snap.data![1].docs;
+        final products = snap.data![0].docs.where((d) => d.data()['active'] != false).toList();
+        final branches = snap.data![1].docs;
         return Padding(
           padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
           child: Column(children: [
@@ -3131,6 +3198,17 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                 label: Text(range == null ? 'كل الفترات' : '${DateFormat('dd/MM').format(range!.start)} - ${DateFormat('dd/MM').format(range!.end)}'),
               ),
             ]),
+            const SizedBox(height: 7),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: products.isEmpty ? null : () {
+                  if (productId == null) setState(() => productId = products.first.id);
+                },
+                icon: const Icon(Icons.manage_search_rounded),
+                label: Text(productId == null ? 'عرض تقرير أول منتج' : 'تحديث تقرير المنتج'),
+              ),
+            ),
           ]),
         );
       },
@@ -3141,7 +3219,12 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
           : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: db.collection('stockMovements').where('productId', isEqualTo: productId).snapshots(),
               builder: (context, snap) {
-                if (snap.hasError) return const Center(child: Text('تعذر تحميل حركة المنتج'));
+                if (snap.hasError) {
+                  return Center(child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('تعذر تحميل حركة المنتج: ${snap.error}', textAlign: TextAlign.center, style: const TextStyle(color: Colors.redAccent)),
+                  ));
+                }
                 if (!snap.hasData) return const Center(child: CircularProgressIndicator());
 
                 final rows = snap.data!.docs.where((d) {
