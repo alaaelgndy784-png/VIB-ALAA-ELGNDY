@@ -52,6 +52,15 @@ class _VibBootstrapState extends State<VibBootstrap> {
 
 const gold = Color(0xFFD6AC55);
 final db = FirebaseFirestore.instance;
+Timestamp? activeResetAt;
+
+bool visibleAfterReset(Map<String, dynamic> data) {
+  final resetAt = activeResetAt;
+  if (resetAt == null) return true;
+  final createdAt = data['createdAt'];
+  if (createdAt is! Timestamp) return false;
+  return createdAt.compareTo(resetAt) >= 0;
+}
 
 String _smsAuthMessage(Object error) {
   if (error is FirebaseAuthException) {
@@ -268,6 +277,7 @@ class Gate extends StatelessWidget {
               TextButton(onPressed: () => FirebaseAuth.instance.signOut(), child: const Text('خروج')),
             ])));
           }
+          activeResetAt = data['resetAt'] as Timestamp?;
           final home = Home(uid: auth.data!.uid, role: data['role'] as String, branchId: (data['branchId'] ?? '') as String, name: (data['name'] ?? '') as String);
           return data['role'] == 'owner' ? OwnerSecurity(child: home) : home;
         },
@@ -482,21 +492,6 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> {
   int page = 0;
-  bool _smsRecoveryPrompted = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _offerSmsRecovery());
-  }
-
-  Future<void> _offerSmsRecovery() async {
-    if (_smsRecoveryPrompted || !mounted) return;
-    _smsRecoveryPrompted = true;
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null || user.providerData.any((p) => p.providerId == 'phone')) return;
-    await enableSmsRecoveryForCurrentUser(context, askFirst: true);
-  }
 
   void openPage(String title, Widget child) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
@@ -905,7 +900,7 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
                 decoration: _vibInvoiceInput('اختيار عميل', icon: Icons.person),
                 items: [
                   const DropdownMenuItem(value: '', child: Text('بيع نقدي بدون عميل')),
-                  ...customersSnap.docs.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']} • ${d.data()['balance'] ?? 0} ج.م', overflow: TextOverflow.ellipsis))),
+                  ...customersSnap.docs.where((d) => d.data()['active'] != false).map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']} • ${d.data()['balance'] ?? 0} ج.م', overflow: TextOverflow.ellipsis))),
                 ],
                 onChanged: saving ? null : (v) => update(() => customerId = v ?? ''),
               )),
@@ -1289,7 +1284,10 @@ class Sales extends StatelessWidget {
     builder: (context, snap) {
     if (snap.hasError) return const Center(child: Text('تعذر عرض المبيعات'));
     if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-    final rows = snap.data!.docs.where((d) => owner || d.data()['branchId'] == branchId).toList()..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+    final rows = snap.data!.docs
+        .where((d) => visibleAfterReset(d.data()) && (owner || d.data()['branchId'] == branchId))
+        .toList()
+      ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
     return Column(children: [
       Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(icon: const Icon(Icons.add_shopping_cart), label: const Text('عملية بيع جديدة'), onPressed: () => newSaleDialog(context, owner, branchId))),
       Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد مبيعات بعد')) : ListView(children: rows.map((d) {
@@ -1392,7 +1390,8 @@ class Expenses extends StatelessWidget {
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'expenses').snapshots(), builder: (context, snap) {
       if (snap.hasError) return const Center(child: Text('تعذر تحميل المصروفات'));
       if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-      final rows = snap.data!.docs.toList()..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+      final rows = snap.data!.docs.where((d) => visibleAfterReset(d.data())).toList()
+        ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
       final total = rows.fold<double>(0, (sum, row) => sum + ((row.data()['amount'] as num?)?.toDouble() ?? 0));
       return Column(children: [ListTile(title: const Text('إجمالي المصروفات المسجلة'), trailing: Text('${total.toStringAsFixed(2)} ج.م')), Expanded(child: ListView(children: rows.map((row) { final data = row.data(); return ListTile(title: Text('${data['reason'] ?? ''}'), subtitle: Text('${data['category'] ?? 'عام'} • ${formatDate(data['createdAt'])}'), trailing: Text('${data['amount']} ج.م')); }).toList()))]);
     }))]);
@@ -1594,7 +1593,7 @@ class _ProfitReportState extends State<ProfitReport> {
             builder: (context, salesSnap) {
               if (salesSnap.hasError) return const Center(child: Text('تعذر تحميل المبيعات'));
               if (!salesSnap.hasData) return const Center(child: CircularProgressIndicator());
-              final sales = salesSnap.data!.docs.where((d) => d.data()['status'] != 'returned').toList();
+              final sales = salesSnap.data!.docs.where((d) => visibleAfterReset(d.data()) && d.data()['status'] != 'returned').toList();
               double revenue = 0, knownCost = 0;
               int missingCost = 0;
               for (final item in sales) {
@@ -1627,7 +1626,7 @@ class _ProfitReportState extends State<ProfitReport> {
               return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'expenses').snapshots(), builder: (context, expensesSnap) {
                 if (expensesSnap.hasError) return const Center(child: Text('تعذر تحميل المصروفات'));
                 if (!expensesSnap.hasData) return const Center(child: CircularProgressIndicator());
-                final expenses = expensesSnap.data!.docs.where((d) { final date = (d.data()['createdAt'] as Timestamp?)?.toDate(); return date != null && !date.isBefore(start) && date.isBefore(end); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
+                final expenses = expensesSnap.data!.docs.where((d) { final data = d.data(); final date = (data['createdAt'] as Timestamp?)?.toDate(); return visibleAfterReset(data) && date != null && !date.isBefore(start) && date.isBefore(end); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
               return ListView(padding: const EdgeInsets.all(16), children: [
                 ListTile(title: const Text('عدد فواتير البيع'), trailing: Text('${sales.length}')),
                 ListTile(title: const Text('إجمالي المبيعات'), trailing: Text('${revenue.toStringAsFixed(2)} ج.م')),
@@ -1663,8 +1662,9 @@ class Purchases extends StatelessWidget {
       builder: (context, snap) {
         if (snap.hasError) return const Center(child: Text('تعذر تحميل المشتريات'));
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-        if (snap.data!.docs.isEmpty) return const Center(child: Text('لا توجد فواتير مشتريات بعد'));
-        return ListView(children: snap.data!.docs.map((d) {
+        final rows = snap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
+        if (rows.isEmpty) return const Center(child: Text('لا توجد فواتير مشتريات بعد'));
+        return ListView(children: rows.map((d) {
           final p = d.data();
           final rawItems = (p['items'] as List?) ?? const [];
           final itemCount = rawItems.isNotEmpty ? rawItems.length : 1;
@@ -1746,7 +1746,7 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
       Image.file(File(photo!.path), height: 140),
       const Text('راجع المورد والكمية وسعر الشراء لكل صنف؛ القراءة من الصورة قد تخطئ.', style: TextStyle(color: gold)),
       ExpansionTile(title: const Text('النص المستخرج من الصورة'), children: [SelectableText(text.isEmpty ? 'لم يتم التعرف على النص' : text)]),
-      DropdownButtonFormField<String>(initialValue: supplierId, isExpanded: true, decoration: const InputDecoration(labelText: 'المورد *'), items: suppliers.docs.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(), onChanged: saving ? null : (v) => update(() => supplierId = v)),
+      DropdownButtonFormField<String>(initialValue: supplierId, isExpanded: true, decoration: const InputDecoration(labelText: 'المورد *'), items: suppliers.docs.where((d) => d.data()['active'] != false).map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(), onChanged: saving ? null : (v) => update(() => supplierId = v)),
       TextField(controller: invoice, decoration: const InputDecoration(labelText: 'رقم فاتورة المورد')),
       for (var i = 0; i < lines.length; i++) Card(key: ObjectKey(lines[i]), child: Padding(padding: const EdgeInsets.all(8), child: Column(children: [
         Row(children: [Expanded(child: Text('الصنف ${i + 1}')), IconButton(icon: const Icon(Icons.delete, color: Colors.redAccent), onPressed: saving ? null : () => update(() => lines.removeAt(i).dispose()))]),
@@ -1988,7 +1988,7 @@ Future<void> purchaseDialog(BuildContext context) async {
                 initialValue: supplierId,
                 isExpanded: true,
                 decoration: _vibInvoiceInput('اختيار مورد', icon: Icons.person),
-                items: suppliers.docs.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(),
+                items: suppliers.docs.where((d) => d.data()['active'] != false).map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(),
                 onChanged: saving ? null : (v) { if (v != null) setLocal(() => supplierId = v); },
               )),
               const SizedBox(width: 8),
@@ -2277,8 +2277,9 @@ class AccountMovements extends StatelessWidget {
     builder: (context, snap) {
       if (snap.hasError) return const Center(child: Text('تعذر تحميل الحركات'));
       if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-      if (snap.data!.docs.isEmpty) return const Center(child: Text('لا توجد حركات بعد'));
-      return ListView(children: snap.data!.docs.map((d) { final m = d.data(); return ListTile(title: Text('${m['accountName'] ?? ''} • ${movementName('${m['kind']}')}'), subtitle: Text(formatDate(m['createdAt'])), trailing: Text('${m['amount'] ?? 0} ج.م')); }).toList());
+      final rows = snap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
+      if (rows.isEmpty) return const Center(child: Text('لا توجد حركات بعد'));
+      return ListView(children: rows.map((d) { final m = d.data(); return ListTile(title: Text('${m['accountName'] ?? ''} • ${movementName('${m['kind']}')}'), subtitle: Text(formatDate(m['createdAt'])), trailing: Text('${m['amount'] ?? 0} ج.م')); }).toList());
     },
   );
 }
@@ -2399,8 +2400,10 @@ class _AccountsState extends State<Accounts> {
         builder: (context, snapshot) {
           if (snapshot.hasError) return const Center(child: Text('تعذر تحميل الذمم'));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final docs = snapshot.data!.docs.toList()..sort((a,b) =>
-              '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
+          final docs = snapshot.data!.docs
+              .where((d) => d.data()['active'] != false)
+              .toList()
+            ..sort((a,b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
           if (docs.isEmpty) return const Center(child: Text('لا توجد حسابات بعد'));
           return ListView.builder(itemCount: docs.length, itemBuilder: (context, index) {
             final d = docs[index], account = d.data();
@@ -2523,7 +2526,7 @@ class CashBox extends StatelessWidget {
       builder: (context, snap) {
         if (snap.hasError) return const Center(child: Text('تعذر عرض حركة الصندوق'));
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-        final rows = snap.data!.docs.toList()..sort((a, b) =>
+        final rows = snap.data!.docs.where((d) => visibleAfterReset(d.data())).toList()..sort((a, b) =>
           ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
           .compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
         if (rows.isEmpty) return const Center(child: Text('لا توجد حركات للصندوق'));
@@ -2828,8 +2831,8 @@ Future<void> resetProgram(BuildContext context) async {
         Expanded(child: Text('تصفير البرنامج')),
       ]),
       content: const Text(
-        'سيتم مسح المنتجات والمخزون والفواتير والمصروفات وذمم العملاء والموردين وحركات الحساب والصندوق.\n\n'
-        'سيظل تسجيل الدخول وإعدادات الشركة والفروع والموظفون محفوظين.\n\n'
+        'سيبدأ البرنامج دورة جديدة من الصفر: سيتم تصفير المخزون والصندوق وأرصدة العملاء والموردين وإخفاء المنتجات والفواتير والحركات القديمة من البرنامج.\n\n'
+        'تسجيل الدخول والفروع والموظفون وإعدادات الشركة ستظل محفوظة.\n\n'
         'هل تريد تنفيذ التصفير الآن؟',
       ),
       actions: [
@@ -2848,27 +2851,66 @@ Future<void> resetProgram(BuildContext context) async {
   final messenger = ScaffoldMessenger.of(context);
   messenger.hideCurrentSnackBar();
   final progress = messenger.showSnackBar(
-    const SnackBar(content: Text('جاري مسح بيانات البرنامج...'), duration: Duration(minutes: 3)),
+    const SnackBar(content: Text('جاري تصفير البرنامج...'), duration: Duration(minutes: 3)),
   );
 
   try {
-    const collections = [
-      'products',
-      'stock',
-      'stockMovements',
-      'stockAdjustments',
-      'sales',
-      'purchases',
-      'salesReturns',
-      'purchaseReturns',
-      'customers',
-      'suppliers',
-      'accountMovements',
-    ];
+    final resetAt = Timestamp.now();
 
-    for (final name in collections) {
-      await _clearCollectionForRestore(name);
+    // Hide all current products without deleting them.
+    final products = await db.collection('products').get();
+    for (var i = 0; i < products.docs.length; i += 400) {
+      final batch = db.batch();
+      for (final doc in products.docs.skip(i).take(400)) {
+        batch.update(doc.reference, {
+          'active': false,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
     }
+
+    // Zero all stock balances using update (allowed by the current production rules).
+    final stock = await db.collection('stock').get();
+    for (var i = 0; i < stock.docs.length; i += 400) {
+      final batch = db.batch();
+      for (final doc in stock.docs.skip(i).take(400)) {
+        batch.update(doc.reference, {'quantity': 0});
+      }
+      await batch.commit();
+    }
+
+    // Zero and hide customers and suppliers.
+    for (final collection in ['customers', 'suppliers']) {
+      final snap = await db.collection(collection).get();
+      for (var i = 0; i < snap.docs.length; i += 400) {
+        final batch = db.batch();
+        for (final doc in snap.docs.skip(i).take(400)) {
+          batch.update(doc.reference, {
+            'openingBalance': 0,
+            'balance': 0,
+            'active': false,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+        await batch.commit();
+      }
+    }
+
+    // Store the reset boundary on every user so manager and employees start from the same clean cycle.
+    final users = await db.collection('users').get();
+    for (var i = 0; i < users.docs.length; i += 400) {
+      final batch = db.batch();
+      for (final doc in users.docs.skip(i).take(400)) {
+        batch.update(doc.reference, {'resetAt': resetAt});
+      }
+      await batch.commit();
+    }
+
+    await db.collection('settings').doc('main').set({
+      'resetAt': resetAt,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
 
     await db.collection('settings').doc('cash').set({
       'balance': 0,
@@ -2876,20 +2918,19 @@ Future<void> resetProgram(BuildContext context) async {
       'resetBy': FirebaseAuth.instance.currentUser?.uid,
     }, SetOptions(merge: true));
 
-    final notEmpty = <String>[];
-    for (final name in collections) {
-      final check = await db.collection(name).limit(1).get();
-      if (check.docs.isNotEmpty) notEmpty.add(name);
-    }
+    activeResetAt = resetAt;
+
+    final stockCheck = await db.collection('stock').get();
+    final hasStock = stockCheck.docs.any((d) => ((d.data()['quantity'] as num?)?.toInt() ?? 0) != 0);
+    final activeProducts = await db.collection('products').where('active', isEqualTo: true).limit(1).get();
+    final activeCustomers = await db.collection('customers').where('active', isEqualTo: true).limit(1).get();
+    final activeSuppliers = await db.collection('suppliers').where('active', isEqualTo: true).limit(1).get();
     final cashCheck = await db.collection('settings').doc('cash').get();
     final cashBalance = (cashCheck.data()?['balance'] as num?)?.toDouble() ?? 0;
 
-    if (notEmpty.isNotEmpty || cashBalance != 0) {
-      throw Exception(
-        'لم يكتمل التصفير'
-        '${notEmpty.isNotEmpty ? ' - متبقي بيانات في: ${notEmpty.join(', ')}' : ''}'
-        '${cashBalance != 0 ? ' - رصيد الصندوق: $cashBalance' : ''}',
-      );
+    if (hasStock || activeProducts.docs.isNotEmpty || activeCustomers.docs.isNotEmpty ||
+        activeSuppliers.docs.isNotEmpty || cashBalance != 0) {
+      throw Exception('بعض الأرصدة لم يتم تصفيرها بالكامل');
     }
 
     progress.close();
@@ -2898,7 +2939,7 @@ Future<void> resetProgram(BuildContext context) async {
         context: context,
         builder: (c) => AlertDialog(
           title: const Text('تم التصفير'),
-          content: const Text('تم مسح بيانات التشغيل فعليًا وإعادة رصيد الصندوق إلى صفر.'),
+          content: const Text('تم بدء دورة جديدة من الصفر. الفواتير والحركات القديمة محفوظة في قاعدة البيانات للأرشيف لكنها لن تظهر أو تدخل في التقارير الجديدة.'),
           actions: [
             FilledButton(onPressed: () => Navigator.pop(c), child: const Text('تم')),
           ],
@@ -3529,6 +3570,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
 
                 final rows = snap.data!.docs.where((d) {
                   final x = d.data();
+                  if (!visibleAfterReset(x)) return false;
                   final date = (x['createdAt'] as Timestamp?)?.toDate();
                   return (branchId == null || x['branchId'] == branchId) &&
                       (range == null || (date != null && !date.isBefore(range!.start) && date.isBefore(range!.end.add(const Duration(days: 1)))));
