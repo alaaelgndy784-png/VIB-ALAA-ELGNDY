@@ -28,7 +28,7 @@ void main() {
 
 const firebaseOptions = FirebaseOptions(
   apiKey: 'AIzaSyBDjNjPOhmTt0SbYUfCTQM8IteDCBxGfWk',
-  appId: '1:200962643703:android:5874257a144d31822c65f2',
+  appId: '1:200962643703:android:04784682cd1d95b22c65f2',
   messagingSenderId: '200962643703', projectId: 'vib-sales',
   storageBucket: 'vib-sales.firebasestorage.app',
 );
@@ -79,15 +79,7 @@ String _smsAuthMessage(Object error) {
   return error.toString().replaceFirst('Exception: ', '');
 }
 
-Future<FirebaseAuth> _smsRecoveryAuth() async {
-  FirebaseApp app;
-  try {
-    app = Firebase.app('vibSmsRecovery');
-  } catch (_) {
-    app = await Firebase.initializeApp(name: 'vibSmsRecovery', options: firebaseOptions);
-  }
-  return FirebaseAuth.instanceFor(app: app);
-}
+Future<FirebaseAuth> _smsRecoveryAuth() async => FirebaseAuth.instance;
 
 Future<PhoneAuthCredential?> _requestSmsCredential(
   BuildContext context,
@@ -492,6 +484,21 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> {
   int page = 0;
+  bool _smsRecoveryPrompted = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _offerSmsRecovery());
+  }
+
+  Future<void> _offerSmsRecovery() async {
+    if (_smsRecoveryPrompted || !mounted) return;
+    _smsRecoveryPrompted = true;
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null || user.providerData.any((p) => p.providerId == 'phone')) return;
+    await enableSmsRecoveryForCurrentUser(context, askFirst: true);
+  }
 
   void openPage(String title, Widget child) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
