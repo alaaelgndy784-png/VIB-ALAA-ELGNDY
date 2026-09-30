@@ -20,18 +20,38 @@ import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   runApp(const VibBootstrap());
 }
 
-const firebaseOptions = FirebaseOptions(
-  apiKey: 'AIzaSyBDjNjPOhmTt0SbYUfCTQM8IteDCBxGfWk',
-  appId: '1:200962643703:android:04784682cd1d95b22c65f2',
-  messagingSenderId: '200962643703', projectId: 'vib-sales',
-  storageBucket: 'vib-sales.firebasestorage.app',
-);
+const _vibApiKey = 'AIzaSyBDjNjPOhmTt0SbYUfCTQM8IteDCBxGfWk';
+const _vibProjectId = 'vib-sales';
+const _vibSenderId = '200962643703';
+const _vibStorageBucket = 'vib-sales.firebasestorage.app';
+const _managerFirebaseAppId = '1:200962643703:android:04784682cd1d95b22c65f2';
+const _staffFirebaseAppId = '1:200962643703:android:fd5ac8ff4a1fae7c2c65f2';
+
+Future<FirebaseOptions> _firebaseOptionsForThisApp() async {
+  final packageName = (await PackageInfo.fromPlatform()).packageName;
+  final appId = packageName == 'com.alaa.vibsales.staffscan'
+      ? _staffFirebaseAppId
+      : _managerFirebaseAppId;
+  return FirebaseOptions(
+    apiKey: _vibApiKey,
+    appId: appId,
+    messagingSenderId: _vibSenderId,
+    projectId: _vibProjectId,
+    storageBucket: _vibStorageBucket,
+  );
+}
+
+Future<FirebaseApp> _initializeVibFirebase() async {
+  final options = await _firebaseOptionsForThisApp();
+  return Firebase.initializeApp(options: options);
+}
 
 class VibBootstrap extends StatefulWidget {
   const VibBootstrap({super.key});
@@ -40,10 +60,10 @@ class VibBootstrap extends StatefulWidget {
 
 class _VibBootstrapState extends State<VibBootstrap> {
   late Future<FirebaseApp> initialization;
-  @override void initState() { super.initState(); initialization = Firebase.initializeApp(options: firebaseOptions); }
+  @override void initState() { super.initState(); initialization = _initializeVibFirebase(); }
   @override Widget build(BuildContext context) => FutureBuilder<FirebaseApp>(future: initialization, builder: (context, snapshot) {
     if (snapshot.hasError) return MaterialApp(debugShowCheckedModeBanner: false, home: Directionality(textDirection: TextDirection.rtl, child: Scaffold(backgroundColor: const Color(0xFF111111), body: Center(child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [
-      const Icon(Icons.cloud_off, color: Color(0xFFD6AC55), size: 64), const SizedBox(height: 16), const Text('تعذر الاتصال بخدمة VIB', style: TextStyle(color: Colors.white, fontSize: 22)), const SizedBox(height: 12), FilledButton(onPressed: () => setState(() => initialization = Firebase.initializeApp(options: firebaseOptions)), child: const Text('إعادة المحاولة')),
+      const Icon(Icons.cloud_off, color: Color(0xFFD6AC55), size: 64), const SizedBox(height: 16), const Text('تعذر الاتصال بخدمة VIB', style: TextStyle(color: Colors.white, fontSize: 22)), const SizedBox(height: 12), FilledButton(onPressed: () => setState(() => initialization = _initializeVibFirebase()), child: const Text('إعادة المحاولة')),
     ]))))));
     if (snapshot.connectionState == ConnectionState.done) return const VibApp();
     return const MaterialApp(debugShowCheckedModeBanner: false, home: Scaffold(backgroundColor: Color(0xFF111111), body: Center(child: CircularProgressIndicator(color: Color(0xFFD6AC55)))));
@@ -2723,7 +2743,7 @@ Future<void> backupToDrive(BuildContext context) async {
       'app': 'VIB Sales',
       'version': 1,
       'createdAt': DateTime.now().toIso8601String(),
-      'projectId': firebaseOptions.projectId,
+      'projectId': _vibProjectId,
       'collections': collections,
     };
 
