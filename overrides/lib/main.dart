@@ -397,28 +397,54 @@ class _LoginPageState extends State<LoginPage> {
       if (mounted) setState(() => busy = false);
     }
   }
-  Future<void> recoverPasswordBySms() async {
+  Future<void> recoverPasswordByBiometric() async {
     if (busy) return;
     setState(() { busy = true; error = null; });
     FirebaseAuth? recoveryAuth;
     try {
-      final number = normalizedPhone();
-      if (number == null) throw Exception('اكتب رقم الموبايل المسجل أولًا');
-      recoveryAuth = await _smsRecoveryAuth();
-      await recoveryAuth.signOut();
-      final credential = await _requestSmsCredential(context, recoveryAuth, number, title: 'استرجاع كلمة السر');
-      if (credential == null) return;
-      final result = await recoveryAuth.signInWithCredential(credential);
-      final expectedEmail = emailFor(number).toLowerCase();
-      final actualEmail = (result.user?.email ?? '').toLowerCase();
-
-      if (actualEmail != expectedEmail) {
-        if (result.additionalUserInfo?.isNewUser == true) {
-          try { await result.user?.delete(); } catch (_) {}
-        }
-        try { await recoveryAuth.signOut(); } catch (_) {}
-        throw Exception('الاسترجاع بالرسالة غير مفعّل لهذا الرقم بعد. سجّل دخولك بالطريقة العادية مرة واحدة وفعّل SMS من الإعدادات.');
+      final savedPhone = (await _secure.read(key: 'vib_saved_phone') ?? '').trim();
+      final savedPin = (await _secure.read(key: 'vib_saved_pin') ?? '').trim();
+      if (savedPhone.isEmpty || savedPin.isEmpty) {
+        throw Exception('الاسترجاع بالبصمة يعمل بعد تسجيل دخول ناجح مرة واحدة على نفس الموبايل.');
       }
+
+      final entered = normalizedPhone();
+      if (phone.text.trim().isNotEmpty && entered == null) {
+        throw Exception('اكتب رقم الموبايل بصورة صحيحة');
+      }
+      if (entered != null && entered != savedPhone) {
+        throw Exception('هذا الرقم ليس الحساب المحفوظ على هذا الموبايل.');
+      }
+
+      final localAuth = LocalAuthentication();
+      final available = await localAuth.canCheckBiometrics && await localAuth.isDeviceSupported();
+      if (!available) throw Exception('البصمة غير متاحة أو غير مفعلة على هذا الموبايل.');
+
+      final verified = await localAuth.authenticate(
+        localizedReason: 'استخدم بصمتك لاسترجاع الرقم السري في VIB',
+        options: const AuthenticationOptions(
+          biometricOnly: true,
+          stickyAuth: true,
+          useErrorDialogs: true,
+        ),
+      );
+      if (!verified) throw Exception('لم يتم التحقق من البصمة.');
+
+      FirebaseApp recoveryApp;
+      try {
+        recoveryApp = Firebase.app('vibLocalRecovery');
+      } catch (_) {
+        recoveryApp = await Firebase.initializeApp(
+          name: 'vibLocalRecovery',
+          options: await _firebaseOptionsForThisApp(),
+        );
+      }
+      recoveryAuth = FirebaseAuth.instanceFor(app: recoveryApp);
+      await recoveryAuth.signOut();
+      final credential = await recoveryAuth.signInWithEmailAndPassword(
+        email: emailFor(savedPhone),
+        password: savedPin,
+      );
 
       if (!mounted) return;
       final newPin = TextEditingController();
@@ -428,11 +454,23 @@ class _LoginPageState extends State<LoginPage> {
         context: context,
         barrierDismissible: false,
         builder: (dialog) => StatefulBuilder(builder: (dialog, update) => AlertDialog(
-          title: const Text('اكتب رقم سري جديد'),
+          title: const Text('إنشاء رقم سري جديد'),
           content: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(controller: newPin, obscureText: true, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الرقم السري الجديد')),
+            const Text('تم التحقق من البصمة بنجاح. اكتب الرقم السري الجديد.'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: newPin,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'الرقم السري الجديد'),
+            ),
             const SizedBox(height: 8),
-            TextField(controller: confirmPin, obscureText: true, keyboardType: TextInputType.number, decoration: InputDecoration(labelText: 'تأكيد الرقم السري', errorText: localError)),
+            TextField(
+              controller: confirmPin,
+              obscureText: true,
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(labelText: 'تأكيد الرقم السري', errorText: localError),
+            ),
           ]),
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء')),
@@ -440,7 +478,7 @@ class _LoginPageState extends State<LoginPage> {
               onPressed: () {
                 final a = newPin.text.trim();
                 final b = confirmPin.text.trim();
-                if (!RegExp(r'^\d{6,}$').hasMatch(a)) {
+                if (!RegExp(r'^\\d{6,}$').hasMatch(a)) {
                   update(() => localError = 'الرقم السري لازم يكون 6 أرقام على الأقل');
                   return;
                 }
@@ -462,16 +500,34 @@ class _LoginPageState extends State<LoginPage> {
         await recoveryAuth.signOut();
         return;
       }
-      await result.user!.updatePassword(replacement);
-      await _secure.write(key: 'vib_saved_phone', value: number);
+
+      await credential.user!.updatePassword(replacement);
+      await _secure.write(key: 'vib_saved_phone', value: savedPhone);
       await _secure.write(key: 'vib_saved_pin', value: replacement);
       await recoveryAuth.signOut();
-      phone.text = number;
+
+      phone.text = savedPhone;
       pin.text = replacement;
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تغيير الرقم السري بنجاح. اضغط دخول.')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم تغيير الرقم السري بالبصمة بنجاح. اضغط دخول.')),
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      if (recoveryAuth != null) {
+        try { await recoveryAuth.signOut(); } catch (_) {}
+      }
+      final message = switch (e.code) {
+        'invalid-credential' || 'wrong-password' =>
+          'بيانات الاسترجاع المحفوظة قديمة. سجّل دخولك بالطريقة العادية مرة واحدة لتحديثها.',
+        _ => e.message ?? 'تعذر تغيير الرقم السري',
+      };
+      if (mounted) setState(() => error = message);
     } catch (e) {
-      if (recoveryAuth != null) { try { await recoveryAuth.signOut(); } catch (_) {} }
-      if (mounted) setState(() => error = _smsAuthMessage(e));
+      if (recoveryAuth != null) {
+        try { await recoveryAuth.signOut(); } catch (_) {}
+      }
+      if (mounted) setState(() => error = e.toString().replaceFirst('Exception: ', ''));
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -488,9 +544,9 @@ class _LoginPageState extends State<LoginPage> {
       if (error != null) Text(error!, style: const TextStyle(color: Colors.redAccent)),
       const SizedBox(height: 18),
       FilledButton(onPressed: busy ? null : () => login(create: false), child: const Text('دخول')),
-      TextButton.icon(onPressed: busy ? null : recoverPasswordBySms, icon: const Icon(Icons.sms_outlined), label: const Text('نسيت كلمة السر؟ إرسال كود SMS')),
+      TextButton.icon(onPressed: busy ? null : recoverPasswordByBiometric, icon: const Icon(Icons.fingerprint), label: const Text('نسيت كلمة السر؟ استرجاع بالبصمة')),
       TextButton(onPressed: busy ? null : () => login(create: true), child: const Text('إنشاء حساب جديد')),
-      const Text('رسائل SMS تُستخدم لتفعيل واسترجاع كلمة السر. المدير يفعّل حساب الموظف ويحدد فرعه.'),
+      const Text('استرجاع كلمة السر بالبصمة يعمل مجانًا على نفس الموبايل بعد أول تسجيل دخول ناجح. المدير يفعّل حساب الموظف ويحدد فرعه.'),
     ]),
   ))));
 }
@@ -504,21 +560,6 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> {
   int page = 0;
-  bool _smsRecoveryPrompted = false;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _offerSmsRecovery());
-  }
-
-  Future<void> _offerSmsRecovery() async {
-    if (_smsRecoveryPrompted || !mounted) return;
-    _smsRecoveryPrompted = true;
-    final user = FirebaseAuth.instance.currentUser;
-    if (user == null || user.providerData.any((p) => p.providerId == 'phone')) return;
-    await enableSmsRecoveryForCurrentUser(context, askFirst: true);
-  }
 
   void openPage(String title, Widget child) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
@@ -2655,10 +2696,17 @@ class _AppSettingsState extends State<AppSettings> {
     const Text('طابعة البلوتوث تظهر في شاشة الطباعة إذا كانت متصلة بالموبايل ولها خدمة طباعة متوافقة.'),
     const SizedBox(height: 14),
     Card(child: ListTile(
-      leading: const Icon(Icons.sms_outlined, color: gold),
-      title: const Text('تفعيل استرجاع كلمة السر برسالة SMS'),
-      subtitle: const Text('ربط رقم الدخول بالحساب مرة واحدة، وبعدها نسيت كلمة السر يرسل كود على نفس الرقم.'),
-      onTap: () => enableSmsRecoveryForCurrentUser(context),
+      leading: const Icon(Icons.fingerprint, color: gold),
+      title: const Text('استرجاع كلمة السر بالبصمة'),
+      subtitle: const Text('يعمل تلقائيًا ومجانًا على نفس الموبايل بعد أول تسجيل دخول ناجح، بدون SMS أو فوترة.'),
+      onTap: () => showDialog<void>(
+        context: context,
+        builder: (c) => AlertDialog(
+          title: const Text('الاسترجاع بالبصمة جاهز'),
+          content: const Text('من شاشة الدخول اضغط «نسيت كلمة السر؟ استرجاع بالبصمة». يلزم أن يكون الحساب سبق تسجيل دخوله بنجاح على نفس الموبايل.'),
+          actions: [FilledButton(onPressed: () => Navigator.pop(c), child: const Text('تمام'))],
+        ),
+      ),
     )),
     const SizedBox(height: 8),
     const Card(child: ListTile(leading: Icon(Icons.cloud_done, color: gold), title: Text('حفظ البيانات طويل المدة'), subtitle: Text('الفواتير والحركات لا تُحذف وتظل محفوظة في قاعدة البيانات.'))),
