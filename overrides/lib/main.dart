@@ -483,8 +483,8 @@ Future<void> archiveProduct(BuildContext context, String id, String name) async 
         Expanded(child: Text('حذف المنتج فعليًا')),
       ]),
       content: Text(
-        'سيتم حذف "$name" من المنتجات ومن أرصدة المخزون الحالية.\n\n'
-        'الفواتير والحركات القديمة ستظل محفوظة كسجل ولن يتم حذفها.',
+        'سيتم حذف "$name" من المنتجات وتصفير رصيده في كل المخازن.\n\n'
+        'الفواتير والحركات القديمة ستظل محفوظة كسجل.',
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')),
@@ -509,34 +509,30 @@ Future<void> archiveProduct(BuildContext context, String id, String name) async 
   try {
     final stockDocs = await db.collection('stock').where('productId', isEqualTo: id).get();
 
-    var batch = db.batch();
-    var ops = 0;
-
-    for (final doc in stockDocs.docs) {
-      batch.delete(doc.reference);
-      ops++;
-      if (ops == 450) {
-        await batch.commit();
-        batch = db.batch();
-        ops = 0;
+    // Firestore production rules may forbid deleting stock documents.
+    // Zero them first so product deletion still works safely.
+    for (var i = 0; i < stockDocs.docs.length; i += 400) {
+      final batch = db.batch();
+      final chunk = stockDocs.docs.skip(i).take(400);
+      for (final doc in chunk) {
+        batch.update(doc.reference, {'quantity': 0});
       }
+      await batch.commit();
     }
 
-    batch.delete(db.collection('products').doc(id));
-    ops++;
-
-    if (ops > 0) await batch.commit();
+    await db.collection('products').doc(id).delete();
 
     final productCheck = await db.collection('products').doc(id).get();
-    final stockCheck = await db.collection('stock').where('productId', isEqualTo: id).limit(1).get();
+    final stockCheck = await db.collection('stock').where('productId', isEqualTo: id).get();
+    final stockNotZero = stockCheck.docs.any((d) => ((d.data()['quantity'] as num?)?.toInt() ?? 0) != 0);
 
-    if (productCheck.exists || stockCheck.docs.isNotEmpty) {
+    if (productCheck.exists || stockNotZero) {
       throw Exception('الحذف لم يكتمل بالكامل');
     }
 
     notice.close();
     if (context.mounted) {
-      messenger.showSnackBar(const SnackBar(content: Text('تم حذف المنتج ومخزونه فعليًا')));
+      messenger.showSnackBar(const SnackBar(content: Text('تم حذف المنتج وتصفير رصيده فعليًا')));
     }
   } catch (e) {
     notice.close();
