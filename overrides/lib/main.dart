@@ -755,31 +755,94 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
       update(() => saving = true);
       try {
         final supplier = suppliers.docs.firstWhere((e) => e.id == supplierId).data();
-        final group = db.collection('purchases').doc().id;
+        final purchaseRef = db.collection('purchases').doc();
         await db.runTransaction((tx) async {
           final supplierRef = db.collection('suppliers').doc(supplierId);
           final supplierSnap = await tx.get(supplierRef);
           if (!supplierSnap.exists) throw StateError('المورد غير موجود');
+
           final stocks = <String, DocumentSnapshot<Map<String, dynamic>>>{};
-          for (final e in entries) { stocks[e.id] = await tx.get(db.collection('stock').doc('main_${e.id}')); }
+          for (final e in entries) {
+            stocks[e.id] = await tx.get(db.collection('stock').doc('main_${e.id}'));
+          }
+
           final before = (supplierSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
           final due = total - payment;
           final actor = FirebaseAuth.instance.currentUser!.uid;
-          var paymentRemaining = payment;
+          final items = <Map<String, dynamic>>[];
+
           tx.update(supplierRef, {'balance': before + due, 'updatedAt': FieldValue.serverTimestamp()});
+
           for (final e in entries) {
             final p = products.docs.firstWhere((d) => d.id == e.id).data();
             final old = (stocks[e.id]?.data()?['quantity'] as num?)?.toInt() ?? 0;
-            final ref = db.collection('purchases').doc();
             final lineTotal = e.qty * e.cost;
-            final linePaid = paymentRemaining < lineTotal ? paymentRemaining : lineTotal;
-            paymentRemaining -= linePaid;
-            tx.set(db.collection('stock').doc('main_${e.id}'), {'branchId': 'main', 'productId': e.id, 'quantity': old + e.qty}, SetOptions(merge: true));
-            tx.update(db.collection('products').doc(e.id), {'purchasePrice': e.cost, if (increase != null) 'price': double.parse((e.cost * (1 + increase / 100)).toStringAsFixed(2)), 'updatedAt': FieldValue.serverTimestamp()});
-            tx.set(ref, {'invoiceNumber': invoice.text.trim(), 'scanGroupId': group, 'source': 'camera', 'supplierId': supplierId, 'supplierName': supplier['name'], 'productId': e.id, 'productName': p['name'], 'quantity': e.qty, 'unitCost': e.cost, 'total': lineTotal, 'paid': linePaid, 'due': lineTotal - linePaid, 'status': 'completed', 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
-            tx.set(db.collection('stockMovements').doc(), {'productId': e.id, 'productName': p['name'], 'branchId': 'main', 'kind': 'purchase', 'quantity': e.qty, 'balanceAfter': old + e.qty, 'referenceId': ref.id, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+
+            items.add({
+              'productId': e.id,
+              'productName': p['name'],
+              'quantity': e.qty,
+              'unitCost': e.cost,
+              'lineTotal': lineTotal,
+            });
+
+            tx.set(db.collection('stock').doc('main_${e.id}'), {
+              'branchId': 'main',
+              'productId': e.id,
+              'quantity': old + e.qty,
+            }, SetOptions(merge: true));
+
+            tx.update(db.collection('products').doc(e.id), {
+              'purchasePrice': e.cost,
+              if (increase != null) 'price': double.parse((e.cost * (1 + increase / 100)).toStringAsFixed(2)),
+              'updatedAt': FieldValue.serverTimestamp(),
+            });
+
+            tx.set(db.collection('stockMovements').doc(), {
+              'productId': e.id,
+              'productName': p['name'],
+              'branchId': 'main',
+              'kind': 'purchase',
+              'quantity': e.qty,
+              'balanceAfter': old + e.qty,
+              'referenceId': purchaseRef.id,
+              'actorId': actor,
+              'createdAt': FieldValue.serverTimestamp(),
+            });
           }
-          tx.set(db.collection('accountMovements').doc(), {'accountType': 'suppliers', 'accountId': supplierId, 'accountName': supplier['name'], 'kind': 'purchase', 'amount': due, 'balanceBefore': before, 'balanceAfter': before + due, 'referenceId': group, 'paid': payment, 'createdAt': FieldValue.serverTimestamp(), 'actorId': actor});
+
+          tx.set(purchaseRef, {
+            'invoiceNumber': invoice.text.trim(),
+            'source': 'camera',
+            'supplierId': supplierId,
+            'supplierName': supplier['name'],
+            'items': items,
+            'itemCount': items.length,
+            'total': total,
+            'paid': payment,
+            'due': due,
+            'status': 'completed',
+            'actorId': actor,
+            'createdAt': FieldValue.serverTimestamp(),
+            if (items.length == 1) 'productId': items.first['productId'],
+            if (items.length == 1) 'productName': items.first['productName'],
+            if (items.length == 1) 'quantity': items.first['quantity'],
+            if (items.length == 1) 'unitCost': items.first['unitCost'],
+          });
+
+          tx.set(db.collection('accountMovements').doc(), {
+            'accountType': 'suppliers',
+            'accountId': supplierId,
+            'accountName': supplier['name'],
+            'kind': 'purchase',
+            'amount': due,
+            'balanceBefore': before,
+            'balanceAfter': before + due,
+            'referenceId': purchaseRef.id,
+            'paid': payment,
+            'createdAt': FieldValue.serverTimestamp(),
+            'actorId': actor,
+          });
         });
         if (c.mounted) Navigator.pop(c);
         if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ الفاتورة وتحديث المخزون وحساب المورد')));
