@@ -75,6 +75,32 @@ jobs:
           flutter build apk --release --split-per-abi
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk
 
+      - name: Export Android signing fingerprints
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          mkdir -p dist
+          if [ -f "$HOME/.android/debug.keystore" ]; then
+            {
+              echo "VIB SALES ANDROID SIGNING FINGERPRINTS"
+              echo "Generated from the keystore used by this build"
+              keytool -list -v \
+                -keystore "$HOME/.android/debug.keystore" \
+                -alias androiddebugkey \
+                -storepass android \
+                -keypass android
+            } | tee dist/VIB-SALES-SHA.txt
+          else
+            echo "Debug keystore not found at $HOME/.android/debug.keystore" | tee dist/VIB-SALES-SHA.txt
+            find "$HOME" -maxdepth 4 -type f \( -name "*.keystore" -o -name "*.jks" \) -print | tee -a dist/VIB-SALES-SHA.txt || true
+          fi
+
+      - name: Upload Android signing fingerprints
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-SALES-SHA-FINGERPRINTS
+          path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-SHA.txt
+          if-no-files-found: error
+
       - name: Upload manager APK
         uses: actions/upload-artifact@v4
         with:
