@@ -478,7 +478,7 @@ class _LoginPageState extends State<LoginPage> {
               onPressed: () {
                 final a = newPin.text.trim();
                 final b = confirmPin.text.trim();
-                if (!RegExp(r'^\d{6,} {
+                if (!RegExp(r'^\d{6,}$').hasMatch(a)) {
                   update(() => localError = 'الرقم السري لازم يكون 6 أرقام على الأقل');
                   return;
                 }
