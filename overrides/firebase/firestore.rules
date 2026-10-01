@@ -65,7 +65,7 @@ service cloud.firestore {
     }
     match /stock/{id} {
       allow read: if owner() || (employee() && resource.data.branchId == branch());
-      allow delete: if owner();
+      allow delete: if false;
       allow create, update: if owner() && request.resource.data.keys().hasOnly(['branchId', 'productId', 'quantity', 'lastSaleId']) && whole(request.resource.data.quantity) && id == request.resource.data.branchId + '_' + request.resource.data.productId;
       allow update: if employee() && resource.data.branchId == branch()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity', 'lastSaleId'])
@@ -89,7 +89,7 @@ service cloud.firestore {
     match /stockAdjustments/{id} {
       allow read, create: if owner();
       allow update: if false;
-      allow delete: if owner();
+      allow delete: if false;
     }
     match /customers/{id} {
       allow read: if employee();
@@ -100,11 +100,11 @@ service cloud.firestore {
         && request.resource.data.balance == resource.data.balance - receipt(request.resource.data.lastReceiptId).amount
         && request.resource.data.updatedAt == request.time;
       allow read, create, update: if owner();
-      allow delete: if owner();
+      allow delete: if false;
     }
     match /suppliers/{id} {
       allow read, create, update: if owner();
-      allow delete: if owner();
+      allow delete: if false;
     }
     match /accountMovements/{id} {
       allow create: if employee() && newReceipt(request.resource.data.referenceId)
@@ -126,21 +126,7 @@ service cloud.firestore {
           && request.resource.data.balanceAfter == receipt(request.resource.data.referenceId).cashAfter));
       allow read, create: if owner();
       allow update: if false;
-      allow delete: if owner();
-    }
-    match /cash/{id} {
-      allow read, create, update: if owner() && id == 'main';
       allow delete: if false;
-    }
-    match /cashMovements/{id} {
-      allow read, create: if owner()
-        && request.resource.data.actorId == request.auth.uid
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.amount is number
-        && request.resource.data.amount > 0
-        && request.resource.data.reason is string
-        && request.resource.data.reason.size() > 0;
-      allow update, delete: if false;
     }
     match /settings/{id} {
       allow get: if employee() && id == 'cash';
@@ -167,23 +153,23 @@ service cloud.firestore {
         && request.resource.data.quantity < 0
         && getAfter(/databases/$(database)/documents/sales/$(request.resource.data.referenceId)).data.employeeId == request.auth.uid;
       allow update: if false;
-      allow delete: if owner();
+      allow delete: if false;
     }
     match /salesReturns/{id} {
       allow read, create: if owner();
       allow update: if false;
-      allow delete: if owner();
+      allow delete: if false;
     }
     match /purchaseReturns/{id} {
       allow read, create: if owner();
       allow update: if false;
-      allow delete: if owner();
+      allow delete: if false;
     }
     match /purchases/{id} {
       allow read, create: if owner();
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
-      allow delete: if owner();
+      allow delete: if false;
     }
     match /sales/{id} {
       allow read: if owner() || (employee() && resource.data.branchId == branch());
@@ -203,7 +189,7 @@ service cloud.firestore {
       allow update: if employee() && resource.data.branchId == branch()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy'])
         && request.resource.data.printedBy == request.auth.uid;
-      allow delete: if owner();
+      allow delete: if false;
     }
   }
 }
