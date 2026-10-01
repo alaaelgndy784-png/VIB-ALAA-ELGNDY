@@ -9,6 +9,39 @@ service cloud.firestore {
     function branch() { return profile().branchId; }
     function whole(n) { return n is int; }
     function natural(n) { return whole(n) && n >= 0; }
+    function newReceipt(id) {
+      return id is string && !exists(/databases/$(database)/documents/receipts/$(id))
+        && getAfter(/databases/$(database)/documents/receipts/$(id)).data.actorId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/receipts/$(id)).data.branchId == branch();
+    }
+    function receipt(id) { return getAfter(/databases/$(database)/documents/receipts/$(id)).data; }
+    function validReceipt(id) {
+      let r = request.resource.data;
+      let c = get(/databases/$(database)/documents/customers/$(r.customerId)).data;
+      let ca = getAfter(/databases/$(database)/documents/customers/$(r.customerId)).data;
+      let cash = getAfter(/databases/$(database)/documents/settings/cash).data;
+      let oldCash = exists(/databases/$(database)/documents/settings/cash)
+        ? get(/databases/$(database)/documents/settings/cash).data.balance : 0;
+      let cm = getAfter(/databases/$(database)/documents/accountMovements/$(r.customerMovementId)).data;
+      let km = getAfter(/databases/$(database)/documents/accountMovements/$(r.cashMovementId)).data;
+      return r.keys().hasOnly(['customerId','customerName','customerPhone','amount','balanceBefore','balanceAfter',
+          'cashBefore','cashAfter','actorId','actorName','branchId','note','createdAt','customerMovementId','cashMovementId'])
+        && r.actorId == request.auth.uid && r.branchId == branch() && r.actorName == profile().name
+        && r.createdAt == request.time && r.amount is number && r.amount > 0 && r.amount <= c.balance
+        && c.get('active', true) == true && r.customerName == c.name && r.customerPhone == c.get('phone', '')
+        && r.note is string && r.note.size() <= 2000
+        && r.balanceBefore == c.balance && r.balanceAfter == c.balance - r.amount
+        && ca.balance == r.balanceAfter && ca.lastReceiptId == id
+        && r.cashBefore == oldCash && r.cashAfter == oldCash + r.amount
+        && cash.balance == r.cashAfter && cash.lastReceiptId == id
+        && r.customerMovementId != r.cashMovementId
+        && !exists(/databases/$(database)/documents/accountMovements/$(r.customerMovementId))
+        && !exists(/databases/$(database)/documents/accountMovements/$(r.cashMovementId))
+        && cm.referenceId == id && cm.actorId == request.auth.uid && cm.amount == r.amount
+        && cm.accountType == 'customers' && cm.accountId == r.customerId
+        && km.referenceId == id && km.actorId == request.auth.uid && km.amount == r.amount
+        && km.accountType == 'cash' && km.delta == r.amount;
+    }
     match /users/{uid} {
       allow read: if owner() || (signed() && request.auth.uid == uid);
       // A signed-in account can only request access. Branch and role are assigned by owner.
@@ -48,6 +81,9 @@ service cloud.firestore {
     }
     match /receipts/{id} {
       allow read, create: if owner();
+      allow get: if employee() && (!exists(/databases/$(database)/documents/receipts/$(id)) || resource.data.actorId == request.auth.uid);
+      allow list: if employee() && resource.data.actorId == request.auth.uid;
+      allow create: if employee() && validReceipt(id);
       allow update, delete: if false;
     }
     match /stockAdjustments/{id} {
@@ -56,6 +92,13 @@ service cloud.firestore {
       allow delete: if owner();
     }
     match /customers/{id} {
+      allow read: if employee();
+      allow update: if employee()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastReceiptId','updatedAt'])
+        && newReceipt(request.resource.data.lastReceiptId)
+        && receipt(request.resource.data.lastReceiptId).customerId == id
+        && request.resource.data.balance == resource.data.balance - receipt(request.resource.data.lastReceiptId).amount
+        && request.resource.data.updatedAt == request.time;
       allow read, create, update: if owner();
       allow delete: if owner();
     }
@@ -64,6 +107,23 @@ service cloud.firestore {
       allow delete: if owner();
     }
     match /accountMovements/{id} {
+      allow create: if employee() && newReceipt(request.resource.data.referenceId)
+        && request.resource.data.keys().hasOnly(['accountType','accountId','accountName','kind','amount','delta',
+          'balanceBefore','balanceAfter','referenceId','reason','actorId','branchId','createdAt'])
+        && request.resource.data.actorId == request.auth.uid && request.resource.data.branchId == branch()
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.amount == receipt(request.resource.data.referenceId).amount
+        && request.resource.data.accountId == receipt(request.resource.data.referenceId).customerId
+        && request.resource.data.accountName == receipt(request.resource.data.referenceId).customerName
+        && ((id == receipt(request.resource.data.referenceId).customerMovementId
+          && request.resource.data.accountType == 'customers' && request.resource.data.kind == 'collection'
+          && request.resource.data.balanceBefore == receipt(request.resource.data.referenceId).balanceBefore
+          && request.resource.data.balanceAfter == receipt(request.resource.data.referenceId).balanceAfter)
+        || (id == receipt(request.resource.data.referenceId).cashMovementId
+          && request.resource.data.accountType == 'cash' && request.resource.data.kind == 'customerCollection'
+          && request.resource.data.delta == request.resource.data.amount
+          && request.resource.data.balanceBefore == receipt(request.resource.data.referenceId).cashBefore
+          && request.resource.data.balanceAfter == receipt(request.resource.data.referenceId).cashAfter));
       allow read, create: if owner();
       allow update: if false;
       allow delete: if owner();
@@ -83,6 +143,17 @@ service cloud.firestore {
       allow update, delete: if false;
     }
     match /settings/{id} {
+      allow get: if employee() && id == 'cash';
+      allow create: if employee() && id == 'cash'
+        && request.resource.data.keys().hasOnly(['balance','lastReceiptId','updatedAt'])
+        && newReceipt(request.resource.data.lastReceiptId)
+        && request.resource.data.balance == receipt(request.resource.data.lastReceiptId).amount
+        && request.resource.data.updatedAt == request.time;
+      allow update: if employee() && id == 'cash'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastReceiptId','updatedAt'])
+        && newReceipt(request.resource.data.lastReceiptId)
+        && request.resource.data.balance == resource.data.balance + receipt(request.resource.data.lastReceiptId).amount
+        && request.resource.data.updatedAt == request.time;
       allow read, create, update: if owner();
       allow delete: if false;
     }

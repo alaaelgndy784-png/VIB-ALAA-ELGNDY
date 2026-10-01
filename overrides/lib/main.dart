@@ -452,13 +452,16 @@ class _HomeState extends State<Home> {
       ]),
       body: page == 0
           ? Products(owner: false, uid: widget.uid, branchId: widget.branchId)
-          : Sales(owner: false, branchId: widget.branchId),
+          : page == 1
+              ? Sales(owner: false, branchId: widget.branchId)
+              : ReceiptVouchers(owner: false, branchId: widget.branchId),
       bottomNavigationBar: NavigationBar(
         selectedIndex: page,
         onDestinationSelected: (i) => setState(() => page = i),
         destinations: const [
           NavigationDestination(icon: Icon(Icons.inventory_2_outlined), label: 'المنتجات'),
           NavigationDestination(icon: Icon(Icons.receipt_long_outlined), label: 'مبيعاتي'),
+          NavigationDestination(icon: Icon(Icons.payments_outlined), label: 'سندات القبض'),
         ],
       ),
     );
@@ -542,6 +545,8 @@ class OwnerDashboard extends StatelessWidget {
           const SizedBox(width: gap),
           Expanded(child: tile('العملاء', Icons.groups_2_rounded, () => openPage('العملاء', const Accounts()))),
         ]),
+        const SizedBox(height: gap),
+        tile('سندات القبض', Icons.payments_outlined, () => openPage('سندات القبض', ReceiptVouchers(owner: true, branchId: branchId))),
         const SizedBox(height: gap),
         Row(children: [
           Expanded(child: tile('المخزون', Icons.warehouse_rounded, () => openPage('المخزون', const InventoryAudit()))),
@@ -2303,6 +2308,166 @@ Future<void> mainStockDialog(BuildContext context, String productId, String name
   ));
 }
 
+class ReceiptVouchers extends StatelessWidget {
+  final bool owner;
+  final String branchId;
+  const ReceiptVouchers({super.key, required this.owner, required this.branchId});
+
+  @override
+  Widget build(BuildContext context) {
+    Query<Map<String, dynamic>> query = db.collection('receipts');
+    if (!owner) query = query.where('actorId', isEqualTo: FirebaseAuth.instance.currentUser!.uid);
+    return Column(children: [
+      Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity,
+        child: FilledButton.icon(onPressed: () => createReceiptVoucher(context, branchId),
+          icon: const Icon(Icons.add), label: const Text('إنشاء سند قبض')))),
+      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: query.snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return const Center(child: Text('تعذر تحميل سندات القبض؛ تحقق من الاتصال وصلاحيات الحساب'));
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          final rows = snapshot.data!.docs.where((d) => visibleAfterReset(d.data())).toList()
+            ..sort((a, b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
+              .compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+          if (rows.isEmpty) return const Center(child: Text('لا توجد سندات قبض بعد'));
+          return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
+            final row = rows[index], data = row.data();
+            return Card(child: ListTile(
+              leading: const Icon(Icons.payments_outlined, color: gold),
+              title: Text('${data['customerName']} • ${data['amount']} ج.م'),
+              subtitle: Text('سند: ${row.id}\n${formatDate(data['createdAt'])} • ${data['actorName'] ?? ''}\nالرصيد بعد القبض: ${data['balanceAfter']} ج.م'),
+              isThreeLine: true,
+              trailing: IconButton(tooltip: 'طباعة / حفظ PDF', icon: const Icon(Icons.picture_as_pdf),
+                onPressed: () => printReceiptVoucher(context, row.id, data)),
+            ));
+          });
+        },
+      )),
+    ]);
+  }
+}
+
+Future<void> createReceiptVoucher(BuildContext context, String branchId) async {
+  final amount = TextEditingController(), note = TextEditingController();
+  // Reuse this ID on transaction retries and after an uncertain network response.
+  final receiptRef = db.collection('receipts').doc();
+  final customerMovement = db.collection('accountMovements').doc();
+  final cashMovement = db.collection('accountMovements').doc();
+  String? customerId;
+  bool saving = false;
+  final customers = db.collection('customers').snapshots();
+  await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(
+    builder: (dialog, update) => AlertDialog(
+      title: const Text('سند قبض من عميل'),
+      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: customers, builder: (context, snap) {
+          if (snap.hasError) return const Text('تعذر تحميل العملاء');
+          if (!snap.hasData) return const LinearProgressIndicator();
+          final rows = snap.data!.docs.where((d) => d.data()['active'] != false).toList()
+            ..sort((a, b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
+          return DropdownButtonFormField<String>(
+            initialValue: customerId, isExpanded: true,
+            decoration: const InputDecoration(labelText: 'العميل — الرصيد الحالي'),
+            items: rows.map((d) => DropdownMenuItem(value: d.id,
+              child: Text('${d.data()['name']} — ${d.data()['balance'] ?? 0} ج.م', overflow: TextOverflow.ellipsis))).toList(),
+            onChanged: saving ? null : (value) => update(() => customerId = value),
+          );
+        }),
+        TextField(controller: amount, enabled: !saving,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(labelText: 'المبلغ المقبوض')),
+        TextField(controller: note, enabled: !saving, decoration: const InputDecoration(labelText: 'البيان / ملاحظات')),
+        const SizedBox(height: 12),
+        const Text('يُخصم المبلغ من مديونية العميل ويُضاف للصندوق عند حفظ السند.'),
+      ])),
+      actions: [
+        TextButton(onPressed: saving ? null : () => Navigator.pop(dialog), child: const Text('إلغاء')),
+        FilledButton(onPressed: saving ? null : () async {
+          final paid = double.tryParse(amount.text.trim());
+          final id = customerId;
+          if (id == null || paid == null || !paid.isFinite || paid <= 0) {
+            ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content: Text('اختر العميل واكتب مبلغًا صحيحًا أكبر من صفر')));
+            return;
+          }
+          update(() => saving = true);
+          try {
+            final actor = FirebaseAuth.instance.currentUser!.uid;
+            final profile = (await db.collection('users').doc(actor).get()).data();
+            await db.runTransaction((tx) async {
+              final existing = await tx.get(receiptRef);
+              if (existing.exists) return;
+              final customerRef = db.collection('customers').doc(id);
+              final customer = await tx.get(customerRef);
+              final cashRef = db.collection('settings').doc('cash');
+              final cash = await tx.get(cashRef);
+              if (!customer.exists || customer.data()?['active'] == false) throw Exception('العميل غير متاح');
+              final balance = (customer.data()?['balance'] as num?)?.toDouble() ?? 0;
+              if (paid > balance) throw Exception('المبلغ أكبر من المديونية الحالية للعميل');
+              final beforeCash = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
+              final now = FieldValue.serverTimestamp();
+              final customerName = '${customer.data()?['name'] ?? ''}';
+              tx.update(customerRef, {'balance': balance - paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now});
+              tx.set(cashRef, {'balance': beforeCash + paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now}, SetOptions(merge: true));
+              tx.set(receiptRef, {
+                'customerId': id, 'customerName': customerName, 'customerPhone': '${customer.data()?['phone'] ?? ''}',
+                'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
+                'cashBefore': beforeCash, 'cashAfter': beforeCash + paid,
+                'actorId': actor, 'actorName': '${profile?['name'] ?? ''}', 'branchId': branchId,
+                'note': note.text.trim(), 'createdAt': now,
+                'customerMovementId': customerMovement.id, 'cashMovementId': cashMovement.id,
+              });
+              tx.set(customerMovement, {
+                'accountType': 'customers', 'accountId': id, 'accountName': customerName, 'kind': 'collection',
+                'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
+                'referenceId': receiptRef.id, 'actorId': actor, 'branchId': branchId, 'createdAt': now,
+              });
+              tx.set(cashMovement, {
+                'accountType': 'cash', 'accountId': id, 'accountName': customerName, 'kind': 'customerCollection',
+                'amount': paid, 'delta': paid, 'balanceBefore': beforeCash, 'balanceAfter': beforeCash + paid,
+                'referenceId': receiptRef.id, 'reason': 'سند قبض من عميل', 'actorId': actor, 'branchId': branchId, 'createdAt': now,
+              });
+            });
+            if (dialog.mounted) Navigator.pop(dialog);
+            if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ سند القبض وتحديث رصيد العميل والصندوق')));
+          } catch (e) {
+            if (dialog.mounted) {
+              update(() => saving = false);
+              ScaffoldMessenger.of(dialog).showSnackBar(SnackBar(content: Text('تعذر حفظ سند القبض: $e')));
+            }
+          }
+        }, child: Text(saving ? 'جاري الحفظ…' : 'حفظ سند القبض')),
+      ],
+    ),
+  ));
+  amount.dispose();
+  note.dispose();
+}
+
+Future<void> printReceiptVoucher(BuildContext context, String id, Map<String, dynamic> data) async {
+  try {
+    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final pdf = pw.Document();
+    pdf.addPage(pw.Page(pageFormat: PdfPageFormat.a4, theme: pw.ThemeData.withFont(base: font, bold: font),
+      build: (_) => pw.Directionality(textDirection: pw.TextDirection.rtl,
+        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+          pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 22)),
+          pw.SizedBox(height: 16), pw.Text('سند قبض', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 20)),
+          pw.SizedBox(height: 20),
+          for (final line in [
+            'رقم السند: $id', 'التاريخ: ${formatDate(data['createdAt'])}',
+            'استلمنا من: ${data['customerName']}', 'الهاتف: ${data['customerPhone'] ?? ''}',
+            'المبلغ: ${data['amount']} ج.م', 'رصيد العميل قبل القبض: ${data['balanceBefore']} ج.م',
+            'رصيد العميل بعد القبض: ${data['balanceAfter']} ج.م',
+            'الموظف: ${data['actorName'] ?? ''}', 'البيان: ${data['note'] ?? ''}',
+          ]) pw.Padding(padding: const pw.EdgeInsets.symmetric(vertical: 7), child: pw.Text(line)),
+          pw.SizedBox(height: 30), pw.Text('توقيع المستلم: __________________'),
+        ]))));
+    await Printing.layoutPdf(name: 'VIB-RECEIPT-$id.pdf', onLayout: (_) => pdf.save());
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر طباعة سند القبض: $e')));
+  }
+}
+
 class Accounts extends StatefulWidget {
   final bool startWithSuppliers;
   const Accounts({super.key, this.startWithSuppliers = false});
@@ -2614,6 +2779,7 @@ const _backupCollections = <String>[
   'customers',
   'suppliers',
   'accountMovements',
+  'receipts',
   'branches',
   'settings',
 ];
@@ -3627,4 +3793,3 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
     ),
   ]);
 }
-
