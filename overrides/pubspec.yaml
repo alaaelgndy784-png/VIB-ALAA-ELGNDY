@@ -12,6 +12,7 @@ dependencies:
   firebase_core: ^3.10.0
   firebase_auth: ^5.4.0
   cloud_firestore: ^5.6.0
+  cloud_functions: ^5.3.0
   intl: ^0.20.2
   local_auth: ^2.3.0
   pdf: ^3.11.3
@@ -32,3 +33,4 @@ flutter:
     - assets/tessdata/
     - assets/fonts/DejaVuSans.ttf
     - assets/icons/manager/mipmap-xxxhdpi/ic_launcher.png
+

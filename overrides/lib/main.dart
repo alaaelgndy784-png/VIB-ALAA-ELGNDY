@@ -5,6 +5,7 @@ import 'package:tesseract_ocr/tesseract_ocr.dart';
 import 'package:tesseract_ocr/ocr_engine_config.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -459,8 +460,8 @@ class _HomeState extends State<Home> {
         selectedIndex: page,
         onDestinationSelected: (i) => setState(() => page = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.inventory_2_outlined), label: 'المنتجات'),
-          NavigationDestination(icon: Icon(Icons.receipt_long_outlined), label: 'مبيعاتي'),
+          NavigationDestination(icon: Icon(Icons.inventory_2_outlined), label: 'الأصناف'),
+          NavigationDestination(icon: Icon(Icons.receipt_long_outlined), label: 'المبيعات'),
           NavigationDestination(icon: Icon(Icons.payments_outlined), label: 'سندات القبض'),
         ],
       ),
@@ -592,17 +593,55 @@ class Products extends StatelessWidget {
         Expanded(child: docs.isEmpty ? const Center(child: Text('لا توجد منتجات بعد')) : ListView.builder(itemCount: docs.length, itemBuilder: (context, i) {
           final d = docs[i], p = d.data();
           return ListTile(title: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            stream: db.collection('stock').doc('${owner ? 'main' : branchId}_${d.id}').snapshots(),
-            builder: (context, stock) => Text('${p['name'] ?? ''}  •  المتوفر: ${(stock.data?.data()?['quantity'] as num?)?.toInt() ?? 0}'),
+            stream: db.collection('stock').doc('main_${d.id}').snapshots(),
+            builder: (context, stock) {
+              final quantity = stock.hasError ? 'تعذر تحميل الكمية' : !stock.hasData
+                  ? 'جارٍ تحميل الكمية' : '${(stock.data?.data()?['quantity'] as num?)?.toInt() ?? 0}';
+              return Text('${p['name'] ?? ''}  •  المتوفر: $quantity');
+            },
           ), subtitle: Text('السعر: ${p['price'] ?? 0} ج.م'), trailing: owner
             ? Wrap(children: [IconButton(tooltip: 'تعديل', icon: const Icon(Icons.edit), onPressed: () => productDialog(context, id: d.id, data: p)), IconButton(tooltip: 'المخزون الرئيسي', icon: const Icon(Icons.warehouse), onPressed: () => mainStockDialog(context, d.id, '${p['name']}')), IconButton(tooltip: 'حذف المنتج', icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: () => archiveProduct(context, d.id, '${p['name'] ?? ''}'))])
-            : FilledButton.icon(icon: const Icon(Icons.receipt_long),
-                label: const Text('فاتورة بيع'),
-                onPressed: () => saleDialog(context, d.id, p, uid, branchId)));
+            : const Icon(Icons.chevron_left, color: gold),
+            onTap: () => productDetails(context, d.id));
         })),
       ]);
     },
   );
+}
+
+Future<void> productDetails(BuildContext context, String productId) async {
+  await showDialog<void>(context: context, builder: (c) => AlertDialog(
+    title: const Text('تفاصيل الصنف'),
+    content: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: db.collection('products').doc(productId).snapshots(),
+      builder: (c, product) {
+        if (product.hasError) return const Text('تعذر تحميل تفاصيل الصنف');
+        if (!product.hasData) return const SizedBox(height: 80, child: Center(child: CircularProgressIndicator()));
+        final data = product.data!.data();
+        if (data == null || data['active'] == false) return const Text('الصنف غير متاح');
+        String price(Object? value) => value is num ? '${value.toStringAsFixed(2)} ج.م' : 'غير مسجل';
+        return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('${data['name'] ?? ''}', style: const TextStyle(color: gold, fontSize: 20)),
+          const SizedBox(height: 12),
+          Text('الفئة: ${data['category'] ?? 'غير مصنف'}'),
+          const SizedBox(height: 8),
+          Text('سعر الشراء: ${price(data['purchasePrice'])}'),
+          const SizedBox(height: 8),
+          Text('سعر البيع: ${price(data['price'])}'),
+          const SizedBox(height: 8),
+          StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: db.collection('stock').doc('main_$productId').snapshots(),
+            builder: (c, stock) {
+              if (stock.hasError) return const Text('تعذر تحميل المخزون الرئيسي', style: TextStyle(color: Colors.redAccent));
+              if (!stock.hasData) return const Text('جارٍ تحميل الكمية…');
+              return Text('المتوفر في المخزون الرئيسي: ${(stock.data!.data()?['quantity'] as num?)?.toInt() ?? 0}');
+            },
+          ),
+        ]);
+      },
+    ),
+    actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إغلاق'))],
+  ));
 }
 
 Future<void> productDialog(BuildContext context, {String? id, Map<String, dynamic>? data}) async {
@@ -771,6 +810,15 @@ Widget _vibInvoiceTableHeader({required String priceLabel}) => Container(
 );
 
 Future<void> groupedSaleDialog(BuildContext context, {required bool owner, required String branchId, String? initialProductId}) async {
+  try {
+    await _groupedSaleDialog(context, owner: owner, branchId: branchId, initialProductId: initialProductId);
+  } catch (_) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تعذر تحميل بيانات الفاتورة. راجع الاتصال وصلاحيات الحساب وحاول مرة أخرى.')));
+  }
+}
+
+Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, required String branchId, String? initialProductId}) async {
   final productsSnap = await db.collection('products').where('active', isEqualTo: true).get();
   final customersSnap = await db.collection('customers').get();
   if (!context.mounted) return;
@@ -797,6 +845,7 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
   final paid = TextEditingController(text: '0');
   final reason = TextEditingController();
   final productSearch = TextEditingController();
+  final saleRef = db.collection('sales').doc();
 
   await showDialog<void>(
     context: context,
@@ -1045,13 +1094,21 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
             }
 
             update(() => saving = true);
-            final saleRef = db.collection('sales').doc();
             try {
-              await db.runTransaction((tx) async {
+              if (!owner) {
+                await FirebaseFunctions.instance.httpsCallable('createStaffSale').call({
+                  'requestId': saleRef.id,
+                  'customerId': customerId,
+                  'credit': credit,
+                  'paid': payment,
+                  'items': entries.map((e) => {'productId': e.id, 'quantity': e.qty, 'unitPrice': e.price}).toList(),
+                });
+              } else {
+                await db.runTransaction((tx) async {
                 final actor = FirebaseAuth.instance.currentUser!.uid;
                 final stockSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
                 for (final e in entries) {
-                  stockSnaps[e.id] = await tx.get(db.collection('stock').doc('${branchId}_${e.id}'));
+                  stockSnaps[e.id] = await tx.get(db.collection('stock').doc('main_${e.id}'));
                 }
 
                 DocumentSnapshot<Map<String, dynamic>>? customerSnap;
@@ -1078,8 +1135,8 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
                     if (e.cost != null) 'purchasePriceAtSale': e.cost,
                   });
 
-                  tx.set(db.collection('stock').doc('${branchId}_${e.id}'), {
-                    'branchId': branchId,
+                  tx.set(db.collection('stock').doc('main_${e.id}'), {
+                    'branchId': 'main',
                     'productId': e.id,
                     'quantity': after,
                     'lastSaleId': saleRef.id,
@@ -1088,7 +1145,7 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
                   tx.set(db.collection('stockMovements').doc(), {
                     'productId': e.id,
                     'productName': e.name,
-                    'branchId': branchId,
+                    'branchId': 'main',
                     'kind': 'sale',
                     'quantity': -e.qty,
                     'balanceAfter': after,
@@ -1154,6 +1211,7 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
 
                 tx.set(saleRef, {
                   'branchId': branchId,
+                  'stockBranchId': 'main',
                   'employeeId': actor,
                   'customerId': customerId,
                   'customerName': customerName,
@@ -1179,17 +1237,26 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
                     'actorId': actor,
                   },
                 });
-              });
+                });
+              }
 
               if (c.mounted) Navigator.pop(c);
               if (context.mounted) {
-                final saved = await saleRef.get();
-                if (saved.data() != null) await exportInvoicePdf(context, 'sales', saleRef.id, saved.data()!);
+                try {
+                  final saved = await saleRef.get();
+                  if (saved.data() != null) await exportInvoicePdf(context, 'sales', saleRef.id, saved.data()!);
+                } catch (_) {
+                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('الفاتورة محفوظة. تعذر فتح الطباعة؛ افتحها من شاشة المبيعات.')));
+                }
               }
             } catch (e) {
               if (c.mounted) {
                 update(() => saving = false);
-                ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر حفظ الفاتورة: $e')));
+                final message = e is FirebaseFunctionsException
+                    ? (e.code == 'not-found' ? 'خدمة حفظ المبيعات لم تُفعّل بعد على الخادم' : e.message ?? 'تعذر حفظ الفاتورة')
+                    : 'تعذر حفظ الفاتورة: $e';
+                ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(message)));
               }
             }
           }, child: const Text('حفظ الفاتورة')),
@@ -3324,7 +3391,7 @@ Future<void> returnInvoice(String type, String id) async {
     }
 
     if (type == 'sales') {
-      final branchId = '${d['branchId']}';
+      final branchId = '${d['stockBranchId'] ?? d['branchId']}';
       final stockSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
       for (final item in items) {
         final productId = '${item['productId']}';

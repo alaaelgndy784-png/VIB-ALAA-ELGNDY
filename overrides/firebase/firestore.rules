@@ -65,6 +65,8 @@ service cloud.firestore {
     }
     match /stock/{id} {
       allow read: if owner() || (employee() && resource.data.branchId == branch());
+      // Staff browse the shared inventory. Financial writes go through createStaffSale.
+      allow get: if employee() && id.matches('main_.*');
       allow delete: if false;
       allow create, update: if owner() && request.resource.data.keys().hasOnly(['branchId', 'productId', 'quantity', 'lastSaleId']) && whole(request.resource.data.quantity) && id == request.resource.data.branchId + '_' + request.resource.data.productId;
       allow update: if employee() && resource.data.branchId == branch()
