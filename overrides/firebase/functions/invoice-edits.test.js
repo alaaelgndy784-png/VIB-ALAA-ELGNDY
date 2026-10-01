@@ -62,9 +62,11 @@ test('Stale revision, returned invoice and shortage reject with no partial chang
 });
 test('Additional quantity merges existing row and legacy missing-payment invoices are rejected', async () => {
   const db = fixture();
+  db.put('sales/existing', {...db.read('sales/existing'), items: [{...db.read('sales/existing').items[0], purchasePriceAtSale: 4}]});
   await save(db, input('sales', {items: [{productId: 'a', quantity: 2, unitPrice: 10.1}], paid: 20.2}));
   assert.equal(db.read('sales/existing').items.length, 1);
   assert.equal(db.read('sales/existing').quantity, 3);
+  assert.equal(db.read('sales/existing').items[0].purchasePriceAtSale, 6);
   assert.equal(db.read('sales/existing').due, 5.1);
   const legacy = fixture(); legacy.put('sales/existing', {status: 'completed', total: 10.1});
   await assert.rejects(save(legacy, input()), {code: 'failed-precondition'});

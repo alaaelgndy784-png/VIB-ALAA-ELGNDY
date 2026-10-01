@@ -77,6 +77,11 @@ async function appendInvoice(db, FieldValue, ErrorType, uid, input) {
         [key]: price / 100, lineTotal: price * row.quantity / 100,
         ...(!purchase && product.purchasePrice != null ? {purchasePriceAtSale: product.purchasePrice} : {})};
       if (existing) {
+        if (!purchase && existing.purchasePriceAtSale != null && addition.purchasePriceAtSale != null) {
+          existing.purchasePriceAtSale =
+            (existing.purchasePriceAtSale * existing.quantity + addition.purchasePriceAtSale * row.quantity) /
+            (existing.quantity + row.quantity);
+        }
         existing.quantity += row.quantity;
         existing.lineTotal = cents(existing.lineTotal) / 100 + addition.lineTotal;
       } else items.push({...addition});
