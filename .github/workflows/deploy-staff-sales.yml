@@ -47,7 +47,7 @@ jobs:
           if [ -n "$FIREBASE_SERVICE_ACCOUNT" ]; then
             printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/vib-firebase.json"
             export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/vib-firebase.json"
-            firebase deploy --only functions:createStaffSale --project vib-sales --non-interactive
+            firebase deploy --only functions:createStaffSale,functions:appendInvoiceItems --project vib-sales --non-interactive
           else
-            firebase deploy --only functions:createStaffSale --project vib-sales --token "$FIREBASE_TOKEN" --non-interactive
+            firebase deploy --only functions:createStaffSale,functions:appendInvoiceItems --project vib-sales --token "$FIREBASE_TOKEN" --non-interactive
           fi

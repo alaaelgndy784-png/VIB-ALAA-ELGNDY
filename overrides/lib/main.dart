@@ -1652,10 +1652,11 @@ class _ProfitReportState extends State<ProfitReport> {
 }
 
 class Purchases extends StatelessWidget {
-  const Purchases({super.key});
+  final bool owner;
+  const Purchases({super.key, this.owner = true});
   @override
   Widget build(BuildContext context) => Column(children: [
-    Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, children: [
+    if (owner) Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, children: [
       FilledButton.icon(onPressed: () => purchaseDialog(context), icon: const Icon(Icons.add), label: const Text('فاتورة مشتريات جديدة')),
       OutlinedButton.icon(onPressed: () => scannedPurchaseDialog(context), icon: const Icon(Icons.camera_alt), label: const Text('تصوير فاتورة مشتريات')),
     ])),
@@ -1678,7 +1679,7 @@ class Purchases extends StatelessWidget {
             subtitle: Text('$itemText${itemCount > 3 ? ' • +${itemCount - 3} أصناف' : ''}\n${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),
             isThreeLine: true,
             trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
-            onTap: () => invoiceActions(context, 'purchases', d.id, p),
+            onTap: () => invoiceActions(context, 'purchases', d.id, p, canReturn: owner),
           ));
         }).toList());
       },
@@ -3164,11 +3165,138 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
     ListTile(leading: const Icon(Icons.picture_as_pdf, color: gold), title: const Text('حفظ أو مشاركة الفاتورة PDF'), onTap: () { Navigator.pop(c); exportInvoicePdf(context, type, id, data); }),
+    if (!returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.playlist_add, color: gold), title: const Text('تعديل الفاتورة / إضافة بنود'), onTap: () { Navigator.pop(c); appendInvoiceDialog(context, type, id); }),
     if (type == 'sales' && profile?['role'] == 'owner' && !returned && (data['items'] is! List || (data['items'] as List).isEmpty)) ListTile(leading: const Icon(Icons.edit_note, color: gold), title: const Text('تصحيح فاتورة البيع'), onTap: () { Navigator.pop(c); correctSaleDialog(context, id, data); }),
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
     if (type == 'sales' && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال للزبون على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
     if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
   ])));
+}
+
+Future<void> appendInvoiceDialog(BuildContext context, String type, String id) async {
+  final List<SaleLine> lines = [];
+  final paid = TextEditingController(text: '0');
+  final search = TextEditingController();
+  try {
+    final invoice = await db.collection(type).doc(id).get();
+    final data = invoice.data();
+    final products = (await db.collection('products').where('active', isEqualTo: true).get()).docs;
+    if (!context.mounted) return;
+    if (data == null || data['status'] != 'completed' || products.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الفاتورة أو الأصناف غير متاحة للتعديل')));
+      return;
+    }
+    final purchase = type == 'purchases';
+    final revision = (data['revision'] as num?)?.toInt() ?? 0;
+    final requestId = db.collection('invoiceEdits').doc().id;
+    final originalItems = (data['items'] as List?) ?? const [];
+    double priceFor(QueryDocumentSnapshot<Map<String, dynamic>> product) {
+      for (final item in originalItems) {
+        if (item is Map && item['productId'] == product.id) {
+          return ((item[purchase ? 'unitCost' : 'unitPrice'] as num?)?.toDouble() ?? 0);
+        }
+      }
+      return (product.data()[purchase ? 'purchasePrice' : 'price'] as num?)?.toDouble() ?? 0;
+    }
+    lines.add(SaleLine(productId: products.first.id, unitPrice: priceFor(products.first)));
+    bool saving = false, cash = true;
+    await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(
+      builder: (c, update) {
+        final addedTotal = lines.fold<double>(0, (sum, line) => sum +
+          (int.tryParse(line.quantity.text) ?? 0) * (double.tryParse(line.price.text.replaceAll(',', '.')) ?? 0));
+        final extraPaid = cash ? addedTotal : (double.tryParse(paid.text.replaceAll(',', '.')) ?? 0);
+        return AlertDialog(
+          title: Text('إضافة بنود لنفس فاتورة ${purchase ? 'المشتريات' : 'المبيعات'}'),
+          content: SizedBox(width: 620, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('رقم الفاتورة: ${data['invoiceNumber'] ?? id}'),
+            Text('الإجمالي السابق: ${data['total'] ?? 0} • المدفوع: ${data['paid'] ?? 0} • الباقي: ${data['due'] ?? 0}'),
+            const SizedBox(height: 10),
+            const Text('البنود السابقة محفوظة؛ أضف البنود أو الكميات الإضافية هنا.'),
+            TextField(controller: search, decoration: const InputDecoration(labelText: 'بحث عن صنف', prefixIcon: Icon(Icons.search)), onChanged: (_) => update(() {})),
+            for (var i = 0; i < lines.length; i++) Row(children: [
+              Text('${i + 1}'),
+              const SizedBox(width: 5),
+              Expanded(flex: 4, child: DropdownButtonFormField<String>(
+                initialValue: lines[i].productId, isExpanded: true,
+                items: products.where((p) => p.id == lines[i].productId || '${p.data()['name']}'.toLowerCase().contains(search.text.trim().toLowerCase()))
+                  .map((p) => DropdownMenuItem(value: p.id, child: Text('${p.data()['name']}', overflow: TextOverflow.ellipsis))).toList(),
+                onChanged: saving ? null : (value) {
+                  if (value == null) return;
+                  update(() {
+                    lines[i].productId = value;
+                    lines[i].price.text = priceFor(products.firstWhere((p) => p.id == value)).toStringAsFixed(2);
+                  });
+                },
+              )),
+              const SizedBox(width: 5),
+              Expanded(flex: 2, child: TextField(controller: lines[i].price, enabled: !saving,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: InputDecoration(labelText: purchase ? 'الشراء' : 'البيع'), onChanged: (_) => update(() {}))),
+              const SizedBox(width: 5),
+              Expanded(child: TextField(controller: lines[i].quantity, enabled: !saving,
+                keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'العدد'), onChanged: (_) => update(() {}))),
+              IconButton(onPressed: saving ? null : () => update(() { lines.removeAt(i).dispose(); }),
+                icon: const Icon(Icons.delete_outline, color: Colors.redAccent)),
+            ]),
+            TextButton.icon(onPressed: saving || lines.length >= 50 ? null : () => update(() =>
+              lines.add(SaleLine(productId: products.first.id, unitPrice: priceFor(products.first)))),
+              icon: const Icon(Icons.add), label: const Text('إضافة بند')),
+            SwitchListTile(title: const Text('دفع قيمة البنود المضافة بالكامل'), value: cash,
+              onChanged: saving ? null : (value) => update(() => cash = value)),
+            if (!cash) TextField(controller: paid, enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'المدفوع عن البنود المضافة'), onChanged: (_) => update(() {})),
+            Text('قيمة الإضافة: ${addedTotal.toStringAsFixed(2)} ج.م'),
+            Text('الإجمالي الجديد: ${(((data['total'] as num?)?.toDouble() ?? 0) + addedTotal).toStringAsFixed(2)} ج.م'),
+            Text('المدفوع الجديد: ${(((data['paid'] as num?)?.toDouble() ?? 0) + extraPaid).toStringAsFixed(2)} ج.م'),
+            Text('الباقي الجديد: ${(((data['due'] as num?)?.toDouble() ?? 0) + addedTotal - extraPaid).toStringAsFixed(2)} ج.م'),
+          ]))),
+          actions: [
+            TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
+            FilledButton(onPressed: saving ? null : () async {
+              final items = <Map<String, dynamic>>[];
+              final used = <String>{};
+              for (final line in lines) {
+                final quantity = int.tryParse(line.quantity.text);
+                final price = double.tryParse(line.price.text.replaceAll(',', '.'));
+                if (line.productId == null || quantity == null || quantity <= 0 || price == null ||
+                    !price.isFinite || price < 0 || !used.add(line.productId!)) {
+                  ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('راجع الأصناف والأسعار والكميات ولا تكرر الصنف')));
+                  return;
+                }
+                items.add({'productId': line.productId, 'quantity': quantity, 'unitPrice': price});
+              }
+              if (items.isEmpty || !extraPaid.isFinite || extraPaid < 0 || extraPaid > addedTotal) {
+                ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('راجع البنود وقيمة المدفوع')));
+                return;
+              }
+              update(() => saving = true);
+              try {
+                await FirebaseFunctions.instance.httpsCallable('appendInvoiceItems').call({
+                  'type': type, 'invoiceId': id, 'revision': revision, 'requestId': requestId,
+                  'items': items, 'paid': extraPaid,
+                });
+                if (c.mounted) Navigator.pop(c);
+                if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('تمت إضافة البنود وتحديث نفس الفاتورة والمخزون والحسابات')));
+              } catch (e) {
+                if (c.mounted) {
+                  update(() => saving = false);
+                  final message = e is FirebaseFunctionsException ? (e.message ?? 'تعذر حفظ التعديل') : 'تعذر حفظ التعديل';
+                  ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(message)));
+                }
+              }
+            }, child: saving ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Text('حفظ على نفس الفاتورة')),
+          ],
+        );
+      },
+    ));
+  } catch (_) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تعذر تحميل الفاتورة للتعديل')));
+  } finally {
+    for (final line in lines) { line.dispose(); }
+    paid.dispose(); search.dispose();
+  }
 }
 
 Future<void> correctSaleDialog(BuildContext context, String id, Map<String, dynamic> data) async {
