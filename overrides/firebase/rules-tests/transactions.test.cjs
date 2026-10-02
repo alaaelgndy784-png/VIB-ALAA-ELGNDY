@@ -1,0 +1,121 @@
+const {test,before,after,beforeEach}=require('node:test');
+const {readFileSync}=require('node:fs');
+const {initializeTestEnvironment,assertSucceeds,assertFails}=require('@firebase/rules-unit-testing');
+const {doc,setDoc,writeBatch,getDoc,serverTimestamp,runTransaction,deleteDoc}=require('firebase/firestore');
+const assert=require('node:assert/strict');
+let env;
+before(async()=>{env=await initializeTestEnvironment({projectId:'demo-vib',firestore:{rules:readFileSync('../firestore.rules','utf8')}})});
+after(async()=>{await env.cleanup()});
+beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRulesDisabled(async ctx=>{
+  const db=ctx.firestore();
+  await setDoc(doc(db,'users/staff'),{role:'employee',active:true,name:'Staff',branchId:'staffbranch'});
+  await setDoc(doc(db,'users/owner'),{role:'owner',active:true,name:'Owner'});
+  await setDoc(doc(db,'users/inactive'),{role:'employee',active:false,branchId:'staffbranch'});
+  await setDoc(doc(db,'customers/customer'),{name:'Customer',phone:'010',balance:100,active:true});
+  await setDoc(doc(db,'suppliers/supplier'),{name:'Supplier',balance:100,active:true});
+  await setDoc(doc(db,'settings/cash'),{balance:500});
+  for(let i=0;i<8;i++){
+    await setDoc(doc(db,'products/p'+i),{name:'Product'+i,active:true,price:12.35,purchasePrice:5});
+    await setDoc(doc(db,'stock/main_p'+i),{branchId:'main',productId:'p'+i,quantity:10});
+  }
+})});
+function saleBatch(db,{n=1,paid,customer=true,mutate=()=>{},omit='',saleId='sale',cashBefore=500,createCash=false}={}){
+  const items=Array.from({length:n},(_,i)=>({productId:'p'+i,productName:'Product'+i,quantity:2,unitPrice:12.35,lineTotal:24.70,purchasePriceAtSale:5}));
+  const total=n*24.70,payment=paid??total,due=total-payment;
+  const s={id:saleId,branchId:'staffbranch',stockBranchId:'main',employeeId:'staff',customerId:customer?'customer':'',
+    customerName:customer?'Customer':'',customerPhone:customer?'010':'',customerPreviousBalance:customer?100:0,
+    customerBalanceAfter:customer?100+due:0,items,itemCount:n,stockIndex:Object.fromEntries(items.map((x,i)=>[x.productId,i])),
+    total,paid:payment,due,cashBefore,cashAfter:cashBefore+payment,paymentStatus:due>0?'credit':'cash',status:'completed',createdAt:serverTimestamp(),requestKey:'test'};
+  if(n===1)Object.assign(s,{productId:'p0',productName:'Product0',quantity:2,unitPrice:12.35});
+  mutate(s);
+  const batch=writeBatch(db);batch.set(doc(db,'sales/'+saleId),s);
+  for(const x of items){
+    if(omit!==x.productId)batch.update(doc(db,'stock/main_'+x.productId),{quantity:10-x.quantity,lastSaleId:saleId});
+    if(omit!=='stockMovement')batch.set(doc(db,'stockMovements/'+saleId+'_'+x.productId),{productId:x.productId,productName:x.productName,
+      branchId:'main',kind:'sale',quantity:-x.quantity,balanceAfter:10-x.quantity,referenceId:saleId,actorId:'staff',createdAt:serverTimestamp()});
+  }
+  if(due>0){
+    if(omit!=='customer')batch.update(doc(db,'customers/customer'),{balance:100+due,lastSaleId:saleId,updatedAt:serverTimestamp()});
+    if(omit!=='customerMovement')batch.set(doc(db,'accountMovements/'+saleId+'_customer'),{accountType:'customers',accountId:'customer',accountName:'Customer',
+      kind:'sale',amount:due,balanceBefore:100,balanceAfter:100+due,referenceId:saleId,actorId:'staff',createdAt:serverTimestamp()});
+  }
+  if(payment>0){
+    if(omit!=='cash')(createCash ? batch.set.bind(batch) : batch.update.bind(batch))(doc(db,'settings/cash'),{balance:cashBefore+payment,lastSaleId:saleId,updatedAt:serverTimestamp()});
+    if(omit!=='cashMovement')batch.set(doc(db,'accountMovements/'+saleId+'_cash'),{accountType:'cash',accountId:customer?'customer':'',accountName:customer?'Customer':'',
+      kind:'sale',amount:payment,delta:payment,balanceBefore:cashBefore,balanceAfter:cashBefore+payment,referenceId:saleId,reason:'Sale',actorId:'staff',createdAt:serverTimestamp()});
+  }
+  return batch.commit();
+}
+test('staff reads main stock and nonexistent own retry invoice',async()=>{
+  const db=env.authenticatedContext('staff').firestore();await assertSucceeds(getDoc(doc(db,'stock/main_p0')));
+  await assertSucceeds(getDoc(doc(db,'sales/new')));
+});
+for(const n of [1,2,3,4])for(const paid of [0,10,undefined])test(`${n} lines paid ${paid}`,async()=>{
+  const db=env.authenticatedContext('staff').firestore();await assertSucceeds(saleBatch(db,{n,paid}));
+  const s=(await getDoc(doc(db,'sales/sale'))).data();assert.equal(s.itemCount,n);
+});
+test('cash sale without customer',async()=>assertSucceeds(saleBatch(env.authenticatedContext('staff').firestore(),{n:4,customer:false})));
+for(const omit of ['p0','stockMovement','cash','customer','cashMovement','customerMovement'])test('missing '+omit+' rejects atomically',async()=>{
+  const db=env.authenticatedContext('staff').firestore();await assertFails(saleBatch(db,{paid:10,omit}));
+  assert.equal((await getDoc(doc(db,'stock/main_p0'))).data().quantity,10);
+});
+for(const [name,mutate] of [
+  ['wrong price',s=>{s.items[0].unitPrice=1;s.items[0].lineTotal=2}],
+  ['wrong branch',s=>{s.branchId='other'}],['wrong actor',s=>{s.employeeId='owner'}],
+  ['wrong total',s=>{s.total=1}],['negative paid',s=>{s.paid=-1}],
+  ['duplicate item',s=>{s.items[1]={...s.items[0]};s.stockIndex={p0:0}}],
+  ['oversell',s=>{s.items[0].quantity=11}],['fake cost',s=>{s.items[0].purchasePriceAtSale=0}],
+])test(name+' denied',async()=>assertFails(saleBatch(env.authenticatedContext('staff').firestore(),{n:2,mutate})));
+test('inactive employee denied',async()=>assertFails(saleBatch(env.authenticatedContext('inactive').firestore())));
+test('staff cannot edit sales or purchases or create invoice edit journal',async()=>{
+  const owner=env.authenticatedContext('owner').firestore(),staff=env.authenticatedContext('staff').firestore();
+  await setDoc(doc(owner,'sales/old'),{status:'completed',branchId:'staffbranch',total:10,paid:10,due:0});
+  await assertFails(setDoc(doc(staff,'sales/old'),{total:100},{merge:true}));
+  await assertFails(setDoc(doc(staff,'purchases/new'),{total:100}));
+  await assertFails(setDoc(doc(staff,'invoiceEdits/new'),{actorId:'staff'}));
+});
+test('owner additions update same invoice with revision and journal',async()=>{
+  const db=env.authenticatedContext('owner').firestore();
+  await setDoc(doc(db,'purchases/old'),{status:'completed',total:10,paid:5,due:5,createdAt:serverTimestamp()});
+  const batch=writeBatch(db);
+  batch.update(doc(db,'purchases/old'),{items:[{productId:'p0',quantity:3,unitCost:5,lineTotal:15}],itemCount:1,total:15,paid:10,due:5,
+    paymentStatus:'credit',revision:1,updatedAt:serverTimestamp(),lastEditedBy:'owner'});
+  batch.set(doc(db,'invoiceEdits/edit'),{invoiceId:'old',actorId:'owner'});
+  await assertSucceeds(batch.commit());
+  await assertFails(setDoc(doc(db,'invoiceEdits/edit'),{actorId:'owner'},{merge:true}));
+});
+test('employee receipt still reduces customer balance and credits cash atomically',async()=>{
+  const db=env.authenticatedContext('staff').firestore(),b=writeBatch(db),ts=serverTimestamp();
+  b.set(doc(db,'receipts/r'),{customerId:'customer',customerName:'Customer',customerPhone:'010',amount:20,balanceBefore:100,balanceAfter:80,
+    cashBefore:500,cashAfter:520,actorId:'staff',actorName:'Staff',branchId:'staffbranch',note:'',createdAt:ts,customerMovementId:'rc',cashMovementId:'rk'});
+  b.update(doc(db,'customers/customer'),{balance:80,lastReceiptId:'r',updatedAt:ts});
+  b.update(doc(db,'settings/cash'),{balance:520,lastReceiptId:'r',updatedAt:ts});
+  for(const cash of [false,true])b.set(doc(db,'accountMovements/'+(cash?'rk':'rc')),{accountType:cash?'cash':'customers',accountId:'customer',accountName:'Customer',kind:cash?'customerCollection':'collection',amount:20,...(cash?{delta:20}:{}),balanceBefore:cash?500:100,balanceAfter:cash?520:80,referenceId:'r',reason:'',actorId:'staff',branchId:'staffbranch',createdAt:ts});
+  await assertSucceeds(b.commit());
+});
+test('replaying saved sale cannot deduct stock twice',async()=>{
+  const db=env.authenticatedContext('staff').firestore();await saleBatch(db,{paid:10});
+  await assertFails(saleBatch(db,{paid:10}));
+  assert.equal((await getDoc(doc(db,'stock/main_p0'))).data().quantity,8);
+});
+test('unregistered signed-in user can read own profile and request pending access',async()=>{
+  const db=env.authenticatedContext('new',{email:'new@example.com'}).firestore();
+  await assertSucceeds(getDoc(doc(db,'users/new')));
+  await assertSucceeds(setDoc(doc(db,'users/new'),{role:'pending',active:false,name:'New',phone:'010',createdAt:serverTimestamp()}));
+  await assertFails(setDoc(doc(db,'users/new'),{role:'owner',active:true},{merge:true}));
+});
+test('maximum mixed invoice after prior receipt and sale markers',async()=>{
+  await env.withSecurityRulesDisabled(async ctx=>{
+    const db=ctx.firestore();await setDoc(doc(db,'settings/cash'),{lastReceiptId:'older',lastSaleId:'older'},{merge:true});
+    await setDoc(doc(db,'customers/customer'),{lastReceiptId:'older',lastSaleId:'older'},{merge:true});
+    for(let i=0;i<4;i++)await setDoc(doc(db,'stock/main_p'+i),{lastSaleId:'older'},{merge:true});
+  });
+  await assertSucceeds(saleBatch(env.authenticatedContext('staff').firestore(),{n:4,paid:10}));
+});
+test('first mixed sale creates cash record atomically',async()=>{
+  await env.withSecurityRulesDisabled(ctx=>deleteDoc(doc(ctx.firestore(),'settings/cash')));
+  await assertSucceeds(saleBatch(env.authenticatedContext('staff').firestore(),{n:4,paid:10,cashBefore:0,createCash:true}));
+});
+test('five staff lines are rejected before partial writes',async()=>assertFails(saleBatch(env.authenticatedContext('staff').firestore(),{n:5})));
+test('orphan stock movement is denied',async()=>assertFails(setDoc(doc(env.authenticatedContext('staff').firestore(),'stockMovements/orphan_p0'),{
+  productId:'p0',productName:'Product0',branchId:'main',kind:'sale',quantity:-2,balanceAfter:8,referenceId:'orphan',actorId:'staff',createdAt:serverTimestamp()})));

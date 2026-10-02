@@ -9,7 +9,23 @@ on:
       - 'overrides/**'
 
 jobs:
+  verify-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: overrides/firebase/rules-tests/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: npm ci && npm test
+        working-directory: overrides/firebase/rules-tests
   build:
+    needs: verify-rules
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -134,3 +150,4 @@ jobs:
           name: VIB-SALES-STAFF-APK
           path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-STAFF.apk
           if-no-files-found: error
+

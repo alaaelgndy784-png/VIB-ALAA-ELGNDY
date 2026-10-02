@@ -5,7 +5,6 @@ import 'package:tesseract_ocr/tesseract_ocr.dart';
 import 'package:tesseract_ocr/ocr_engine_config.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -904,7 +903,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               Expanded(child: TextField(
                 controller: productSearch,
                 decoration: _vibInvoiceInput('بحث عن منتج بالاسم', icon: Icons.search),
-                onSubmitted: saving ? null : (value) {
+                onSubmitted: saving || lines.length >= (owner ? 50 : 4) ? null : (value) {
                   final q = value.trim().toLowerCase();
                   if (q.isEmpty) return;
                   final matches = products.where((p) => '${p.data()['name'] ?? ''}'.toLowerCase().contains(q) && !lines.any((e) => e.productId == p.id)).toList();
@@ -921,7 +920,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               )),
               const SizedBox(width: 6),
               SizedBox(height: 42, child: FilledButton.icon(
-                onPressed: saving || lines.length >= 50 ? null : () {
+                onPressed: saving || lines.length >= (owner ? 50 : 4) ? null : () {
                   final available = products.where((p) => !lines.any((e) => e.productId == p.id)).toList();
                   if (available.isEmpty) return;
                   final d = available.first.data();
@@ -932,6 +931,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               )),
             ]),
           ])),
+          if (!owner) const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Text('يمكن إضافة حتى 4 أصناف مختلفة في فاتورة الموظف، والكمية لكل صنف حسب المخزون.', style: TextStyle(fontSize: 12, color: gold))),
           const SizedBox(height: 7),
           _vibInvoiceTableHeader(priceLabel: 'السعر'),
 
@@ -1053,6 +1053,10 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         actions: [
           TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
+            if (!owner && lines.length > 4) {
+              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('فاتورة الموظف تقبل حتى 4 أصناف مختلفة لضمان حفظ المخزون والحسابات معًا. استخدم فاتورة أخرى لباقي الأصناف.')));
+              return;
+            }
             if (lines.isEmpty) {
               ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('أضف منتجًا واحدًا على الأقل قبل حفظ الفاتورة')));
               return;
@@ -1095,17 +1099,38 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
             update(() => saving = true);
             try {
-              if (!owner) {
-                await FirebaseFunctions.instance.httpsCallable('createStaffSale').call({
-                  'requestId': saleRef.id,
-                  'customerId': customerId,
-                  'credit': credit,
-                  'paid': payment,
-                  'items': entries.map((e) => {'productId': e.id, 'quantity': e.qty, 'unitPrice': e.price}).toList(),
-                });
-              } else {
                 await db.runTransaction((tx) async {
                 final actor = FirebaseAuth.instance.currentUser!.uid;
+                final actorProfile = (await tx.get(db.collection('users').doc(actor))).data();
+                if (actorProfile?['active'] != true || (!owner && actorProfile?['role'] != 'employee')) {
+                  throw Exception('الحساب غير مفعل');
+                }
+                final actualBranch = owner ? branchId : '${actorProfile?['branchId'] ?? ''}';
+                if (actualBranch.isEmpty || (!owner && entries.length > 4)) {
+                  throw Exception('فاتورة الموظف تقبل حتى 4 أصناف مختلفة');
+                }
+                final requestKey = jsonEncode({'customerId': customerId, 'credit': credit, 'paid': payment,
+                  'items': entries.map((e) => {'id': e.id, 'qty': e.qty, 'price': e.price}).toList()});
+                final priorSale = (await tx.get(saleRef)).data();
+                if (priorSale != null) {
+                  if (priorSale['employeeId'] != actor || priorSale['requestKey'] != requestKey) {
+                    throw Exception('الفاتورة محفوظة بالفعل ببيانات مختلفة');
+                  }
+                  return;
+                }
+                final liveProducts = <String, Map<String, dynamic>>{};
+                for (final e in entries) {
+                  final product = (await tx.get(db.collection('products').doc(e.id))).data();
+                  if (product == null || product['active'] != true) throw Exception('الصنف غير متاح');
+                  if (!owner && (product['price'] as num?)?.toDouble() != e.price) {
+                    throw Exception('سعر الصنف اتغير؛ افتح الفاتورة من جديد');
+                  }
+                  final cost = (product['purchasePrice'] as num?)?.toDouble();
+                  if (cost != null && e.price < cost && !(owner && allowBelowCost)) {
+                    throw Exception('سعر البيع أقل من التكلفة');
+                  }
+                  liveProducts[e.id] = product;
+                }
                 final stockSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
                 for (final e in entries) {
                   stockSnaps[e.id] = await tx.get(db.collection('stock').doc('main_${e.id}'));
@@ -1128,11 +1153,11 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
                   items.add({
                     'productId': e.id,
-                    'productName': e.name,
+                    'productName': '${liveProducts[e.id]!['name']}',
                     'quantity': e.qty,
                     'unitPrice': e.price,
                     'lineTotal': lineTotal,
-                    if (e.cost != null) 'purchasePriceAtSale': e.cost,
+                    'purchasePriceAtSale': (liveProducts[e.id]!['purchasePrice'] as num?)?.toDouble() ?? 0,
                   });
 
                   tx.set(db.collection('stock').doc('main_${e.id}'), {
@@ -1142,9 +1167,9 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                     'lastSaleId': saleRef.id,
                   }, SetOptions(merge: true));
 
-                  tx.set(db.collection('stockMovements').doc(), {
+                  tx.set(db.collection('stockMovements').doc('${saleRef.id}_${e.id}'), {
                     'productId': e.id,
-                    'productName': e.name,
+                    'productName': '${liveProducts[e.id]!['name']}',
                     'branchId': 'main',
                     'kind': 'sale',
                     'quantity': -e.qty,
@@ -1161,7 +1186,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 String customerPhone = '';
 
                 if (customerId.isNotEmpty) {
-                  if (customerSnap == null || !customerSnap.exists) throw Exception('العميل غير موجود');
+                  if (customerSnap == null || !customerSnap.exists || customerSnap.data()?['active'] == false) throw Exception('العميل غير موجود أو غير نشط');
                   previousCustomerBalance = (customerSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
                   customerBalanceAfter = previousCustomerBalance + due;
                   customerName = '${customerSnap.data()?['name'] ?? ''}';
@@ -1169,9 +1194,10 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                   if (due > 0) {
                     tx.update(db.collection('customers').doc(customerId), {
                       'balance': customerBalanceAfter,
+                      'lastSaleId': saleRef.id,
                       'updatedAt': FieldValue.serverTimestamp(),
                     });
-                    tx.set(db.collection('accountMovements').doc(), {
+                    tx.set(db.collection('accountMovements').doc('${saleRef.id}_customer'), {
                       'accountType': 'customers',
                       'accountId': customerId,
                       'accountName': customerName,
@@ -1191,9 +1217,10 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                   final afterCash = beforeCash + payment;
                   tx.set(db.collection('settings').doc('cash'), {
                     'balance': afterCash,
+                    'lastSaleId': saleRef.id,
                     'updatedAt': FieldValue.serverTimestamp(),
                   }, SetOptions(merge: true));
-                  tx.set(db.collection('accountMovements').doc(), {
+                  tx.set(db.collection('accountMovements').doc('${saleRef.id}_cash'), {
                     'accountType': 'cash',
                     'kind': 'sale',
                     'accountId': customerId,
@@ -1210,8 +1237,13 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 }
 
                 tx.set(saleRef, {
-                  'branchId': branchId,
+                  'id': saleRef.id,
+                  'branchId': actualBranch,
                   'stockBranchId': 'main',
+                  'requestKey': requestKey,
+                  'stockIndex': {for (var i = 0; i < items.length; i++) items[i]['productId'] as String: i},
+                  'cashBefore': (cashSnap?.data()?['balance'] as num?)?.toDouble() ?? 0,
+                  'cashAfter': ((cashSnap?.data()?['balance'] as num?)?.toDouble() ?? 0) + payment,
                   'employeeId': actor,
                   'customerId': customerId,
                   'customerName': customerName,
@@ -1238,7 +1270,6 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                   },
                 });
                 });
-              }
 
               if (c.mounted) Navigator.pop(c);
               if (context.mounted) {
@@ -1253,9 +1284,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
             } catch (e) {
               if (c.mounted) {
                 update(() => saving = false);
-                final message = e is FirebaseFunctionsException
-                    ? (e.code == 'not-found' ? 'خدمة حفظ المبيعات لم تُفعّل بعد على الخادم' : e.message ?? 'تعذر حفظ الفاتورة')
-                    : 'تعذر حفظ الفاتورة: $e';
+                final message = 'تعذر حفظ الفاتورة: $e';
                 ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(message)));
               }
             }
@@ -3173,6 +3202,139 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
   ])));
 }
 
+Future<void> appendInvoiceLocally(String type, String id, int revision,
+    String requestId, List<Map<String, dynamic>> additions, double extraPaid) async {
+  int cents(num value) => (value * 100).round();
+  final actor = FirebaseAuth.instance.currentUser!.uid;
+  final invoiceRef = db.collection(type).doc(id);
+  final editRef = db.collection('invoiceEdits').doc(requestId);
+  final requestKey = jsonEncode({'type': type, 'id': id, 'revision': revision,
+    'items': additions, 'paid': extraPaid});
+  await db.runTransaction((tx) async {
+    final profile = (await tx.get(db.collection('users').doc(actor))).data();
+    if (profile?['active'] != true || profile?['role'] != 'owner') {
+      throw Exception('تعديل الفاتورة متاح للمدير فقط');
+    }
+    final previousEdit = (await tx.get(editRef)).data();
+    if (previousEdit != null) {
+      if (previousEdit['actorId'] != actor || previousEdit['requestKey'] != requestKey) {
+        throw Exception('طلب التعديل محفوظ ببيانات مختلفة');
+      }
+      return;
+    }
+    final old = (await tx.get(invoiceRef)).data();
+    if (old == null || old['status'] != 'completed') throw Exception('الفاتورة غير متاحة للتعديل');
+    if ((old['revision'] ?? 0) != revision) throw Exception('الفاتورة اتعدلت؛ افتحها من جديد');
+    if (old['total'] is! num || old['paid'] is! num || old['due'] is! num ||
+        cents(old['total'] as num) - cents(old['paid'] as num) != cents(old['due'] as num)) {
+      throw Exception('هذه فاتورة قديمة تحتاج مراجعة أرصدتها قبل إضافة بنود');
+    }
+    final purchase = type == 'purchases';
+    final stockBranch = purchase ? 'main' : '${old['stockBranchId'] ?? old['branchId'] ?? ''}';
+    if (stockBranch.isEmpty) throw Exception('مخزون الفاتورة غير صحيح');
+    final productSnaps = <DocumentSnapshot<Map<String, dynamic>>>[];
+    final stockSnaps = <DocumentSnapshot<Map<String, dynamic>>>[];
+    for (final row in additions) {
+      productSnaps.add(await tx.get(db.collection('products').doc('${row['productId']}')));
+      stockSnaps.add(await tx.get(db.collection('stock').doc('${stockBranch}_${row['productId']}')));
+    }
+    final accountId = '${old[purchase ? 'supplierId' : 'customerId'] ?? ''}';
+    final accountRef = accountId.isEmpty ? null : db.collection(purchase ? 'suppliers' : 'customers').doc(accountId);
+    final account = accountRef == null ? null : (await tx.get(accountRef)).data();
+    final cashRef = db.collection('settings').doc('cash');
+    final cash = (await tx.get(cashRef)).data();
+    final items = (old['items'] is List && (old['items'] as List).isNotEmpty)
+      ? (old['items'] as List).map((x) => Map<String, dynamic>.from(x as Map)).toList()
+      : <Map<String, dynamic>>[{'productId': old['productId'], 'productName': old['productName'],
+          'quantity': old['quantity'], purchase ? 'unitCost' : 'unitPrice': old[purchase ? 'unitCost' : 'unitPrice'],
+          'lineTotal': old['total'], if (old['purchasePriceAtSale'] != null) 'purchasePriceAtSale': old['purchasePriceAtSale']}];
+    var addedTotal = 0;
+    final added = <Map<String, dynamic>>[];
+    for (var i = 0; i < additions.length; i++) {
+      final row = additions[i], product = productSnaps[i].data();
+      final quantity = row['quantity'] as int;
+      final price = cents(row['unitPrice'] as num);
+      if (product == null || product['active'] != true || quantity <= 0 || quantity > 1000000 || price < 0) {
+        throw Exception('راجع الصنف والسعر والكمية');
+      }
+      if (!purchase && product['purchasePrice'] is num && price < cents(product['purchasePrice'] as num)) {
+        throw Exception('سعر البيع أقل من التكلفة');
+      }
+      final available = (stockSnaps[i].data()?['quantity'] as num?)?.toInt() ?? 0;
+      if (!purchase && available < quantity) throw Exception('الكمية غير متاحة للصنف ${product['name']}');
+      final key = purchase ? 'unitCost' : 'unitPrice';
+      final matching = items.where((x) => x['productId'] == row['productId']);
+      final existing = matching.isEmpty ? null : matching.first;
+      if (existing != null && cents(existing[key] as num) != price) throw Exception('الصنف موجود بسعر مختلف');
+      final addition = <String, dynamic>{'productId': row['productId'], 'productName': product['name'],
+        'quantity': quantity, key: price / 100, 'lineTotal': price * quantity / 100,
+        if (!purchase) 'purchasePriceAtSale': (product['purchasePrice'] as num?)?.toDouble() ?? 0};
+      addedTotal += price * quantity;
+      if (existing == null) {
+        items.add(Map<String, dynamic>.from(addition));
+      } else {
+        final oldQty = existing['quantity'] as int;
+        if (!purchase && existing['purchasePriceAtSale'] is num) {
+          existing['purchasePriceAtSale'] = ((existing['purchasePriceAtSale'] as num) * oldQty +
+            (addition['purchasePriceAtSale'] as num) * quantity) / (oldQty + quantity);
+        }
+        existing['quantity'] = oldQty + quantity;
+        existing['lineTotal'] = (cents(existing['lineTotal'] as num) + price * quantity) / 100;
+      }
+      added.add(addition);
+    }
+    final payment = cents(extraPaid), addedDue = addedTotal - payment;
+    if (additions.isEmpty || items.length > 50 || addedTotal > 1000000000000 || payment < 0 || addedDue < 0) {
+      throw Exception('راجع البنود وقيمة المدفوع');
+    }
+    if ((purchase || addedDue > 0) && (account == null || account['active'] == false)) {
+      throw Exception('الفاتورة غير مرتبطة بحساب نشط');
+    }
+    for (var i = 0; i < added.length; i++) {
+      final row = added[i];
+      final after = ((stockSnaps[i].data()?['quantity'] as num?)?.toInt() ?? 0) +
+        (purchase ? row['quantity'] as int : -(row['quantity'] as int));
+      tx.set(stockSnaps[i].reference, {'branchId': stockBranch, 'productId': row['productId'],
+        'quantity': after, if (!purchase) 'lastSaleId': id}, SetOptions(merge: true));
+      tx.set(db.collection('stockMovements').doc('${requestId}_item_$i'), {
+        'productId': row['productId'], 'productName': row['productName'], 'branchId': stockBranch,
+        'kind': purchase ? 'purchase' : 'sale', 'quantity': purchase ? row['quantity'] : -(row['quantity'] as int),
+        'balanceAfter': after, 'referenceId': id, 'editId': requestId, 'actorId': actor,
+        'createdAt': FieldValue.serverTimestamp()});
+      if (purchase) tx.update(productSnaps[i].reference, {'purchasePrice': row['unitCost'], 'updatedAt': FieldValue.serverTimestamp()});
+    }
+    if (addedDue > 0) {
+      final before = cents((account!['balance'] as num?) ?? 0);
+      tx.update(accountRef!, {'balance': (before + addedDue) / 100, 'updatedAt': FieldValue.serverTimestamp()});
+      tx.set(db.collection('accountMovements').doc('${requestId}_account'), {
+        'accountType': purchase ? 'suppliers' : 'customers', 'accountId': accountId, 'accountName': account['name'],
+        'kind': purchase ? 'purchase' : 'sale', 'amount': addedDue / 100, 'balanceBefore': before / 100,
+        'balanceAfter': (before + addedDue) / 100, 'referenceId': id, 'editId': requestId,
+        'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+    }
+    if (payment > 0) {
+      final before = cents((cash?['balance'] as num?) ?? 0), delta = purchase ? -payment : payment;
+      tx.set(cashRef, {'balance': (before + delta) / 100, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+      tx.set(db.collection('accountMovements').doc('${requestId}_cash'), {
+        'accountType': 'cash', 'accountId': accountId, 'accountName': account?['name'] ?? '',
+        'kind': purchase ? 'purchase' : 'sale', 'amount': payment / 100, 'delta': delta / 100,
+        'balanceBefore': before / 100, 'balanceAfter': (before + delta) / 100,
+        'referenceId': id, 'editId': requestId, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+    }
+    final total = cents(old['total'] as num) + addedTotal, paid = cents(old['paid'] as num) + payment;
+    tx.update(invoiceRef, {'items': items, 'itemCount': items.length, 'total': total / 100, 'paid': paid / 100,
+      'due': (total - paid) / 100, 'paymentStatus': total > paid ? 'credit' : 'cash',
+      'revision': revision + 1, 'updatedAt': FieldValue.serverTimestamp(), 'lastEditedBy': actor,
+      if (!purchase) 'customerBalanceAfter': account == null ? 0 :
+        (cents((account['balance'] as num?) ?? 0) + addedDue) / 100,
+      if (items.length == 1) ...{'productId': items.first['productId'], 'productName': items.first['productName'],
+        'quantity': items.first['quantity'], purchase ? 'unitCost' : 'unitPrice': items.first[purchase ? 'unitCost' : 'unitPrice']}});
+    tx.set(editRef, {'invoiceId': id, 'invoiceType': type, 'addedItems': added, 'totalAdded': addedTotal / 100,
+      'paidAdded': payment / 100, 'revision': revision + 1, 'requestKey': requestKey,
+      'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+  });
+}
+
 Future<void> appendInvoiceDialog(BuildContext context, String type, String id) async {
   final List<SaleLine> lines = [];
   final paid = TextEditingController(text: '0');
@@ -3271,17 +3433,14 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id) a
               }
               update(() => saving = true);
               try {
-                await FirebaseFunctions.instance.httpsCallable('appendInvoiceItems').call({
-                  'type': type, 'invoiceId': id, 'revision': revision, 'requestId': requestId,
-                  'items': items, 'paid': extraPaid,
-                });
+                await appendInvoiceLocally(type, id, revision, requestId, items, extraPaid);
                 if (c.mounted) Navigator.pop(c);
                 if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('تمت إضافة البنود وتحديث نفس الفاتورة والمخزون والحسابات')));
               } catch (e) {
                 if (c.mounted) {
                   update(() => saving = false);
-                  final message = e is FirebaseFunctionsException ? (e.message ?? 'تعذر حفظ التعديل') : 'تعذر حفظ التعديل';
+                  final message = 'تعذر حفظ التعديل: $e';
                   ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(message)));
                 }
               }
