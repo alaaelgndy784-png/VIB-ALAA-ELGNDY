@@ -80,6 +80,8 @@ jobs:
       - name: Build manager APK
         working-directory: VIB-SALES-INDEPENDENT
         run: |
+          flutter clean
+          flutter pub get
           flutter build apk --release --split-per-abi
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk
