@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/main.dart';
@@ -6,7 +7,25 @@ import '../lib/main.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final brand = <String, dynamic>{'companyName': 'VIB للتجارة والتوزيع', 'address': 'عنوان الشركة - مثال توضيحي',
-    'phone': '01000000000', 'phone2': '01100000000', 'invoiceFooter': 'شكراً لتعاملكم معنا - نموذج توضيحي للطباعة'};
+    'taxNumber': '123-456-789', 'commercialRegister': '54321', 'phone': '01000000000', 'phone2': '01100000000', 'invoiceFooter': 'شكراً لتعاملكم معنا - نموذج توضيحي للطباعة'};
+  for (final action in [('طباعة الفاتورة — A4 أو 80 مللي', 'print'), ('مشاركة PDF / إرسال على واتساب', 'share'), ('إغلاق', 'close')]) {
+    testWidgets('saved invoice confirmation returns ${action.$2} after closing', (tester) async {
+      String? selected;
+      await tester.pumpWidget(MaterialApp(home: Scaffold(body: Builder(builder: (context) =>
+        TextButton(onPressed: () async {
+          selected = await showDialog<String>(context: context, barrierDismissible: false,
+            builder: (_) => const InvoiceSavedDialog(invoiceId: 'TEST-123'));
+        }, child: const Text('open'))))));
+      await tester.tap(find.text('open'));
+      await tester.pumpAndSettle();
+      expect(find.text('تم حفظ الفاتورة بنجاح'), findsOneWidget);
+      expect(find.text('رقم الفاتورة: TEST-123'), findsOneWidget);
+      await tester.tap(find.text(action.$1));
+      await tester.pumpAndSettle();
+      expect(selected, action.$2);
+      expect(find.byType(InvoiceSavedDialog), findsNothing);
+    });
+  }
   final rows = [
     {'productName': 'حنفية غسالة تركي', 'quantity': 2, 'unitPrice': 175, 'lineTotal': 350},
     {'productName': 'حنفية نصف بوصة الحياة', 'quantity': 3, 'unitPrice': 195, 'lineTotal': 585},

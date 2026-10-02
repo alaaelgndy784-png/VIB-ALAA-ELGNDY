@@ -795,7 +795,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
   var customersSnap = await db.collection('customers').get();
   if (!context.mounted) return;
 
-  final products = productsSnap.docs;
+  final products = productsSnap.docs.toList()
+    ..sort((a, b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
   if (products.isEmpty) {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف منتجًا أولًا')));
     return;
@@ -879,17 +880,17 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               decoration: _vibInvoiceInput('بحث عن منتج بالاسم — اكتب أي حرف', icon: Icons.search),
               onChanged: (_) => update(() {}),
             ),
-            if (productSearch.text.trim().isNotEmpty)
-              SizedBox(height: 180, child: Builder(builder: (context) {
+              SizedBox(height: 220, child: Builder(builder: (context) {
                 final query = productSearch.text.trim().toLowerCase();
                 final matches = products.where((p) => '${p.data()['name'] ?? ''}'.toLowerCase().contains(query)).toList();
                 if (matches.isEmpty) return const Center(child: Text('لا توجد أصناف مطابقة'));
-                return ListView.builder(itemCount: matches.length, itemBuilder: (context, index) {
+                return ListView.separated(separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFF4A3A18)), itemCount: matches.length, itemBuilder: (context, index) {
                   final product = matches[index];
                   final added = lines.any((line) => line.productId == product.id);
                   return ListTile(
-                    dense: true,
-                    title: Text('${product.data()['name'] ?? ''}'),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+                    leading: Text('${index + 1}', style: const TextStyle(color: gold)),
+                    title: Text('${product.data()['name'] ?? ''}', softWrap: true, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                     subtitle: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
                       stream: db.collection('stock').doc('main_${product.id}').snapshots(),
                       builder: (context, stock) => Text('السعر: ${product.data()['price'] ?? 0} ج.م • المتاح: ${stock.hasError ? 'تعذر التحميل' : !stock.hasData ? 'جارٍ التحميل' : stock.data?.data()?['quantity'] ?? 0}'),
@@ -1080,7 +1081,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
             update(() => saving = true);
             try {
-                await db.runTransaction((tx) async {
+                final savedInvoice = await db.runTransaction<Map<String, dynamic>>((tx) async {
                 final actor = FirebaseAuth.instance.currentUser!.uid;
                 final actorProfile = (await tx.get(db.collection('users').doc(actor))).data();
                 if (actorProfile?['active'] != true || (!owner && actorProfile?['role'] != 'employee')) {
@@ -1097,7 +1098,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                   if (priorSale['employeeId'] != actor || priorSale['requestKey'] != requestKey) {
                     throw Exception('الفاتورة محفوظة بالفعل ببيانات مختلفة');
                   }
-                  return;
+                  return priorSale;
                 }
                 final liveProducts = <String, Map<String, dynamic>>{};
                 for (final e in entries) {
@@ -1217,7 +1218,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                   });
                 }
 
-                tx.set(saleRef, {
+                final invoiceData = <String, dynamic>{
                   'id': saleRef.id,
                   'branchId': actualBranch,
                   'stockBranchId': 'main',
@@ -1249,19 +1250,13 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                     'allowBelowCost': allowBelowCost,
                     'actorId': actor,
                   },
-                });
+                };
+                tx.set(saleRef, invoiceData);
+                return {...invoiceData, 'createdAt': Timestamp.now()};
                 });
 
               if (c.mounted) Navigator.pop(c);
-              if (context.mounted) {
-                try {
-                  final saved = await saleRef.get();
-                  if (saved.data() != null) await exportInvoicePdf(context, 'sales', saleRef.id, saved.data()!);
-                } catch (_) {
-                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('الفاتورة محفوظة. تعذر فتح الطباعة؛ افتحها من شاشة المبيعات.')));
-                }
-              }
+              if (context.mounted) await showInvoiceSavedActions(context, 'sales', saleRef.id, savedInvoice);
             } catch (e) {
               if (c.mounted) {
                 update(() => saving = false);
@@ -1973,7 +1968,7 @@ Future<String?> pickPurchaseProduct(
         if (excluded.contains(p.id)) return false;
         final name = '${p.data()['name'] ?? ''}'.toLowerCase();
         return query.trim().isEmpty || name.contains(query.trim().toLowerCase());
-      }).toList();
+      }).toList()..sort((a, b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
       return FractionallySizedBox(
         heightFactor: .78,
         child: Padding(
@@ -1996,8 +1991,8 @@ Future<String?> pickPurchaseProduct(
                         final p = filtered[i];
                         final d = p.data();
                         return ListTile(
-                          leading: const Icon(Icons.inventory_2_outlined, color: gold),
-                          title: Text('${d['name'] ?? ''}'),
+                          leading: Text('${i + 1}', style: const TextStyle(color: gold)),
+                          title: Text('${d['name'] ?? ''}', softWrap: true),
                           subtitle: Text('سعر الشراء: ${d['purchasePrice'] ?? 0} ج.م'),
                           trailing: const Icon(Icons.chevron_left, color: gold),
                           onTap: () => Navigator.pop(sheet, p.id),
@@ -2228,7 +2223,7 @@ Future<void> purchaseDialog(BuildContext context) async {
             final purchaseRef = db.collection('purchases').doc();
             try {
               final supplier = suppliers.docs.firstWhere((d) => d.id == supplierId).data();
-              await db.runTransaction((tx) async {
+              final savedInvoice = await db.runTransaction<Map<String, dynamic>>((tx) async {
                 final supplierRef = db.collection('suppliers').doc(supplierId);
                 final supplierSnap = await tx.get(supplierRef);
                 if (!supplierSnap.exists) throw Exception('المورد غير موجود');
@@ -2291,7 +2286,7 @@ Future<void> purchaseDialog(BuildContext context) async {
                   });
                 }
 
-                tx.set(purchaseRef, {
+                final invoiceData = <String, dynamic>{
                   'invoiceNumber': invoice.text.trim(),
                   'supplierId': supplierId,
                   'supplierName': supplier['name'],
@@ -2309,7 +2304,8 @@ Future<void> purchaseDialog(BuildContext context) async {
                   if (items.length == 1) 'productName': items.first['productName'],
                   if (items.length == 1) 'quantity': items.first['quantity'],
                   if (items.length == 1) 'unitCost': items.first['unitCost'],
-                });
+                };
+                tx.set(purchaseRef, invoiceData);
 
                 tx.set(db.collection('accountMovements').doc(), {
                   'accountType': 'suppliers',
@@ -2324,13 +2320,11 @@ Future<void> purchaseDialog(BuildContext context) async {
                   'createdAt': FieldValue.serverTimestamp(),
                   'actorId': actor,
                 });
+                return {...invoiceData, 'createdAt': Timestamp.now()};
               });
 
               if (c.mounted) Navigator.pop(c);
-              if (context.mounted) {
-                final saved = await purchaseRef.get();
-                if (saved.data() != null) await exportInvoicePdf(context, 'purchases', purchaseRef.id, saved.data()!);
-              }
+              if (context.mounted) await showInvoiceSavedActions(context, 'purchases', purchaseRef.id, savedInvoice);
             } catch (e) {
               if (c.mounted) {
                 setLocal(() => saving = false);
@@ -2854,7 +2848,8 @@ class AppSettings extends StatefulWidget {
 class _AppSettingsState extends State<AppSettings> {
   final company = TextEditingController(text: 'VIB للتجارة والتوزيع');
   final phone = TextEditingController(), phone2 = TextEditingController(), whatsapp = TextEditingController(), address = TextEditingController();
-  final footer = TextEditingController(text: 'شكراً لتعاملكم معنا');
+  final taxNumber = TextEditingController(), commercialRegister = TextEditingController();
+  final footer = TextEditingController(text: 'خالص مع الشكر');
   String logoBase64 = '';
   String paper = 'a4';
   bool loading = true, saving = false;
@@ -2865,6 +2860,7 @@ class _AppSettingsState extends State<AppSettings> {
       company.text = '${d['companyName'] ?? company.text}'; phone.text = '${d['phone'] ?? ''}';
       whatsapp.text = '${d['whatsapp'] ?? ''}'; address.text = '${d['address'] ?? ''}';
       phone2.text = '${d['phone2'] ?? ''}'; footer.text = '${d['invoiceFooter'] ?? 'شكراً لتعاملكم معنا'}';
+      taxNumber.text = '${d['taxNumber'] ?? ''}'; commercialRegister.text = '${d['commercialRegister'] ?? ''}';
       logoBase64 = '${d['logoBase64'] ?? ''}';
       paper = ['a4', '58', '80'].contains(d['paperSize']) ? '${d['paperSize']}' : 'a4';
     }
@@ -2876,6 +2872,7 @@ class _AppSettingsState extends State<AppSettings> {
     try {
       final branding = {'companyName': company.text.trim(), 'phone': phone.text.trim(), 'phone2': phone2.text.trim(),
         'whatsapp': whatsapp.text.trim(), 'address': address.text.trim(), 'paperSize': paper,
+        'taxNumber': taxNumber.text.trim(), 'commercialRegister': commercialRegister.text.trim(),
         'invoiceFooter': footer.text.trim(), 'logoBase64': logoBase64};
       final batch = db.batch();
       batch.set(db.collection('settings').doc('main'), {...branding, 'updatedAt': FieldValue.serverTimestamp(),
@@ -2892,6 +2889,8 @@ class _AppSettingsState extends State<AppSettings> {
     TextField(controller: phone2, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم تليفون إضافي')),
     TextField(controller: whatsapp, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم واتساب')),
     TextField(controller: address, decoration: const InputDecoration(labelText: 'العنوان')),
+    TextField(controller: taxNumber, decoration: const InputDecoration(labelText: 'رقم البطاقة الضريبية')),
+    TextField(controller: commercialRegister, decoration: const InputDecoration(labelText: 'رقم السجل التجاري')),
     TextField(controller: footer, maxLines: 3, maxLength: 300, decoration: const InputDecoration(labelText: 'النص أسفل الفاتورة')),
     const SizedBox(height: 10),
     OutlinedButton.icon(icon: const Icon(Icons.image_outlined), label: const Text('اختيار لوجو الشركة'), onPressed: saving ? null : () async {
@@ -3592,6 +3591,50 @@ Future<void> sendInvoiceWhatsApp(BuildContext context, String id, Map<String, dy
 }
 
 
+
+class InvoiceSavedDialog extends StatelessWidget {
+  final String invoiceId;
+  const InvoiceSavedDialog({super.key, required this.invoiceId});
+  @override
+  Widget build(BuildContext context) => PopScope(
+    canPop: false,
+    child: AlertDialog(
+      title: const Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.check_circle, color: Colors.greenAccent, size: 52),
+        SizedBox(height: 12),
+        Text('تم حفظ الفاتورة بنجاح', textAlign: TextAlign.center),
+      ]),
+      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Text('رقم الفاتورة: $invoiceId', textAlign: TextAlign.center),
+        const SizedBox(height: 16),
+        FilledButton.icon(onPressed: () => Navigator.pop(context, 'print'),
+          icon: const Icon(Icons.print), label: const Text('طباعة الفاتورة — A4 أو 80 مللي')),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(onPressed: () => Navigator.pop(context, 'share'),
+          icon: const Icon(Icons.share), label: const Text('مشاركة PDF / إرسال على واتساب')),
+        const SizedBox(height: 8),
+        const Text('لإرسال الملف اختَر واتساب ثم العميل من قائمة المشاركة.', textAlign: TextAlign.center),
+      ]),
+      actions: [TextButton(onPressed: () => Navigator.pop(context, 'close'), child: const Text('إغلاق'))],
+    ),
+  );
+}
+
+Future<void> showInvoiceSavedActions(BuildContext context, String type, String id, Map<String, dynamic> data) async {
+  // Persistence already succeeded; output errors must never suggest saving again.
+  if (!context.mounted) return;
+  try {
+    final action = await showDialog<String>(context: context, barrierDismissible: false,
+      builder: (_) => Directionality(textDirection: TextDirection.rtl, child: InvoiceSavedDialog(invoiceId: id)));
+    if (!context.mounted) return;
+    if (action == 'print') await selectInvoicePaper(context, type, id, data);
+    if (action == 'share') await exportInvoicePdf(context, type, id, data);
+  } catch (_) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('الفاتورة محفوظة بالفعل. يمكنك طباعتها أو مشاركة PDF من قائمة الفواتير.')));
+  }
+}
+
 Future<void> selectInvoicePaper(BuildContext context, String type, String id, Map<String, dynamic> data) async {
   final selected = await showModalBottomSheet<String>(context: context, builder: (sheet) => SafeArea(child: Wrap(children: [
     const ListTile(title: Text('مقاس ورق الفاتورة')),
@@ -3631,6 +3674,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   }
   final company = configured('companyName', 'VIB للتجارة والتوزيع');
   final address = configured('address', '');
+  final taxNumber = configured('taxNumber', ''), commercialRegister = configured('commercialRegister', '');
   final phones = ['phone', 'phone2', 'whatsapp'].map((key) => configured(key, '')).where((x) => x.isNotEmpty).toSet().toList();
   final footer = configured('invoiceFooter', 'شكراً لتعاملكم معنا');
   final number = '${data['invoiceNumber'] ?? ''}'.trim().isEmpty ? id : '${data['invoiceNumber']}';
@@ -3653,27 +3697,35 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   pw.Widget brand() => pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
     pw.Center(child: pw.Image(logo, width: thermal ? 38 : 62, height: thermal ? 38 : 62)),
     pw.SizedBox(height: 6), text(company, fontSize: thermal ? 12 : 22, bold: true, color: navy, align: pw.TextAlign.center),
-    if (address.isNotEmpty) ...[pw.SizedBox(height: 4), text(address, fontSize: size, align: pw.TextAlign.center)],
+    pw.SizedBox(height: 3), text('ALAA ELGNDY', fontSize: thermal ? 8 : 11, color: accent, align: pw.TextAlign.center),
+    if (address.isNotEmpty) ...[pw.SizedBox(height: 4), text('العنوان: $address', fontSize: size, align: pw.TextAlign.center)],
+    if (!thermal && (taxNumber.isNotEmpty || commercialRegister.isNotEmpty)) ...[
+      pw.SizedBox(height: 6), pw.Row(children: [
+        if (taxNumber.isNotEmpty) pw.Expanded(child: text('رقم البطاقة الضريبية: $taxNumber')),
+        if (commercialRegister.isNotEmpty) pw.Expanded(child: text('رقم السجل التجاري: $commercialRegister')),
+      ]),
+    ],
     if (phones.isNotEmpty) ...[pw.SizedBox(height: 4), pw.Wrap(alignment: pw.WrapAlignment.center, spacing: 10, runSpacing: 3,
       children: phones.map((phone) => pw.Directionality(textDirection: pw.TextDirection.ltr, child: text(phone, fontSize: size, align: pw.TextAlign.center))).toList())],
     pw.SizedBox(height: thermal ? 7 : 12), pw.Divider(color: accent, thickness: thermal ? .7 : 1.5),
   ]);
   pw.Widget detail(String label, String value) => pw.Padding(padding: const pw.EdgeInsets.only(bottom: 4),
     child: text('$label: $value', fontSize: size));
-  pw.Widget summaryRow(String label, dynamic value, {bool strong = false}) => pw.Padding(
-    padding: const pw.EdgeInsets.symmetric(vertical: 5), child: pw.Row(children: [
+  pw.Widget summaryRow(String label, dynamic value, {bool strong = false}) => pw.Container(
+    padding: const pw.EdgeInsets.symmetric(vertical: 6),
+    decoration: pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: accent, width: .4))), child: pw.Row(children: [
       pw.Expanded(child: text(label, bold: strong)),
       text('${money(value)} ج.م', bold: strong, fontSize: strong ? size + 2 : size),
     ]));
   final table = pw.Table(columnWidths: {0: const pw.FlexColumnWidth(1.5), 1: const pw.FlexColumnWidth(1.4),
       2: const pw.FlexColumnWidth(.8), 3: const pw.FlexColumnWidth(4), 4: const pw.FlexColumnWidth(.5)},
-    border: pw.TableBorder(horizontalInside: const pw.BorderSide(color: PdfColors.grey300, width: .5)),
+    border: pw.TableBorder.all(color: accent, width: .6),
     children: [
-      pw.TableRow(repeat: true, decoration: pw.BoxDecoration(color: navy), children: ['الإجمالي', 'السعر', 'العدد', 'الصنف', 'م']
+      pw.TableRow(repeat: true, decoration: pw.BoxDecoration(color: navy), children: ['الإجمالي', 'العدد', 'السعر', 'المنتج', 'م']
         .map((v) => pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 9),
           child: text(v, bold: true, color: PdfColors.white, align: pw.TextAlign.center))).toList()),
       for (var i = 0; i < items.length; i++) pw.TableRow(decoration: pw.BoxDecoration(color: i.isEven ? pale : PdfColors.white),
-        children: [money(lineTotal(items[i])), money(unit(items[i])), '${items[i]['quantity'] ?? 0}', '${items[i]['productName'] ?? ''}', '${i + 1}']
+        children: [money(lineTotal(items[i])), '${items[i]['quantity'] ?? 0}', money(unit(items[i])), '${items[i]['productName'] ?? ''}', '${i + 1}']
           .map((v) => pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 9),
             child: text(v, align: pw.TextAlign.center))).toList()),
     ]);
@@ -3700,18 +3752,26 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
       pw.SizedBox(height: 12),
       pw.Container(padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: pw.BoxDecoration(color: pale,
         border: pw.Border.all(color: PdfColors.grey400, width: .6), borderRadius: pw.BorderRadius.circular(6)),
-        child: pw.Column(children: [summaryRow('الإجمالي', total, strong: true), summaryRow('المدفوع في الفاتورة', paid),
+        child: pw.Column(children: [
+          summaryRow('إجمالي الفاتورة', total, strong: true),
+          if (isSale && data.containsKey('customerPreviousBalance'))
+            summaryRow('الرصيد السابق', data['customerPreviousBalance']),
+          if (isSale && data.containsKey('customerPreviousBalance'))
+            summaryRow('الإجمالي المستحق', (data['customerPreviousBalance'] as num).toDouble() + total),
+          summaryRow('المدفوع نقدًا', paid),
           if (receiptPaid > 0) summaryRow('محصّل بسندات قبض', receiptPaid),
-          summaryRow('المتبقي', due - receiptPaid, strong: true)])),
-      if (isSale && data.containsKey('customerPreviousBalance')) ...[
-        pw.SizedBox(height: 8), detail('رصيد العميل السابق', '${money(data['customerPreviousBalance'])} ج.م'),
-        detail('رصيد العميل بعد الفاتورة', '${money(data['customerBalanceAfter'])} ج.م'),
-      ],
+          summaryRow('باقي هذه الفاتورة', due - receiptPaid, strong: true),
+          if (isSale && data.containsKey('customerBalanceAfter'))
+            summaryRow('رصيد العميل بعد الفاتورة', data['customerBalanceAfter'], strong: true),
+        ])),
       if (data['status'] == 'returned') ...[pw.SizedBox(height: 10), text('فاتورة مرتجعة', bold: true, color: PdfColors.red)],
       pw.SizedBox(height: 14),
     ];
   pw.Widget thanks() => pw.Column(children: [pw.Divider(color: PdfColors.grey400, thickness: .6),
-    text(footer, align: pw.TextAlign.center, fontSize: thermal ? 8 : 10)]);
+    text(footer, align: pw.TextAlign.center, fontSize: thermal ? 8 : 10),
+    if (!thermal) ...[pw.SizedBox(height: 12), pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+      children: [text('المستلم: ....................', fontSize: 9), text('الموظف: ....................', fontSize: 9)])],
+  ]);
   if (thermal) {
     pdf.addPage(pw.Page(pageFormat: format, margin: const pw.EdgeInsets.all(4 * PdfPageFormat.mm),
       theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
@@ -4307,14 +4367,16 @@ Future<String?> selectRegisteredCustomer(BuildContext context) async {
 Future<String?> selectSaleProduct(BuildContext context, List<QueryDocumentSnapshot<Map<String, dynamic>>> products, Set<String> added) async {
   String query = '';
   return showDialog<String>(context: context, builder: (dialog) => StatefulBuilder(builder: (dialog, update) {
-    final rows = products.where((p) => '${p.data()['name'] ?? ''}'.toLowerCase().contains(query)).toList();
+    final rows = products.where((p) => '${p.data()['name'] ?? ''}'.toLowerCase().contains(query)).toList()
+      ..sort((a, b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
     return AlertDialog(title: const Text('اختيار منتج'),
       content: SizedBox(width: 500, height: 360, child: Column(children: [
         TextField(autofocus: true, decoration: const InputDecoration(labelText: 'اكتب أي حرف من اسم المنتج', prefixIcon: Icon(Icons.search)),
           onChanged: (value) => update(() => query = value.trim().toLowerCase())),
-        Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد أصناف مطابقة')) : ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
+        Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد أصناف مطابقة')) : ListView.separated(separatorBuilder: (_, __) => const Divider(height: 1), itemCount: rows.length, itemBuilder: (context, index) {
           final row = rows[index];
-          return ListTile(title: Text('${row.data()['name'] ?? ''}'),
+          return ListTile(leading: Text('${index + 1}', style: const TextStyle(color: gold)),
+            title: Text('${row.data()['name'] ?? ''}', softWrap: true),
             subtitle: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(stream: db.collection('stock').doc('main_${row.id}').snapshots(),
               builder: (context, stock) => Text('السعر: ${row.data()['price'] ?? 0} ج.م • المتاح: ${stock.hasError ? 'تعذر التحميل' : !stock.hasData ? 'جارٍ التحميل' : stock.data?.data()?['quantity'] ?? 0}')),
             trailing: Icon(added.contains(row.id) ? Icons.check : Icons.add, color: gold),
