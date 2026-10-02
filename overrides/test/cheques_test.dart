@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../lib/main.dart';
 
@@ -50,6 +51,7 @@ void main() {
     var permission=true,exact=true;
     setUp(() {
       debugDefaultTargetPlatformOverride=TargetPlatform.android;
+      FlutterLocalNotificationsPlatform.instance=AndroidFlutterLocalNotificationsPlugin();
       pending={99:{'id':99,'title':'other','body':'other','payload':'other-feature'}};calls=[];permission=true;exact=true;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(channel,(call) async {
         calls.add(call);
