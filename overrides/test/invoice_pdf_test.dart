@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'package:flutter/services.dart' show rootBundle;
+import 'package:pdf/widgets.dart' as pw;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -7,6 +9,26 @@ import '../lib/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final thermal in [false, true]) {
+  for (final count in [1, 140]) {
+    test('customer daily payment ${thermal ? '80mm' : 'A4'} PDF renders $count receipts', () async {
+      final day = DateTime(2026, 10, 2);
+      final receipts = List.generate(count, (i) => <String, dynamic>{
+        'id': 'RECEIPT-${i + 1}', 'customerId': 'customer-${i ~/ 2}',
+        'customerName': 'تاجر تجريبي رقم ${i ~/ 2 + 1}', 'amount': 100.25,
+        'actorName': 'موظف التحصيل', 'createdAt': Timestamp.fromDate(DateTime(2026, 10, 2, 12)),
+      });
+      final report = summarizeReceiptDay(receipts, day);
+      expect(report.totalCents, count * 10025);
+      final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+      final bytes = await createCustomerPaymentReportPdf(day, report, font, owner: true, thermal: thermal);
+      expect(String.fromCharCodes(bytes.take(4)), '%PDF');
+      expect(bytes.length, greaterThan(1000));
+      Directory('dist').createSync(recursive: true);
+      File('dist/VIB-CUSTOMER-PAYMENTS-${thermal ? '80MM' : 'A4'}${count == 1 ? '' : '-LONG'}.pdf').writeAsBytesSync(bytes);
+    });
+  }
+  }
   final brand = <String, dynamic>{'companyName': 'VIB للتجارة والتوزيع', 'address': 'عنوان الشركة - مثال توضيحي',
     'taxNumber': '123-456-789', 'commercialRegister': '54321', 'phone': '01000000000', 'phone2': '01100000000', 'invoiceFooter': 'شكراً لتعاملكم معنا - نموذج توضيحي للطباعة'};
   for (final action in [('طباعة الفاتورة — A4 أو 80 مللي', 'print'), ('مشاركة PDF / إرسال على واتساب', 'share'), ('إغلاق', 'close')]) {

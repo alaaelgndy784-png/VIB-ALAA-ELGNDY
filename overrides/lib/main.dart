@@ -2463,6 +2463,10 @@ class ReceiptVouchers extends StatelessWidget {
       Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity,
         child: FilledButton.icon(onPressed: () => createReceiptVoucher(context, branchId),
           icon: const Icon(Icons.add), label: const Text('إنشاء سند قبض')))),
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: SizedBox(width: double.infinity,
+        child: OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
+          Directionality(textDirection: TextDirection.rtl, child: CustomerPaymentReport(owner: owner)))),
+          icon: const Icon(Icons.assessment_outlined), label: const Text('تقرير حركة سداد العملاء')))),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: query.snapshots(),
         builder: (context, snapshot) {
@@ -2486,6 +2490,209 @@ class ReceiptVouchers extends StatelessWidget {
         },
       )),
     ]);
+  }
+}
+
+class ReceiptCustomerTotal {
+  final String id, name;
+  final List<Map<String, dynamic>> receipts;
+  final int amountCents;
+  const ReceiptCustomerTotal(this.id, this.name, this.receipts, this.amountCents);
+}
+
+class ReceiptDayReport {
+  final List<ReceiptCustomerTotal> customers;
+  final int receiptCount, totalCents;
+  const ReceiptDayReport(this.customers, this.receiptCount, this.totalCents);
+}
+
+// Use the same local calendar day as the date picker. Sum money in piastres.
+ReceiptDayReport summarizeReceiptDay(List<Map<String, dynamic>> receipts, DateTime day) {
+  final start = DateTime(day.year, day.month, day.day);
+  final end = DateTime(day.year, day.month, day.day + 1);
+  final groups = <String, List<Map<String, dynamic>>>{};
+  var totalCents = 0, count = 0;
+  for (final receipt in receipts) {
+    final stamp = receipt['createdAt'];
+    if (stamp is! Timestamp) continue;
+    final at = stamp.toDate().toLocal();
+    if (at.isBefore(start) || !at.isBefore(end)) continue;
+    final amount = receipt['amount'];
+    if (amount is! num || !amount.toDouble().isFinite || amount <= 0) {
+      throw StateError('يوجد سند قبض بمبلغ غير صحيح؛ راجع السند قبل اعتماد التقرير');
+    }
+    final cents = (amount * 100).round();
+    final customerId = '${receipt['customerId'] ?? ''}';
+    final key = customerId.isEmpty ? 'receipt:${receipt['id']}' : 'customer:$customerId';
+    groups.putIfAbsent(key, () => []).add(receipt);
+    totalCents += cents;
+    count++;
+  }
+  final customers = groups.entries.map((entry) {
+    final rows = entry.value..sort((a, b) {
+      final order = (a['createdAt'] as Timestamp).compareTo(b['createdAt'] as Timestamp);
+      return order != 0 ? order : '${a['id']}'.compareTo('${b['id']}');
+    });
+    return ReceiptCustomerTotal('${rows.last['customerId'] ?? ''}',
+      '${rows.last['customerName'] ?? 'عميل غير مسمى'}', rows,
+      rows.fold<int>(0, (sum, row) => sum + ((row['amount'] as num) * 100).round()));
+  }).toList()..sort((a, b) {
+    final order = a.name.compareTo(b.name);
+    return order != 0 ? order : a.id.compareTo(b.id);
+  });
+  return ReceiptDayReport(customers, count, totalCents);
+}
+
+String receiptReportMoney(int cents) => '${(cents / 100).toStringAsFixed(2)} ج.م';
+
+class CustomerPaymentReport extends StatefulWidget {
+  final bool owner;
+  const CustomerPaymentReport({super.key, required this.owner});
+  @override
+  State<CustomerPaymentReport> createState() => _CustomerPaymentReportState();
+}
+
+class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
+  DateTime day = DateTime.now();
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> receipts;
+  @override
+  void initState() {
+    super.initState();
+    Query<Map<String, dynamic>> query = db.collection('receipts');
+    if (!widget.owner) query = query.where('actorId', isEqualTo: FirebaseAuth.instance.currentUser!.uid);
+    receipts = query.snapshots();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('حركة سداد العملاء')),
+    body: Column(children: [
+      Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity,
+        child: OutlinedButton.icon(icon: const Icon(Icons.calendar_month),
+          label: Text('يوم السداد: ${DateFormat('yyyy/MM/dd').format(day)}'),
+          onPressed: () async {
+            final picked = await showDatePicker(context: context, initialDate: day,
+              firstDate: DateTime(2000), lastDate: DateTime.now());
+            if (picked != null && mounted) setState(() => day = picked);
+          }))),
+      Text(widget.owner ? 'سندات القبض من جميع الموظفين والمدير' : 'سندات القبض التي سجلتها فقط',
+        textAlign: TextAlign.center),
+      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: receipts,
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return const Center(child: Text('تعذر تحميل تقرير السداد؛ راجع الاتصال وصلاحيات سندات القبض'));
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          final rows = snapshot.data!.docs.where((d) => visibleAfterReset(d.data()))
+            .map((d) => <String, dynamic>{...d.data(), 'id': d.id}).toList();
+          final ReceiptDayReport report;
+          try { report = summarizeReceiptDay(rows, day); }
+          on StateError catch (e) { return Center(child: Text('${e.message}', textAlign: TextAlign.center)); }
+          final pending = snapshot.data!.metadata.hasPendingWrites;
+          final cached = snapshot.data!.metadata.isFromCache;
+          return Column(children: [
+            Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(children: [
+              Text('إجمالي سداد اليوم: ${receiptReportMoney(report.totalCents)}',
+                textAlign: TextAlign.center, style: const TextStyle(color: gold, fontSize: 20, fontWeight: FontWeight.bold)),
+              Text('عدد التجار: ${report.customers.length} • عدد سندات القبض: ${report.receiptCount}'),
+              if (cached || pending) const Text('البيانات لم تُؤكد من الخادم بعد؛ انتظر اكتمال المزامنة', textAlign: TextAlign.center),
+            ]))),
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Row(children: [
+              Expanded(child: OutlinedButton.icon(icon: const Icon(Icons.picture_as_pdf), label: const Text('طباعة A4'),
+                onPressed: report.receiptCount == 0 || cached || pending ? null : () => printCustomerPaymentReport(context, day, report, owner: widget.owner))),
+              const SizedBox(width: 8),
+              Expanded(child: OutlinedButton.icon(icon: const Icon(Icons.receipt_long), label: const Text('طباعة 80 مللي'),
+                onPressed: report.receiptCount == 0 || cached || pending ? null : () => printCustomerPaymentReport(context, day, report, owner: widget.owner, thermal: true))),
+            ])),
+            Expanded(child: report.customers.isEmpty ? const Center(child: Text('لا توجد سدادات مسجلة بسندات قبض في هذا اليوم'))
+              : ListView.builder(itemCount: report.customers.length, itemBuilder: (context, index) {
+                final customer = report.customers[index];
+                return Card(child: ExpansionTile(
+                  leading: Text('${index + 1}', style: const TextStyle(color: gold)),
+                  title: Text(customer.name),
+                  subtitle: Text('إجمالي السداد: ${receiptReportMoney(customer.amountCents)} • ${customer.receipts.length} سند'),
+                  children: customer.receipts.map((row) => ListTile(
+                    title: Text('${DateFormat('HH:mm').format((row['createdAt'] as Timestamp).toDate().toLocal())} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
+                    subtitle: Text('سند: ${row['id']}\nالمحصّل: ${row['actorName'] ?? ''}${'${row['note'] ?? ''}'.isEmpty ? '' : '\n${row['note']}'}'),
+                  )).toList(),
+                ));
+              })),
+          ]);
+        })),
+    ]),
+  );
+}
+
+Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport report, pw.Font font, {required bool owner, bool thermal = false}) async {
+  final pdf = pw.Document();
+  if (thermal) {
+    pw.Widget line(String value, {bool bold = false}) => pw.Text(value, textAlign: pw.TextAlign.right,
+      style: pw.TextStyle(fontSize: bold ? 10 : 8, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal));
+    pdf.addPage(pw.Page(pageFormat: PdfPageFormat.roll80, margin: const pw.EdgeInsets.all(4 * PdfPageFormat.mm),
+      theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
+      build: (_) => pw.Column(mainAxisSize: pw.MainAxisSize.min, crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+        line('VIB للتجارة والتوزيع', bold: true), line('حركة سداد العملاء', bold: true),
+        line('اليوم: ${DateFormat('yyyy/MM/dd').format(day)}'),
+        line(owner ? 'تحصيلات المدير وجميع الموظفين' : 'تحصيلاتي فقط'),
+        line('عدد التجار: ${report.customers.length} • السندات: ${report.receiptCount}'), pw.Divider(),
+        for (var i = 0; i < report.customers.length; i++) ...[
+          line('${i + 1}. ${report.customers[i].name}', bold: true),
+          line('إجمالي السداد: ${receiptReportMoney(report.customers[i].amountCents)}', bold: true),
+          for (final row in report.customers[i].receipts) ...[
+            line('${DateFormat('HH:mm').format((row['createdAt'] as Timestamp).toDate().toLocal())} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
+            line('سند: ${row['id']}'), line('المحصّل: ${row['actorName'] ?? ''}'),
+          ], pw.Divider(),
+        ],
+        line('إجمالي تحصيل اليوم', bold: true), line(receiptReportMoney(report.totalCents), bold: true),
+      ])));
+    return pdf.save();
+  }
+  const navy = PdfColor.fromInt(0xFF14263D), accent = PdfColor.fromInt(0xFFB58A38);
+  pw.Widget cell(String value, {bool header = false}) => pw.Padding(
+    padding: const pw.EdgeInsets.all(6), child: pw.Text(value, textAlign: pw.TextAlign.right,
+      style: pw.TextStyle(fontSize: 10, color: header ? PdfColors.white : PdfColors.black)));
+  final movements = report.customers.expand((c) => c.receipts).toList();
+  pdf.addPage(pw.MultiPage(pageFormat: PdfPageFormat.a4, maxPages: 1000,
+    theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
+    footer: (context) => pw.Text('${context.pageNumber} / ${context.pagesCount}', textAlign: pw.TextAlign.center),
+    build: (_) => [
+      pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 22, color: navy)),
+      pw.SizedBox(height: 12), pw.Text('تقرير حركة سداد العملاء', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 18)),
+      pw.Text('يوم السداد: ${DateFormat('yyyy/MM/dd').format(day)}'),
+      pw.Text(owner ? 'سندات القبض من جميع الموظفين والمدير' : 'سندات القبض التي سجلتها فقط'),
+      pw.Text('عدد التجار: ${report.customers.length} • عدد السندات: ${report.receiptCount}'),
+      pw.SizedBox(height: 12),
+      pw.Table(border: pw.TableBorder.all(color: accent, width: .5), columnWidths: {
+        0: const pw.FlexColumnWidth(2), 1: const pw.FlexColumnWidth(1), 2: const pw.FlexColumnWidth(4), 3: const pw.FlexColumnWidth(.5)},
+        children: [
+          pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
+            children: ['إجمالي السداد', 'عدد السندات', 'اسم التاجر / العميل', 'م'].map((v) => cell(v, header: true)).toList()),
+          for (var i = 0; i < report.customers.length; i++) pw.TableRow(children: [
+            cell(receiptReportMoney(report.customers[i].amountCents)), cell('${report.customers[i].receipts.length}'),
+            cell(report.customers[i].name), cell('${i + 1}')]),
+        ]),
+      pw.SizedBox(height: 10), pw.Text('إجمالي المبالغ المحصّلة لليوم: ${receiptReportMoney(report.totalCents)}',
+        style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
+      pw.SizedBox(height: 16), pw.Text('تفاصيل حركة السداد'), pw.SizedBox(height: 6),
+      pw.Table(border: pw.TableBorder.all(color: accent, width: .5), columnWidths: {
+        0: const pw.FlexColumnWidth(1.5), 1: const pw.FlexColumnWidth(2), 2: const pw.FlexColumnWidth(2.5),
+        3: const pw.FlexColumnWidth(3), 4: const pw.FlexColumnWidth(1)}, children: [
+          pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
+            children: ['المبلغ', 'المحصّل', 'رقم السند', 'العميل', 'الوقت'].map((v) => cell(v, header: true)).toList()),
+          for (final row in movements) pw.TableRow(children: [
+            cell(receiptReportMoney(((row['amount'] as num) * 100).round())), cell('${row['actorName'] ?? ''}'),
+            cell('${row['id']}'), cell('${row['customerName'] ?? ''}'),
+            cell(DateFormat('HH:mm').format((row['createdAt'] as Timestamp).toDate().toLocal()))]),
+        ]),
+    ]));
+  return pdf.save();
+}
+
+Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, ReceiptDayReport report, {required bool owner, bool thermal = false}) async {
+  try {
+    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final bytes = await createCustomerPaymentReportPdf(day, report, font, owner: owner, thermal: thermal);
+    await Printing.layoutPdf(name: 'VIB-CUSTOMER-PAYMENTS-${DateFormat('yyyy-MM-dd').format(day)}-${thermal ? '80MM' : 'A4'}.pdf', onLayout: (_) async => bytes);
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر طباعة تقرير السداد: $e')));
   }
 }
 
