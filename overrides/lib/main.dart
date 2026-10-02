@@ -413,6 +413,16 @@ class _LoginPageState extends State<LoginPage> {
   ))));
 }
 
+const managerNavy = Color(0xFF101E33);
+const managerSurface = Color(0xFF192D45);
+const managerBorder = Color(0xFF30445D);
+ThemeData managerTheme(BuildContext context) => Theme.of(context).copyWith(
+  scaffoldBackgroundColor: managerNavy,
+  colorScheme: Theme.of(context).colorScheme.copyWith(surface: managerSurface, primary: gold),
+  appBarTheme: const AppBarTheme(backgroundColor: managerNavy, foregroundColor: Colors.white, centerTitle: true, elevation: 0),
+  cardTheme: const CardThemeData(color: managerSurface, elevation: 0),
+);
+
 class Home extends StatefulWidget {
   final String uid, role, branchId, name;
   const Home({super.key, required this.uid, required this.role, required this.branchId, required this.name});
@@ -426,7 +436,8 @@ class _HomeState extends State<Home> {
   void openPage(String title, Widget child) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
       textDirection: TextDirection.rtl,
-      child: Scaffold(appBar: AppBar(title: Text(title)), body: child),
+      child: Theme(data: widget.role == 'owner' ? managerTheme(context) : Theme.of(context),
+        child: Scaffold(appBar: AppBar(title: Text(title)), body: child)),
     )));
   }
 
@@ -434,17 +445,21 @@ class _HomeState extends State<Home> {
   Widget build(BuildContext context) {
     final owner = widget.role == 'owner';
     if (owner) {
-      return Scaffold(
+      return Theme(data: managerTheme(context), child: Scaffold(
         appBar: AppBar(
-          title: const Text('VIB', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 28)),
+          backgroundColor: managerNavy,
+          centerTitle: true,
+          toolbarHeight: 78,
+          title: const Text('VIB', style: TextStyle(color: gold, fontWeight: FontWeight.w800, fontSize: 38, letterSpacing: 2)),
+          leading: const ChatShortcut(owner: true),
           actions: [
-            const ChatShortcut(owner: true),
-            IconButton(tooltip: 'الضبط', onPressed: () => openPage('الضبط', const Management()), icon: const Icon(Icons.settings)),
-            IconButton(tooltip: 'خروج', onPressed: () => FirebaseAuth.instance.signOut(), icon: const Icon(Icons.logout)),
+            Padding(padding: const EdgeInsetsDirectional.only(end: 12), child: IconButton.filledTonal(
+              tooltip: 'الضبط', style: IconButton.styleFrom(backgroundColor: managerSurface, foregroundColor: gold),
+              onPressed: () => openPage('الضبط', const Management()), icon: const Icon(Icons.settings_outlined))),
           ],
         ),
         body: OwnerDashboard(uid: widget.uid, branchId: widget.branchId, openPage: openPage),
-      );
+      ));
     }
 
     return Scaffold(
@@ -478,81 +493,52 @@ class OwnerDashboard extends StatelessWidget {
   final void Function(String title, Widget child) openPage;
   const OwnerDashboard({super.key, required this.uid, required this.branchId, required this.openPage});
 
-  Widget tile(String title, IconData icon, VoidCallback onTap, {Color iconColor = gold}) => InkWell(
-    borderRadius: BorderRadius.circular(18),
-    onTap: onTap,
-    child: Container(
-      height: 128,
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF1B1811), Color(0xFF050505)],
-        ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFC89B3C), width: 1.35),
-        boxShadow: const [
-          BoxShadow(color: Color(0x554C3510), blurRadius: 10, spreadRadius: .5),
-          BoxShadow(color: Color(0x22000000), blurRadius: 3, offset: Offset(0, 2)),
-        ],
-      ),
-      child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-        Container(
-          width: 58,
-          height: 58,
-          decoration: BoxDecoration(
-            color: const Color(0xFF0B0B0B),
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: const Color(0xFF8C6F2A), width: 1),
-          ),
-          child: Icon(icon, color: iconColor, size: 36),
-        ),
-        const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 5),
-          child: Text(title, textAlign: TextAlign.center, maxLines: 2, style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 16)),
-        ),
-      ]),
-    ),
+  Widget tile(String title, IconData icon, VoidCallback onTap, double height) => Material(
+    color: managerSurface,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: const BorderSide(color: managerBorder)),
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(onTap: onTap, child: SizedBox(height: height, child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Container(width: 66, height: 66, decoration: const BoxDecoration(color: Color(0xFF263B53), shape: BoxShape.circle),
+          child: Icon(icon, color: gold, size: 34)),
+        const SizedBox(height: 12),
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Text(title, textAlign: TextAlign.center,
+          maxLines: 2, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18))),
+      ],
+    ))),
   );
 
   @override
-  Widget build(BuildContext context) {
-    const gap = 14.0;
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(gap, 12, gap, 24),
-      children: [
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: const BoxDecoration(border: Border(bottom: BorderSide(color: gold, width: 1.3))),
-          child: const Row(children: [
-            Spacer(),
-            Icon(Icons.bar_chart, color: gold, size: 34),
-            SizedBox(width: 7),
-            Text('VIB', style: TextStyle(color: gold, fontSize: 34, fontWeight: FontWeight.bold)),
-          ]),
-        ),
-        const SizedBox(height: 16),
-        Row(children: [
-          Expanded(child: tile('المنتجات', Icons.inventory_2_rounded, () => openPage('المنتجات', Products(owner: true, uid: uid, branchId: branchId)))),
-          const SizedBox(width: gap),
-          Expanded(child: tile('المبيعات', Icons.trending_up_rounded, () => openPage('المبيعات', const Sales(owner: true, branchId: 'main')))),
-        ]),
-        const SizedBox(height: gap),
-        Row(children: [
-          Expanded(child: tile('المشتريات', Icons.shopping_cart_rounded, () => openPage('المشتريات', const Purchases()))),
-          const SizedBox(width: gap),
-          Expanded(child: tile('العملاء', Icons.groups_2_rounded, () => openPage('العملاء', const Accounts()))),
-        ]),
-        const SizedBox(height: gap),
-        Row(children: [
-          Expanded(child: tile('الموردين', Icons.local_shipping_rounded, () => openPage('الموردين', const Accounts(startWithSuppliers: true)))),
-          const SizedBox(width: gap),
-          Expanded(child: tile('سندات القبض', Icons.payments_outlined, () => openPage('سندات القبض', ReceiptVouchers(owner: true, branchId: branchId)))),
-        ]),
-      ],
-    );
-  }
+  Widget build(BuildContext context) => LayoutBuilder(builder: (context, constraints) {
+    final height = ((constraints.maxHeight - 100) / 3).clamp(132.0, 176.0).toDouble();
+    const gap = 12.0;
+    return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 20), children: [
+      Row(children: [
+        Expanded(child: tile('المنتجات', Icons.inventory_2_outlined, () => openPage('المنتجات', Products(owner: true, uid: uid, branchId: branchId)), height)),
+        const SizedBox(width: gap),
+        Expanded(child: tile('المبيعات', Icons.shopping_cart_outlined, () => openPage('المبيعات', const Sales(owner: true, branchId: 'main')), height)),
+      ]),
+      const SizedBox(height: gap),
+      Row(children: [
+        Expanded(child: tile('العملاء', Icons.groups_outlined, () => openPage('العملاء', const Accounts()), height)),
+        const SizedBox(width: gap),
+        Expanded(child: tile('المشتريات', Icons.post_add_outlined, () => openPage('المشتريات', const Purchases()), height)),
+      ]),
+      const SizedBox(height: gap),
+      Row(children: [
+        Expanded(child: tile('سندات القبض', Icons.payments_outlined, () => openPage('سندات القبض', ReceiptVouchers(owner: true, branchId: branchId)), height)),
+        const SizedBox(width: gap),
+        Expanded(child: tile('الموردين', Icons.local_shipping_outlined, () => openPage('الموردين', const Accounts(startWithSuppliers: true)), height)),
+      ]),
+      const SizedBox(height: 18),
+      const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+        Icon(Icons.info_outline, color: gold, size: 20), SizedBox(width: 8),
+        Flexible(child: Text('الموظفون وباقي الإدارة داخل الضبط', textAlign: TextAlign.center,
+          style: TextStyle(color: Color(0xFFA7B8CE), fontSize: 13))),
+      ]),
+    ]);
+  });
 }
 class Products extends StatefulWidget {
   final bool owner;
@@ -1410,19 +1396,37 @@ class Staff extends StatelessWidget {
 
 class Management extends StatelessWidget {
   const Management({super.key});
+  Widget option(BuildContext context, String title, IconData icon, Widget page, {bool highlight = false}) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Material(color: managerSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: highlight ? gold : managerBorder, width: highlight ? 1.5 : 1)),
+      clipBehavior: Clip.antiAlias,
+      child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
+        leading: Icon(icon, color: gold, size: 28),
+        title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 17)),
+        trailing: const Icon(Icons.chevron_left, color: Color(0xFFA7B8CE)),
+        onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(textDirection: TextDirection.rtl,
+          child: Theme(data: managerTheme(context), child: Scaffold(appBar: AppBar(title: Text(title)), body: page))))),
+      )),
+  );
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
-    const Padding(padding: EdgeInsets.only(bottom: 12), child: Text('الضبط والإدارة', style: TextStyle(color: gold, fontSize: 20, fontWeight: FontWeight.bold))),
-    Card(child: ListTile(title: const Text('جرد المخزون حسب الفئة'), subtitle: const Text('المتاح وسعر الشراء وسعر البيع لكل صنف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('جرد المخزون')), body: const InventoryAudit()))))),
-    Card(child: ListTile(title: const Text('تقرير الأرباح'), subtitle: const Text('يومي وأسبوعي وشهري حسب تكلفة شراء الأصناف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير الأرباح')), body: const ProfitReport()))))),
-    Card(child: ListTile(title: const Text('الصندوق'), subtitle: const Text('إضافة وخصم ومراجعة الحركات'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الصندوق')), body: const CashBox()))))),
-    Card(child: ListTile(title: const Text('المصروفات'), subtitle: const Text('مصروفات المحل والرواتب وخصمها من الصندوق'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('المصروفات')), body: const Expenses()))))),
-    Card(child: ListTile(title: const Text('الفروع والمخزون'), subtitle: const Text('إضافة الفروع ونقل البضاعة إليها'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الفروع')), body: const Branches()))))),
-    Card(child: ListTile(title: const Text('الموظفون والصلاحيات'), subtitle: const Text('تفعيل الموظف وتحديد فرعه'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الموظفون')), body: const Staff()))))),
-    Card(child: ListTile(title: const Text('سجل حركات الحسابات'), subtitle: const Text('التحصيلات والمدفوعات محفوظة بالتاريخ'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('حركات الحسابات')), body: const AccountMovements()))))),
-    Card(child: ListTile(title: const Text('تقرير حركة صنف'), subtitle: const Text('مبيعات ومشتريات ومرتجعات ورصيد كل حركة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير حركة صنف')), body: const ItemMovementReport()))))),
-    Card(child: ListTile(title: const Text('الإعدادات والطباعة'), subtitle: const Text('بيانات الشركة وتجهيز الفواتير للطباعة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الإعدادات')), body: const AppSettings()))))),
-    Card(child: ListTile(title: const Text('تصفير البرنامج', style: TextStyle(color: Colors.redAccent)), subtitle: const Text('بدء دورة جديدة — يتطلب تأكيدًا قبل التنفيذ'), onTap: () => resetProgram(context))),
+    option(context, 'الموظفون والصلاحيات', Icons.groups_outlined, const Staff(), highlight: true),
+    option(context, 'الفروع والمخزون', Icons.storefront_outlined, const Branches()),
+    option(context, 'جرد المخزون', Icons.inventory_2_outlined, const InventoryAudit()),
+    option(context, 'الصندوق', Icons.account_balance_wallet_outlined, const CashBox()),
+    option(context, 'المصروفات', Icons.receipt_long_outlined, const Expenses()),
+    option(context, 'تقرير الأرباح', Icons.bar_chart_outlined, const ProfitReport()),
+    option(context, 'حركة المنتجات', Icons.swap_vert, const ItemMovementReport()),
+    option(context, 'سجل حركات الحسابات', Icons.history, const AccountMovements()),
+    option(context, 'الإعدادات والطباعة', Icons.settings_outlined, const AppSettings()),
+    Padding(padding: const EdgeInsets.only(bottom: 10), child: Material(color: const Color(0xFF30283B),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Color(0xFF594051))),
+      child: ListTile(leading: const Icon(Icons.restart_alt, color: Colors.redAccent),
+        title: const Text('تصفير البرنامج', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.w600)),
+        trailing: const Icon(Icons.chevron_left, color: Colors.redAccent), onTap: () => resetProgram(context)))),
+    ListTile(leading: const Icon(Icons.logout, color: Color(0xFFA7B8CE)), title: const Text('تسجيل الخروج'),
+      onTap: () => FirebaseAuth.instance.signOut()),
   ]);
 }
 
