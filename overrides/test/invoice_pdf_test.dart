@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:flutter/material.dart';
@@ -9,6 +11,60 @@ import '../lib/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final width in [360.0, 564.0]) {
+    testWidgets('purchase form keeps names, add button, settlement and save usable at width $width', (tester) async {
+      tester.view.physicalSize = Size(width, 760);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
+      final costs = List.generate(22, (_) => TextEditingController(text: '145.00'));
+      final quantities = List.generate(22, (_) => TextEditingController(text: '24'));
+      final paid = TextEditingController(text: '0');
+      final boundaryKey = GlobalKey();
+      var count = 21, credit = true, saves = 0;
+      await tester.pumpWidget(RepaintBoundary(key: boundaryKey, child: MaterialApp(theme: ThemeData.dark(), home: Scaffold(
+        body: MediaQuery(data: MediaQueryData(size: Size(width, 760), textScaler: const TextScaler.linear(1.3)),
+          child: Directionality(textDirection: TextDirection.rtl, child: StatefulBuilder(builder: (context, update) => PurchaseInvoiceFrame(
+            itemCount: count, onAdd: () => update(() => count++),
+            body: ListView(children: [for (var i = 0; i < count; i++) PurchaseInvoiceLine(
+              number: i + 1, name: 'حنفية غسالة تركي نحاس اسم الصنف كامل رقم ${i + 1}',
+              cost: costs[i], quantity: quantities[i], enabled: true, onChanged: () => update(() {}),
+              onChoose: () {}, onDelete: () {},
+            )]),
+            settlement: PurchaseSettlementPanel(total: 94386, previousBalance: 30000, credit: credit,
+              paid: paid, enabled: true, onModeChanged: (v) => update(() => credit = v), onChanged: () => update(() {})),
+            actions: [TextButton(onPressed: () {}, child: const Text('إلغاء')),
+              FilledButton(onPressed: () => saves++, child: const Text('حفظ الفاتورة'))],
+          )))),
+      ))));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('حنفية غسالة تركي نحاس اسم الصنف كامل رقم 1'), findsOneWidget);
+      expect(find.text('إضافة بند جديد'), findsOneWidget);
+      expect(find.text('آجل'), findsOneWidget);
+      await tester.tap(find.text('إضافة بند جديد'));
+      await tester.pumpAndSettle();
+      expect(count, 22);
+      expect(costs.first.text, '145.00');
+      await tester.tap(find.text('نقدي'));
+      await tester.pumpAndSettle();
+      expect(credit, isFalse);
+      await tester.tap(find.text('آجل'));
+      await tester.pumpAndSettle();
+      expect(credit, isTrue);
+      await tester.tap(find.text('حفظ الفاتورة'));
+      expect(saves, 1);
+      expect(tester.takeException(), isNull);
+      Directory('dist').createSync(recursive: true);
+      final boundary = boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+      final image = await boundary.toImage(pixelRatio: 2);
+      final data = await image.toByteData(format: ui.ImageByteFormat.png);
+      File('dist/VIB-PURCHASE-FORM-${width.toInt()}.png').writeAsBytesSync(data!.buffer.asUint8List());
+      image.dispose();
+      // The keyboard reduces available height; controls remain in the dialog.
+      await tester.pumpWidget(const SizedBox());
+      for (final controller in [...costs, ...quantities, paid]) { controller.dispose(); }
+    });
+  }
   for (final thermal in [false, true]) {
   for (final count in [1, 140]) {
     test('customer daily payment ${thermal ? '80mm' : 'A4'} PDF renders $count receipts', () async {

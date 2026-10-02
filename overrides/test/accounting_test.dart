@@ -3,6 +3,14 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../lib/main.dart';
 
 void main() {
+  test('purchase cash payment follows invoice total while credit preserves the entered instalment', () {
+    expect(purchaseInvoicePayment(94386, false, '0'), 94386);
+    expect(purchaseInvoicePayment(94386, false, '1000'), 94386);
+    expect(purchaseInvoicePayment(94386, true, '0'), 0);
+    expect(purchaseInvoicePayment(94386, true, '1000,50'), 1000.50);
+    expect(94386 - purchaseInvoicePayment(94386, true, '1000.50'), 93385.50);
+    expect(purchaseInvoicePayment(94386, true, 'invalid'), -1);
+  });
   Map<String, dynamic> receipt(String id, String customerId, String name, num amount, DateTime at) => {
     'id': id, 'customerId': customerId, 'customerName': name, 'amount': amount, 'createdAt': Timestamp.fromDate(at),
   };
