@@ -454,14 +454,17 @@ class _HomeState extends State<Home> {
           ? Products(owner: false, uid: widget.uid, branchId: widget.branchId)
           : page == 1
               ? Sales(owner: false, branchId: widget.branchId)
-              : ReceiptVouchers(owner: false, branchId: widget.branchId),
+              : page == 2
+                  ? const StaffCustomers()
+                  : ReceiptVouchers(owner: false, branchId: widget.branchId),
       bottomNavigationBar: NavigationBar(
         selectedIndex: page,
         onDestinationSelected: (i) => setState(() => page = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.inventory_2_outlined), label: 'الأصناف'),
+          NavigationDestination(icon: Icon(Icons.inventory_2_outlined), label: 'المنتجات'),
           NavigationDestination(icon: Icon(Icons.receipt_long_outlined), label: 'المبيعات'),
-          NavigationDestination(icon: Icon(Icons.payments_outlined), label: 'سندات القبض'),
+          NavigationDestination(icon: Icon(Icons.people_outline), label: 'العملاء'),
+          NavigationDestination(icon: Icon(Icons.payments_outlined), label: 'سند قبض'),
         ],
       ),
     );
@@ -576,19 +579,28 @@ class OwnerDashboard extends StatelessWidget {
     );
   }
 }
-class Products extends StatelessWidget {
+class Products extends StatefulWidget {
   final bool owner;
   final String uid, branchId;
   const Products({super.key, required this.owner, required this.uid, required this.branchId});
+  @override
+  State<Products> createState() => _ProductsState();
+}
+class _ProductsState extends State<Products> {
+  String query = '';
+  bool get owner => widget.owner;
+  String get branchId => widget.branchId;
   @override
   Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
     stream: db.collection('products').snapshots(),
     builder: (context, snap) {
       if (snap.hasError) return const Center(child: Text('تعذر تحميل المنتجات'));
       if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-      final docs = snap.data!.docs.where((d) => d.data()['active'] == true).toList();
+      final docs = snap.data!.docs.where((d) => d.data()['active'] == true && '${d.data()['name'] ?? ''}'.toLowerCase().contains(query)).toList();
       return Column(children: [
+        Padding(padding: const EdgeInsets.all(12), child: TextField(decoration: const InputDecoration(labelText: 'بحث عن منتج — اكتب أي حرف', prefixIcon: Icon(Icons.search)), onChanged: (value) => setState(() => query = value.trim().toLowerCase()))),
         if (owner) Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(onPressed: () => productDialog(context), icon: const Icon(Icons.add), label: const Text('إضافة منتج'))),
+        if (!owner) Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () => newSaleDialog(context, false, branchId), icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة')))),
         Expanded(child: docs.isEmpty ? const Center(child: Text('لا توجد منتجات بعد')) : ListView.builder(itemCount: docs.length, itemBuilder: (context, i) {
           final d = docs[i], p = d.data();
           return ListTile(title: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
@@ -819,7 +831,7 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
 
 Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, required String branchId, String? initialProductId}) async {
   final productsSnap = await db.collection('products').where('active', isEqualTo: true).get();
-  final customersSnap = await db.collection('customers').get();
+  var customersSnap = await db.collection('customers').get();
   if (!context.mounted) return;
 
   final products = productsSnap.docs;
@@ -829,12 +841,11 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
   }
 
   QueryDocumentSnapshot<Map<String, dynamic>> productDoc(String id) => products.firstWhere((p) => p.id == id);
-  final firstId = initialProductId != null && products.any((p) => p.id == initialProductId) ? initialProductId : products.first.id;
-  final firstData = productDoc(firstId!).data();
-
-  final lines = <SaleLine>[
-    SaleLine(productId: firstId, unitPrice: (firstData['price'] as num?)?.toDouble() ?? 0),
-  ];
+  final lines = <SaleLine>[];
+  if (initialProductId != null && products.any((p) => p.id == initialProductId)) {
+    final data = productDoc(initialProductId).data();
+    lines.add(SaleLine(productId: initialProductId, unitPrice: (data['price'] as num?)?.toDouble() ?? 0));
+  }
 
   String customerId = '';
   bool credit = false;
@@ -877,15 +888,16 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         content: SizedBox(width: 650, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
           _vibInvoicePanel(child: Column(children: [
             Row(children: [
-              Expanded(child: DropdownButtonFormField<String>(
-                initialValue: customerId,
-                isExpanded: true,
-                decoration: _vibInvoiceInput('اختيار عميل', icon: Icons.person),
-                items: [
-                  const DropdownMenuItem(value: '', child: Text('بيع نقدي بدون عميل')),
-                  ...customersSnap.docs.where((d) => d.data()['active'] != false).map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']} • ${d.data()['balance'] ?? 0} ج.م', overflow: TextOverflow.ellipsis))),
-                ],
-                onChanged: saving ? null : (v) => update(() => customerId = v ?? ''),
+              Expanded(child: OutlinedButton.icon(
+                icon: const Icon(Icons.person_search),
+                label: Text(customerId.isEmpty ? 'اختيار عميل مسجل' : '${selectedCustomer?.data()['name'] ?? ''}', maxLines: 2),
+                onPressed: saving ? null : () async {
+                  final id = await selectRegisteredCustomer(c);
+                  if (id != null) {
+                    final refreshed = await db.collection('customers').get();
+                    if (c.mounted) update(() { customersSnap = refreshed; customerId = id; });
+                  }
+                },
               )),
               const SizedBox(width: 8),
               Container(
@@ -899,37 +911,44 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               ),
             ]),
             const SizedBox(height: 6),
-            Row(children: [
-              Expanded(child: TextField(
-                controller: productSearch,
-                decoration: _vibInvoiceInput('بحث عن منتج بالاسم', icon: Icons.search),
-                onSubmitted: saving || lines.length >= (owner ? 50 : 4) ? null : (value) {
-                  final q = value.trim().toLowerCase();
-                  if (q.isEmpty) return;
-                  final matches = products.where((p) => '${p.data()['name'] ?? ''}'.toLowerCase().contains(q) && !lines.any((e) => e.productId == p.id)).toList();
-                  if (matches.isEmpty) {
-                    ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('المنتج غير موجود أو مضاف بالفعل')));
-                    return;
-                  }
-                  final p = matches.first;
-                  update(() {
-                    lines.add(SaleLine(productId: p.id, unitPrice: (p.data()['price'] as num?)?.toDouble() ?? 0));
-                    productSearch.clear();
-                  });
-                },
-              )),
-              const SizedBox(width: 6),
-              SizedBox(height: 42, child: FilledButton.icon(
-                onPressed: saving || lines.length >= (owner ? 50 : 4) ? null : () {
-                  final available = products.where((p) => !lines.any((e) => e.productId == p.id)).toList();
-                  if (available.isEmpty) return;
-                  final d = available.first.data();
-                  update(() => lines.add(SaleLine(productId: available.first.id, unitPrice: (d['price'] as num?)?.toDouble() ?? 0)));
-                },
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('إضافة منتج'),
-              )),
-            ]),
+            TextField(
+              controller: productSearch,
+              enabled: !saving,
+              decoration: _vibInvoiceInput('بحث عن منتج بالاسم — اكتب أي حرف', icon: Icons.search),
+              onChanged: (_) => update(() {}),
+            ),
+            if (productSearch.text.trim().isNotEmpty)
+              SizedBox(height: 180, child: Builder(builder: (context) {
+                final query = productSearch.text.trim().toLowerCase();
+                final matches = products.where((p) => '${p.data()['name'] ?? ''}'.toLowerCase().contains(query)).toList();
+                if (matches.isEmpty) return const Center(child: Text('لا توجد أصناف مطابقة'));
+                return ListView.builder(itemCount: matches.length, itemBuilder: (context, index) {
+                  final product = matches[index];
+                  final added = lines.any((line) => line.productId == product.id);
+                  return ListTile(
+                    dense: true,
+                    title: Text('${product.data()['name'] ?? ''}'),
+                    subtitle: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                      stream: db.collection('stock').doc('main_${product.id}').snapshots(),
+                      builder: (context, stock) => Text('السعر: ${product.data()['price'] ?? 0} ج.م • المتاح: ${stock.hasError ? 'تعذر التحميل' : !stock.hasData ? 'جارٍ التحميل' : stock.data?.data()?['quantity'] ?? 0}'),
+                    ),
+                    trailing: Icon(added ? Icons.check : Icons.add, color: gold),
+                    onTap: saving || added || lines.length >= (owner ? 50 : 4) ? null : () => update(() {
+                      lines.add(SaleLine(productId: product.id, unitPrice: (product.data()['price'] as num?)?.toDouble() ?? 0));
+                      productSearch.clear();
+                    }),
+                  );
+                });
+              })),
+            TextButton.icon(
+              onPressed: saving || lines.length >= (owner ? 50 : 4) ? null : () async {
+                final id = await selectSaleProduct(c, products, lines.map((line) => line.productId).whereType<String>().toSet());
+                if (id == null || !c.mounted) return;
+                final product = productDoc(id).data();
+                update(() => lines.add(SaleLine(productId: id, unitPrice: (product['price'] as num?)?.toDouble() ?? 0)));
+              },
+              icon: const Icon(Icons.add), label: const Text('اختيار وإضافة منتج'),
+            ),
           ])),
           if (!owner) const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Text('يمكن إضافة حتى 4 أصناف مختلفة في فاتورة الموظف، والكمية لكل صنف حسب المخزون.', style: TextStyle(fontSize: 12, color: gold))),
           const SizedBox(height: 7),
@@ -1088,8 +1107,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               return;
             }
             final due = total - payment;
-            if (due > 0 && customerId.isEmpty) {
-              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اختر العميل لأن الفاتورة عليها باقي آجل')));
+            if ((!owner || due > 0) && customerId.isEmpty) {
+              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اختر عميلًا مسجلًا لربط الفاتورة ورصيد المديونية بحسابه')));
               return;
             }
             if ((allowShortage || allowBelowCost) && reason.text.trim().isEmpty) {
@@ -1320,7 +1339,7 @@ class Sales extends StatelessWidget {
         .toList()
       ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
     return Column(children: [
-      Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(icon: const Icon(Icons.add_shopping_cart), label: const Text('عملية بيع جديدة'), onPressed: () => newSaleDialog(context, owner, branchId))),
+      Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة'), onPressed: () => newSaleDialog(context, owner, branchId))),
       Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد مبيعات بعد')) : ListView(children: rows.map((d) {
         final sale = d.data();
         final rawItems = (sale['items'] as List?) ?? const [];
@@ -2452,24 +2471,20 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId) async {
   final cashMovement = db.collection('accountMovements').doc();
   String? customerId;
   bool saving = false;
-  final customers = db.collection('customers').snapshots();
   await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(
     builder: (dialog, update) => AlertDialog(
       title: const Text('سند قبض من عميل'),
       content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: customers, builder: (context, snap) {
-          if (snap.hasError) return const Text('تعذر تحميل العملاء');
-          if (!snap.hasData) return const LinearProgressIndicator();
-          final rows = snap.data!.docs.where((d) => d.data()['active'] != false).toList()
-            ..sort((a, b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
-          return DropdownButtonFormField<String>(
-            initialValue: customerId, isExpanded: true,
-            decoration: const InputDecoration(labelText: 'العميل — الرصيد الحالي'),
-            items: rows.map((d) => DropdownMenuItem(value: d.id,
-              child: Text('${d.data()['name']} — ${d.data()['balance'] ?? 0} ج.م', overflow: TextOverflow.ellipsis))).toList(),
-            onChanged: saving ? null : (value) => update(() => customerId = value),
-          );
-        }),
+        OutlinedButton.icon(icon: const Icon(Icons.person_search),
+          label: const Text('اختيار عميل مسجل / تغيير العميل'),
+          onPressed: saving ? null : () async {
+            final id = await selectRegisteredCustomer(dialog);
+            if (id != null && dialog.mounted) update(() => customerId = id);
+          }),
+        if (customerId != null) StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+          stream: db.collection('customers').doc(customerId).snapshots(),
+          builder: (context, snap) => Text(snap.hasError ? 'تعذر تحميل رصيد العميل' : !snap.hasData ? 'جارٍ تحميل الرصيد' : '${snap.data?.data()?['name'] ?? ''} — الرصيد الحالي: ${snap.data?.data()?['balance'] ?? 0} ج.م'),
+        ),
         TextField(controller: amount, enabled: !saving,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: const InputDecoration(labelText: 'المبلغ المقبوض')),
@@ -4145,5 +4160,82 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
               },
             ),
     ),
+  ]);
+}
+
+
+Future<String?> selectRegisteredCustomer(BuildContext context) async {
+  String query = '';
+  return showDialog<String>(context: context, builder: (dialog) => StatefulBuilder(
+    builder: (dialog, update) => AlertDialog(
+      title: const Text('اختيار عميل مسجل'),
+      content: SizedBox(width: 500, height: 360, child: Column(children: [
+        TextField(autofocus: true, decoration: const InputDecoration(labelText: 'بحث بالاسم أو رقم الهاتف', prefixIcon: Icon(Icons.search)),
+          onChanged: (value) => update(() => query = value.trim().toLowerCase())),
+        Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: db.collection('customers').snapshots(),
+          builder: (context, snapshot) {
+            if (snapshot.hasError) return const Center(child: Text('تعذر تحميل العملاء؛ راجع صلاحيات الحساب'));
+            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+            final rows = snapshot.data!.docs.where((d) => d.data()['active'] != false &&
+              '${d.data()['name'] ?? ''} ${d.data()['phone'] ?? ''}'.toLowerCase().contains(query)).toList()
+              ..sort((a, b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
+            if (rows.isEmpty) return const Center(child: Text('لا يوجد عملاء مطابقون'));
+            return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
+              final row = rows[index];
+              return ListTile(title: Text('${row.data()['name'] ?? ''}'),
+                subtitle: Text('${row.data()['phone'] ?? ''} • الرصيد: ${row.data()['balance'] ?? 0} ج.م'),
+                onTap: () => Navigator.pop(dialog, row.id));
+            });
+          },
+        )),
+      ])),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء'))],
+    ),
+  ));
+}
+
+Future<String?> selectSaleProduct(BuildContext context, List<QueryDocumentSnapshot<Map<String, dynamic>>> products, Set<String> added) async {
+  String query = '';
+  return showDialog<String>(context: context, builder: (dialog) => StatefulBuilder(builder: (dialog, update) {
+    final rows = products.where((p) => '${p.data()['name'] ?? ''}'.toLowerCase().contains(query)).toList();
+    return AlertDialog(title: const Text('اختيار منتج'),
+      content: SizedBox(width: 500, height: 360, child: Column(children: [
+        TextField(autofocus: true, decoration: const InputDecoration(labelText: 'اكتب أي حرف من اسم المنتج', prefixIcon: Icon(Icons.search)),
+          onChanged: (value) => update(() => query = value.trim().toLowerCase())),
+        Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد أصناف مطابقة')) : ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
+          final row = rows[index];
+          return ListTile(title: Text('${row.data()['name'] ?? ''}'),
+            subtitle: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(stream: db.collection('stock').doc('main_${row.id}').snapshots(),
+              builder: (context, stock) => Text('السعر: ${row.data()['price'] ?? 0} ج.م • المتاح: ${stock.hasError ? 'تعذر التحميل' : !stock.hasData ? 'جارٍ التحميل' : stock.data?.data()?['quantity'] ?? 0}')),
+            trailing: Icon(added.contains(row.id) ? Icons.check : Icons.add, color: gold),
+            onTap: added.contains(row.id) ? null : () => Navigator.pop(dialog, row.id));
+        })),
+      ])), actions: [TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء'))]);
+  }));
+}
+
+class StaffCustomers extends StatefulWidget {
+  const StaffCustomers({super.key});
+  @override
+  State<StaffCustomers> createState() => _StaffCustomersState();
+}
+class _StaffCustomersState extends State<StaffCustomers> {
+  String query = '';
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    Padding(padding: const EdgeInsets.all(12), child: TextField(decoration: const InputDecoration(labelText: 'بحث عن عميل بالاسم أو الهاتف', prefixIcon: Icon(Icons.search)),
+      onChanged: (value) => setState(() => query = value.trim().toLowerCase()))),
+    Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('customers').snapshots(), builder: (context, snapshot) {
+      if (snapshot.hasError) return const Center(child: Text('تعذر تحميل العملاء'));
+      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+      final rows = snapshot.data!.docs.where((d) => d.data()['active'] != false && '${d.data()['name'] ?? ''} ${d.data()['phone'] ?? ''}'.toLowerCase().contains(query)).toList();
+      if (rows.isEmpty) return const Center(child: Text('لا يوجد عملاء مطابقون'));
+      return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
+        final data = rows[index].data();
+        return ListTile(title: Text('${data['name'] ?? ''}'), subtitle: Text('${data['phone'] ?? ''}'),
+          trailing: Text('الرصيد: ${data['balance'] ?? 0} ج.م', style: const TextStyle(color: gold)));
+      });
+    })),
   ]);
 }
