@@ -1,7 +1,7 @@
 import 'dart:typed_data';
 import 'dart:async';
 import 'package:record/record.dart';
-import 'package:audioplayers/audioplayers.dart';
+import 'package:audioplayers/audioplayers.dart' show AudioPlayer, DeviceFileSource;
 import 'dart:convert';
 import 'dart:io';
 import 'package:tesseract_ocr/tesseract_ocr.dart';
