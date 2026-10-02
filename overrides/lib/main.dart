@@ -2913,7 +2913,7 @@ class _AccountsState extends State<Accounts> {
       Padding(padding: const EdgeInsets.all(12), child: Column(children: [SegmentedButton<bool>(
         segments: const [ButtonSegment(value: false, label: Text('العملاء')), ButtonSegment(value: true, label: Text('الموردون'))],
         selected: {suppliers}, onSelectionChanged: (values) => setState(() => suppliers = values.first)),
-        if (suppliers) Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const Directionality(textDirection: TextDirection.rtl, child: Scaffold(appBar: null, body: SafeArea(child: SupplierPaymentVouchers()))))), icon: const Icon(Icons.receipt_long), label: const Text('سندات صرف الموردين'))),
+        if (suppliers) Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Directionality(textDirection: TextDirection.rtl, child: Scaffold(appBar: AppBar(title: const Text('سندات صرف الموردين')), body: const SafeArea(child: SupplierPaymentVouchers()))))), icon: const Icon(Icons.receipt_long), label: const Text('سندات صرف الموردين'))),
         const SizedBox(height: 8), FilledButton.icon(onPressed: () => createAccountDialog(context, collection, suppliers), icon: const Icon(Icons.person_add), label: Text(suppliers ? 'إضافة مورد' : 'إضافة عميل')),
       ])),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -3030,14 +3030,17 @@ Future<void> createSupplierPaymentVoucher(BuildContext context, {String? initial
     ])),
     actions: [TextButton(onPressed: saving ? null : () => Navigator.pop(dialog), child: const Text('إلغاء')), FilledButton(onPressed: saving ? null : () async {
       final raw = double.tryParse(amount.text.trim().replaceAll(',', '.')), id = supplierId;
-      if (id == null || raw == null || !raw.isFinite || raw <= 0) { await showInvoiceSaveProblem(dialog,'اختر المورد واكتب مبلغًا صحيحًا'); return; }
+      if (id == null || raw == null || !raw.isFinite || raw <= 0) { await showInvoiceSaveProblem(dialog,'اختر المورد واكتب مبلغًا صحيحًا',title:'سند صرف المورد',button:'رجوع للسند'); return; }
       final paid = (raw * 100).round() / 100;
       update(() => saving = true);
       try {
         final actor = FirebaseAuth.instance.currentUser!.uid;
         await db.runTransaction((tx) async {
           final existing = await tx.get(voucherRef);
-          if (existing.exists) return;
+          if (existing.exists) {
+            if(existing.data()?['accountId'] != id || existing.data()?['amount'] != paid) throw StateError('تم حفظ السند السابق بالفعل؛ افتح سندًا جديدًا للمبلغ الجديد');
+            return;
+          }
           final user = (await tx.get(db.collection('users').doc(actor))).data();
           if (user?['role'] != 'owner' || user?['active'] != true) throw StateError('سند الصرف متاح للمدير فقط');
           final supplierRef = db.collection('suppliers').doc(id), cashRef = db.collection('settings').doc('cash');
@@ -3051,8 +3054,8 @@ Future<void> createSupplierPaymentVoucher(BuildContext context, {String? initial
           tx.set(cashMovement, {'accountType':'cash','accountId':id,'accountName':supplier['name'],'kind':'supplierPayment','amount':paid,'delta':-paid,'balanceBefore':beforeCash,'balanceAfter':after.cashAfter,'referenceId':voucherRef.id,'reason':'سند صرف لمورد','actorId':actor,'createdAt':now});
         });
         if (dialog.mounted) Navigator.pop(dialog);
-        if (context.mounted) await showInvoiceSaveProblem(context,'تم حفظ سند الصرف وتحديث حساب المورد والصندوق. السند متاح للطباعة في سندات صرف الموردين.');
-      } catch(e) { if (dialog.mounted) { update(() => saving = false); await showInvoiceSaveProblem(dialog,'تعذر حفظ سند الصرف: $e'); } }
+        if (context.mounted) await showInvoiceSaveProblem(context,'تم حفظ سند الصرف وتحديث حساب المورد والصندوق. السند متاح للطباعة في سندات صرف الموردين.', title:'تم حفظ سند الصرف', button:'تمام', success:true);
+      } catch(e) { if (dialog.mounted) { update(() => saving = false); await showInvoiceSaveProblem(dialog,'تعذر حفظ سند الصرف: $e',title:'سند صرف المورد',button:'رجوع للسند'); } }
     }, child: Text(saving ? 'جارٍ الحفظ…' : 'حفظ سند الصرف'))],
   )));
   amount.dispose(); note.dispose();
@@ -3061,12 +3064,18 @@ Future<void> createSupplierPaymentVoucher(BuildContext context, {String? initial
 Future<Uint8List> createSupplierPaymentVoucherPdf(String id, Map<String,dynamic> data, pw.Font font, {bool thermal = false}) async {
   final pdf = pw.Document();
   final lines = ['رقم السند: $id', 'التاريخ: ${formatDate(data['createdAt'])}', 'صرفنا إلى المورد: ${data['accountName'] ?? ''}', 'الهاتف: ${data['supplierPhone'] ?? ''}', 'المبلغ المصروف: ${data['amount']} ج.م', 'رصيد المورد قبل السداد: ${data['balanceBefore']} ج.م', 'الباقي عليك للمورد بعد السداد: ${data['balanceAfter']} ج.م', 'الصندوق قبل الصرف: ${data['cashBefore'] ?? 'غير مسجل'} ج.م', 'الصندوق بعد الصرف: ${data['cashAfter'] ?? 'غير مسجل'} ج.م', 'المسؤول: ${data['actorName'] ?? data['actorId'] ?? ''}', 'البيان: ${data['note'] ?? ''}'];
-  pdf.addPage(pw.MultiPage(pageFormat: thermal ? PdfPageFormat(80 * PdfPageFormat.mm, 400 * PdfPageFormat.mm) : PdfPageFormat.a4, margin: pw.EdgeInsets.all(thermal ? 4 * PdfPageFormat.mm : 30), theme: pw.ThemeData.withFont(base:font,bold:font), textDirection:pw.TextDirection.rtl, build: (_) => [
+  final widgets = <pw.Widget>[
     pw.Text('VIB للتجارة والتوزيع',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:thermal ? 14 : 22)),
     pw.SizedBox(height:12),pw.Text('سند صرف لمورد',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:thermal ? 16 : 20,fontWeight:pw.FontWeight.bold)),
     for (final line in lines) pw.Padding(padding:const pw.EdgeInsets.symmetric(vertical:6),child:pw.Text(line,style:pw.TextStyle(fontSize:thermal ? 10 : 13))),
     pw.SizedBox(height:20),pw.Text('توقيع المستلم: __________________'),
-  ]));
+  ];
+  final theme = pw.ThemeData.withFont(base:font,bold:font);
+  if(thermal) {
+    pdf.addPage(pw.Page(pageFormat:PdfPageFormat.roll80,margin:const pw.EdgeInsets.all(4 * PdfPageFormat.mm),theme:theme,build:(_) => pw.Directionality(textDirection:pw.TextDirection.rtl,child:pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.stretch,children:widgets))));
+  } else {
+    pdf.addPage(pw.MultiPage(pageFormat:PdfPageFormat.a4,margin:const pw.EdgeInsets.all(30),theme:theme,textDirection:pw.TextDirection.rtl,build:(_) => widgets));
+  }
   return pdf.save();
 }
 
@@ -3075,7 +3084,7 @@ Future<void> printSupplierPaymentVoucher(BuildContext context,String id,Map<Stri
     final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
     final bytes = await createSupplierPaymentVoucherPdf(id,data,font,thermal:thermal);
     await Printing.layoutPdf(name:'VIB-SUPPLIER-PAYMENT-$id-${thermal ? '80MM' : 'A4'}.pdf',onLayout:(_) async => bytes);
-  } catch(e) { if(context.mounted) await showInvoiceSaveProblem(context,'تعذر طباعة سند الصرف: $e'); }
+  } catch(e) { if(context.mounted) await showInvoiceSaveProblem(context,'تعذر طباعة سند الصرف: $e',title:'طباعة سند الصرف',button:'تمام'); }
 }
 
 
@@ -3964,19 +3973,19 @@ String invoiceSaveFailureMessage(Object error) {
   return 'تعذر حفظ الفاتورة: $error';
 }
 
-Future<void> showInvoiceSaveProblem(BuildContext context, String message) async {
+Future<void> showInvoiceSaveProblem(BuildContext context, String message, {String title = 'تنبيه حفظ الفاتورة', String button = 'رجوع لتعديل الفاتورة', bool success = false}) async {
   if (!context.mounted) return;
   FocusScope.of(context).unfocus();
   await showDialog<void>(
     context: context, useRootNavigator: true, barrierDismissible: false,
     builder: (dialog) => Directionality(textDirection: TextDirection.rtl,
       child: AlertDialog(
-        title: const Row(children: [
-          Icon(Icons.error_outline, color: Colors.orangeAccent), SizedBox(width: 8),
-          Expanded(child: Text('تنبيه حفظ الفاتورة')),
+        title: Row(children: [
+          Icon(success ? Icons.check_circle_outline : Icons.error_outline, color: success ? Colors.green : Colors.orangeAccent), const SizedBox(width: 8),
+          Expanded(child: Text(title)),
         ]),
         content: SingleChildScrollView(child: SelectableText(message)),
-        actions: [FilledButton(onPressed: () => Navigator.pop(dialog), child: const Text('رجوع لتعديل الفاتورة'))],
+        actions: [FilledButton(onPressed: () => Navigator.pop(dialog), child: Text(button))],
       )),
   );
 }
@@ -4932,7 +4941,7 @@ class _ChatVoicePlayerState extends State<ChatVoicePlayer> {
         await player!.play(DeviceFileSource(audioFile!.path));
         if(mounted) setState(() => playing = true);
       }
-    } catch(e) { if(mounted) await showInvoiceSaveProblem(context,'تعذر تشغيل الصوت: $e'); }
+    } catch(e) { if(mounted) await showInvoiceSaveProblem(context,'تعذر تشغيل الصوت: $e',title:'تشغيل الصوت',button:'تمام'); }
     finally { if(mounted) setState(() => busy = false); }
   }
   @override Widget build(BuildContext context) => Row(mainAxisSize:MainAxisSize.min,children:[
@@ -4985,7 +4994,7 @@ class _StaffChatPageState extends State<StaffChatPage> with WidgetsBindingObserv
     } catch(e) {
       recordingTimer?.cancel();
       await recorder?.cancel();
-      if (mounted) { setState(() => recording = false); await showInvoiceSaveProblem(context,'تعذر التسجيل: $e'); }
+      if (mounted) { setState(() => recording = false); await showInvoiceSaveProblem(context,'تعذر التسجيل: $e',title:'تسجيل الصوت',button:'تمام'); }
     } finally { if (mounted) setState(() => recordingBusy = false); }
   }
 
@@ -5038,7 +5047,7 @@ class _StaffChatPageState extends State<StaffChatPage> with WidgetsBindingObserv
       if (!mounted) return;
       if(audio == null) message.clear(); setState(() { audioDraft = null; audioSeconds = 0; }); pendingRef = null; pendingText = null;
     } catch (e) {
-      if (mounted) await showInvoiceSaveProblem(context,chatProblem(e));
+      if (mounted) await showInvoiceSaveProblem(context,chatProblem(e),title:'المحادثة',button:'تمام');
     } finally { if (mounted) setState(() => sending = false); }
   }
 
