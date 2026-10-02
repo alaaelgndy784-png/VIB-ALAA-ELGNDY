@@ -211,3 +211,14 @@ test('orphan invoice receipt link is denied',async()=>{
  await seedEditableSale();
  await assertFails(setDoc(doc(env.authenticatedContext('owner').firestore(),'sales/editable'),{receiptId:'fake',receiptPaid:20},{merge:true}));
 });
+
+test('staff reads print branding but cannot change it or read manager settings',async()=>{
+ await env.withSecurityRulesDisabled(async ctx=>{
+  await setDoc(doc(ctx.firestore(),'settings/invoiceBranding'),{companyName:'VIB',phone:'01000000000',invoiceFooter:'Thank you'});
+  await setDoc(doc(ctx.firestore(),'settings/main'),{companyName:'VIB',resetAt:new Date()});
+ });
+ const db=env.authenticatedContext('staff').firestore();
+ await assertSucceeds(getDoc(doc(db,'settings/invoiceBranding')));
+ await assertFails(setDoc(doc(db,'settings/invoiceBranding'),{companyName:'Fake'}));
+ await assertFails(getDoc(doc(db,'settings/main')));
+});

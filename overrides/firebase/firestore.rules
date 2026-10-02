@@ -313,7 +313,7 @@ service cloud.firestore {
     match /settings/{id} {
       allow create: if employee() && id == 'cash' && 'lastSaleId' in request.resource.data && request.resource.data.keys().hasOnly(['balance','lastSaleId','updatedAt']) && staffCashWrite();
       allow update: if employee() && id == 'cash' && request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastSaleId']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastSaleId','updatedAt']) && staffCashWrite();
-      allow get: if employee() && id == 'cash';
+      allow get: if employee() && id in ['cash', 'invoiceBranding'];
       allow create: if employee() && id == 'cash' && 'lastReceiptId' in request.resource.data
         && request.resource.data.keys().hasOnly(['balance','lastReceiptId','updatedAt'])
         && newReceipt(request.resource.data.lastReceiptId)

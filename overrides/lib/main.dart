@@ -2821,7 +2821,9 @@ class AppSettings extends StatefulWidget {
 
 class _AppSettingsState extends State<AppSettings> {
   final company = TextEditingController(text: 'VIB للتجارة والتوزيع');
-  final phone = TextEditingController(), whatsapp = TextEditingController(), address = TextEditingController();
+  final phone = TextEditingController(), phone2 = TextEditingController(), whatsapp = TextEditingController(), address = TextEditingController();
+  final footer = TextEditingController(text: 'شكراً لتعاملكم معنا');
+  String logoBase64 = '';
   String paper = 'a4';
   bool loading = true, saving = false;
   @override void initState() { super.initState(); load(); }
@@ -2830,6 +2832,8 @@ class _AppSettingsState extends State<AppSettings> {
     if (d != null) {
       company.text = '${d['companyName'] ?? company.text}'; phone.text = '${d['phone'] ?? ''}';
       whatsapp.text = '${d['whatsapp'] ?? ''}'; address.text = '${d['address'] ?? ''}';
+      phone2.text = '${d['phone2'] ?? ''}'; footer.text = '${d['invoiceFooter'] ?? 'شكراً لتعاملكم معنا'}';
+      logoBase64 = '${d['logoBase64'] ?? ''}';
       paper = ['a4', '58', '80'].contains(d['paperSize']) ? '${d['paperSize']}' : 'a4';
     }
     if (mounted) setState(() => loading = false);
@@ -2838,7 +2842,14 @@ class _AppSettingsState extends State<AppSettings> {
     if (company.text.trim().isEmpty) return;
     setState(() => saving = true);
     try {
-      await db.collection('settings').doc('main').set({'companyName': company.text.trim(), 'phone': phone.text.trim(), 'whatsapp': whatsapp.text.trim(), 'address': address.text.trim(), 'paperSize': paper, 'updatedAt': FieldValue.serverTimestamp(), 'updatedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
+      final branding = {'companyName': company.text.trim(), 'phone': phone.text.trim(), 'phone2': phone2.text.trim(),
+        'whatsapp': whatsapp.text.trim(), 'address': address.text.trim(), 'paperSize': paper,
+        'invoiceFooter': footer.text.trim(), 'logoBase64': logoBase64};
+      final batch = db.batch();
+      batch.set(db.collection('settings').doc('main'), {...branding, 'updatedAt': FieldValue.serverTimestamp(),
+        'updatedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
+      batch.set(db.collection('settings').doc('invoiceBranding'), branding);
+      await batch.commit();
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ الإعدادات')));
     } catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الحفظ: $e'))); }
     finally { if (mounted) setState(() => saving = false); }
@@ -2846,10 +2857,26 @@ class _AppSettingsState extends State<AppSettings> {
   @override Widget build(BuildContext context) => loading ? const Center(child: CircularProgressIndicator()) : ListView(padding: const EdgeInsets.all(16), children: [
     TextField(controller: company, decoration: const InputDecoration(labelText: 'اسم الشركة على الفاتورة')),
     TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم الهاتف')),
+    TextField(controller: phone2, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم تليفون إضافي')),
     TextField(controller: whatsapp, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم واتساب')),
     TextField(controller: address, decoration: const InputDecoration(labelText: 'العنوان')),
+    TextField(controller: footer, maxLines: 3, maxLength: 300, decoration: const InputDecoration(labelText: 'النص أسفل الفاتورة')),
+    const SizedBox(height: 10),
+    OutlinedButton.icon(icon: const Icon(Icons.image_outlined), label: const Text('اختيار لوجو الشركة'), onPressed: saving ? null : () async {
+      final file = await ImagePicker().pickImage(source: ImageSource.gallery, maxWidth: 512, maxHeight: 512, imageQuality: 80);
+      if (file == null) return;
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+      if (bytes.length > 220000) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('اختر لوجو أصغر من 220 كيلوبايت'))); return;
+      }
+      setState(() => logoBase64 = base64Encode(bytes));
+    }),
+    if (logoBase64.isNotEmpty) Padding(padding: const EdgeInsets.all(8), child: Image.memory(base64Decode(logoBase64), height: 70)),
+    if (logoBase64.isNotEmpty) TextButton(onPressed: saving ? null : () => setState(() => logoBase64 = ''), child: const Text('استخدام لوجو VIB الافتراضي')),
     const SizedBox(height: 12), const Text('إعدادات الطباعة', style: TextStyle(color: gold, fontSize: 20)),
     DropdownButtonFormField<String>(value: paper, decoration: const InputDecoration(labelText: 'مقاس ورق الفاتورة'), items: const [DropdownMenuItem(value: 'a4', child: Text('A4 عادي')), DropdownMenuItem(value: '58', child: Text('إيصال حراري 58 مم')), DropdownMenuItem(value: '80', child: Text('إيصال حراري 80 مم'))], onChanged: (v) => setState(() => paper = v ?? 'a4')),
+    const SizedBox(height: 12), const Text('احفظ بيانات الشركة ليظهر اللوجو والتليفونات والنص في طباعة المدير والموظف.'),
     const SizedBox(height: 20), FilledButton.icon(onPressed: saving ? null : save, icon: const Icon(Icons.save), label: const Text('حفظ الإعدادات')),
     const SizedBox(height: 12), OutlinedButton.icon(onPressed: () => printTestPage(context, paper), icon: const Icon(Icons.print), label: const Text('اختيار الطابعة وطباعة صفحة تجربة')),
     const Text('طابعة البلوتوث تظهر في شاشة الطباعة إذا كانت متصلة بالموبايل ولها خدمة طباعة متوافقة.'),
@@ -3582,94 +3609,128 @@ Future<void> selectInvoicePaper(BuildContext context, String type, String id, Ma
   if (selected != null && context.mounted) await printInvoice(context, type, id, data, paperChoice: selected);
 }
 
-Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> data, {String? paperChoice}) async {
-  Map<String, dynamic> settings = {};
-  try {
-    settings = (await db.collection('settings').doc('main').get()).data() ?? {};
-  } catch (_) {
-    // The employee may print an authorized sale even if company settings are owner-only.
+Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> data,
+    {String? paperChoice, Map<String, dynamic>? settingsOverride}) async {
+  Map<String, dynamic> settings = settingsOverride ?? {};
+  if (settingsOverride == null) {
+    try {
+      settings = (await db.collection('settings').doc('invoiceBranding').get()).data() ?? {};
+      if (settings.isEmpty) settings = (await db.collection('settings').doc('main').get()).data() ?? {};
+    } catch (_) { /* Authorized staff can print with the bundled VIB brand if settings are unavailable. */ }
   }
-
   final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-  final logo = pw.MemoryImage((await rootBundle.load('assets/icons/manager/mipmap-xxxhdpi/ic_launcher.png')).buffer.asUint8List());
-  final pdf = pw.Document();
+  Uint8List logoBytes;
+  try {
+    logoBytes = base64Decode('${settings['logoBase64'] ?? ''}');
+    if (logoBytes.isEmpty) throw const FormatException('No custom logo');
+  } catch (_) {
+    logoBytes = (await rootBundle.load('assets/icons/manager/mipmap-xxxhdpi/ic_launcher.png')).buffer.asUint8List();
+  }
+  final logo = pw.MemoryImage(logoBytes), pdf = pw.Document();
   final isSale = type == 'sales';
   final paper = paperChoice ?? (['a4', '58', '80'].contains(settings['paperSize']) ? '${settings['paperSize']}' : 'a4');
-  final thermal = paper != 'a4';
-
+  final thermal = paper != 'a4', narrow = paper == '58';
+  final size = thermal ? (narrow ? 8.0 : 9.0) : 10.0;
+  final navy = thermal ? PdfColors.black : const PdfColor.fromInt(0xFF14263D);
+  final accent = thermal ? PdfColors.black : const PdfColor.fromInt(0xFFB58A38);
+  final pale = thermal ? PdfColors.white : const PdfColor.fromInt(0xFFF3F5F8);
+  String money(dynamic value) => ((value as num?)?.toDouble() ?? 0).toStringAsFixed(2);
+  String configured(String key, String fallback) {
+    final value = '${settings[key] ?? ''}'.trim(); return value.isEmpty ? fallback : value;
+  }
+  final company = configured('companyName', 'VIB للتجارة والتوزيع');
+  final address = configured('address', '');
+  final phones = ['phone', 'phone2', 'whatsapp'].map((key) => configured(key, '')).where((x) => x.isNotEmpty).toSet().toList();
+  final footer = configured('invoiceFooter', 'شكراً لتعاملكم معنا');
+  final number = '${data['invoiceNumber'] ?? ''}'.trim().isEmpty ? id : '${data['invoiceNumber']}';
   final items = <Map<String, dynamic>>[];
-  final rawItems = data['items'];
-  if (rawItems is List && rawItems.isNotEmpty) {
-    for (final raw in rawItems) {
-      if (raw is Map) items.add(Map<String, dynamic>.from(raw));
-    }
+  if (data['items'] is List) {
+    for (final raw in data['items'] as List) { if (raw is Map) items.add(Map<String, dynamic>.from(raw)); }
   }
-  if (items.isEmpty) {
-    items.add({
-      'productName': data['productName'] ?? '',
-      'quantity': data['quantity'] ?? 0,
-      isSale ? 'unitPrice' : 'unitCost': data[isSale ? 'unitPrice' : 'unitCost'] ?? 0,
-      'lineTotal': data['total'] ?? 0,
-    });
-  }
-
-  double itemUnit(Map<String, dynamic> item) => ((item[isSale ? 'unitPrice' : 'unitCost'] ?? 0) as num?)?.toDouble() ?? 0;
-  double itemTotal(Map<String, dynamic> item) => ((item['lineTotal'] ?? (((item['quantity'] as num?)?.toDouble() ?? 0) * itemUnit(item))) as num?)?.toDouble() ?? 0;
-
-  pdf.addPage(pw.Page(
-    pageFormat: invoicePageFormat(paper),
-    theme: pw.ThemeData.withFont(base: font, bold: font),
-    build: (_) => pw.Directionality(
-      textDirection: pw.TextDirection.rtl,
-      child: pw.Padding(
-        padding: pw.EdgeInsets.all(thermal ? 2 : 28),
-        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-          pw.Center(child: pw.Image(logo, width: thermal ? 34 : 76, height: thermal ? 34 : 76)),
-          pw.SizedBox(height: 8),
-          pw.Center(child: pw.Text('${settings['companyName'] ?? 'VIB للتجارة والتوزيع'}', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: thermal ? 11 : 24, fontWeight: pw.FontWeight.bold))),
-          pw.SizedBox(height: 6),
-          pw.Center(child: pw.Text('${settings['address'] ?? ''}  ${settings['phone'] ?? ''}')),
-          pw.Divider(),
-          pw.Text(isSale ? 'فاتورة مبيعات' : 'فاتورة مشتريات', style: pw.TextStyle(fontSize: thermal ? 12 : 20, fontWeight: pw.FontWeight.bold)),
-          pw.Text('رقم الفاتورة: ${data['invoiceNumber']?.toString().isNotEmpty == true ? data['invoiceNumber'] : id}', style: pw.TextStyle(fontSize: thermal ? 8 : 12)),
-          pw.Text('التاريخ: ${formatDate(data['createdAt'])}', style: pw.TextStyle(fontSize: thermal ? 9 : 12)),
-          if (!isSale) pw.Text('المورد: ${data['supplierName'] ?? ''}'),
-          pw.SizedBox(height: thermal ? 8 : 18),
-
-          if (thermal)
-            pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-              for (var i = 0; i < items.length; i++) ...[
-                pw.Text('${i + 1}- ${items[i]['productName'] ?? ''}', style: const pw.TextStyle(fontSize: 9)),
-                pw.Text('الكمية: ${items[i]['quantity'] ?? 0} × ${itemUnit(items[i]).toStringAsFixed(2)} = ${itemTotal(items[i]).toStringAsFixed(2)} ج.م', style: const pw.TextStyle(fontSize: 9)),
-                pw.Divider(),
-              ]
-            ])
-          else
-            pw.Table(border: pw.TableBorder.all(), children: [
-              pw.TableRow(children: ['الإجمالي', 'سعر الوحدة', 'الكمية', 'الصنف', '#'].map((v) => pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text(v, textAlign: pw.TextAlign.center, style: pw.TextStyle(fontWeight: pw.FontWeight.bold)))).toList()),
-              for (var i = 0; i < items.length; i++)
-                pw.TableRow(children: [
-                  itemTotal(items[i]).toStringAsFixed(2),
-                  itemUnit(items[i]).toStringAsFixed(2),
-                  '${items[i]['quantity'] ?? 0}',
-                  '${items[i]['productName'] ?? ''}',
-                  '${i + 1}',
-                ].map((v) => pw.Padding(padding: const pw.EdgeInsets.all(8), child: pw.Text(v, textAlign: pw.TextAlign.center))).toList()),
-            ]),
-
-          pw.SizedBox(height: thermal ? 6 : 16),
-          pw.Text('الإجمالي: ${data['total'] ?? 0} ج.م', style: pw.TextStyle(fontSize: thermal ? 11 : 18, fontWeight: pw.FontWeight.bold)),
-          if (data.containsKey('paid') || !isSale) pw.Text('المدفوع: ${data['paid'] ?? 0} ج.م     المتبقي: ${data['due'] ?? 0} ج.م'),
-          if (isSale && '${data['customerName'] ?? ''}'.trim().isNotEmpty) pw.Text('العميل: ${data['customerName']}'),
-          if (isSale && data.containsKey('customerPreviousBalance')) pw.Text('الرصيد السابق: ${data['customerPreviousBalance'] ?? 0} ج.م     الرصيد بعد الفاتورة: ${data['customerBalanceAfter'] ?? 0} ج.م'),
-          if (data['status'] == 'returned') pw.Text('فاتورة مرتجعة', style: const pw.TextStyle(color: PdfColors.red, fontSize: 18)),
-        ]),
-      ),
-    ),
-  ));
+  if (items.isEmpty) items.add({'productName': data['productName'] ?? '', 'quantity': data['quantity'] ?? 0,
+    isSale ? 'unitPrice' : 'unitCost': data[isSale ? 'unitPrice' : 'unitCost'] ?? 0, 'lineTotal': data['total'] ?? 0});
+  double unit(Map<String, dynamic> item) => (item[isSale ? 'unitPrice' : 'unitCost'] as num?)?.toDouble() ?? 0;
+  double lineTotal(Map<String, dynamic> item) => (item['lineTotal'] as num?)?.toDouble() ?? ((item['quantity'] as num?)?.toDouble() ?? 0) * unit(item);
+  final total = (data['total'] as num?)?.toDouble() ?? 0;
+  final paid = (data['paid'] as num?)?.toDouble() ?? (isSale ? total : 0);
+  final due = (data['due'] as num?)?.toDouble() ?? total - paid;
+  final receiptPaid = (data['receiptPaid'] as num?)?.toDouble() ?? 0;
+  final nameLines = items.fold<int>(0, (sum, item) => sum + ('${item['productName'] ?? ''}'.length / (narrow ? 20 : 30)).ceil());
+  final estimatedHeight = (145 + items.length * 13 + nameLines * 4 + (address.length + footer.length) / 20 * 4).clamp(180, 1500).toDouble();
+  final format = thermal
+    ? PdfPageFormat((narrow ? 58 : 80) * PdfPageFormat.mm, estimatedHeight * PdfPageFormat.mm, marginAll: 4 * PdfPageFormat.mm)
+    : PdfPageFormat.a4;
+  pw.Text text(String value, {double? fontSize, bool bold = false, PdfColor? color, pw.TextAlign align = pw.TextAlign.right}) =>
+    pw.Text(value, textAlign: align, style: pw.TextStyle(fontSize: fontSize ?? size,
+      fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal, color: color ?? PdfColors.black));
+  pw.Widget brand() => pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+    pw.Center(child: pw.Image(logo, width: thermal ? 38 : 62, height: thermal ? 38 : 62)),
+    pw.SizedBox(height: 6), text(company, fontSize: thermal ? 12 : 22, bold: true, color: navy, align: pw.TextAlign.center),
+    if (address.isNotEmpty) ...[pw.SizedBox(height: 4), text(address, fontSize: size, align: pw.TextAlign.center)],
+    if (phones.isNotEmpty) ...[pw.SizedBox(height: 4), pw.Wrap(alignment: pw.WrapAlignment.center, spacing: 10, runSpacing: 3,
+      children: phones.map((phone) => pw.Directionality(textDirection: pw.TextDirection.ltr, child: text(phone, fontSize: size, align: pw.TextAlign.center))).toList())],
+    pw.SizedBox(height: thermal ? 7 : 12), pw.Divider(color: accent, thickness: thermal ? .7 : 1.5),
+  ]);
+  pw.Widget detail(String label, String value) => pw.Padding(padding: const pw.EdgeInsets.only(bottom: 4),
+    child: text('$label: $value', fontSize: size));
+  pw.Widget summaryRow(String label, dynamic value, {bool strong = false}) => pw.Padding(
+    padding: const pw.EdgeInsets.symmetric(vertical: 5), child: pw.Row(children: [
+      pw.Expanded(child: text(label, bold: strong)),
+      text('${money(value)} ج.م', bold: strong, fontSize: strong ? size + 2 : size),
+    ]));
+  final table = pw.Table(columnWidths: {0: const pw.FlexColumnWidth(1.5), 1: const pw.FlexColumnWidth(1.4),
+      2: const pw.FlexColumnWidth(.8), 3: const pw.FlexColumnWidth(4), 4: const pw.FlexColumnWidth(.5)},
+    border: pw.TableBorder(horizontalInside: const pw.BorderSide(color: PdfColors.grey300, width: .5)),
+    children: [
+      pw.TableRow(repeat: true, decoration: pw.BoxDecoration(color: navy), children: ['الإجمالي', 'السعر', 'العدد', 'الصنف', 'م']
+        .map((v) => pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 9),
+          child: text(v, bold: true, color: PdfColors.white, align: pw.TextAlign.center))).toList()),
+      for (var i = 0; i < items.length; i++) pw.TableRow(decoration: pw.BoxDecoration(color: i.isEven ? pale : PdfColors.white),
+        children: [money(lineTotal(items[i])), money(unit(items[i])), '${items[i]['quantity'] ?? 0}', '${items[i]['productName'] ?? ''}', '${i + 1}']
+          .map((v) => pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 9),
+            child: text(v, align: pw.TextAlign.center))).toList()),
+    ]);
+  pdf.addPage(pw.MultiPage(pageFormat: format, margin: pw.EdgeInsets.all(thermal ? 4 * PdfPageFormat.mm : 18 * PdfPageFormat.mm),
+    maxPages: 100, theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
+    footer: (context) => pw.Column(children: [
+      pw.Divider(color: PdfColors.grey400, thickness: .6), text(footer, align: pw.TextAlign.center, fontSize: thermal ? 8 : 10),
+      if (!thermal) pw.Padding(padding: const pw.EdgeInsets.only(top: 5), child: text('صفحة ${context.pageNumber} / ${context.pagesCount}', fontSize: 8, align: pw.TextAlign.center)),
+    ]),
+    build: (_) => [
+      brand(),
+      pw.Container(padding: pw.EdgeInsets.all(thermal ? 6 : 12), decoration: pw.BoxDecoration(color: pale,
+        border: pw.Border.all(color: thermal ? PdfColors.grey500 : accent, width: .7), borderRadius: pw.BorderRadius.circular(thermal ? 3 : 8)),
+        child: text(isSale ? 'فاتورة مبيعات' : 'فاتورة مشتريات', fontSize: thermal ? 13 : 20, bold: true, color: navy, align: pw.TextAlign.center)),
+      pw.SizedBox(height: 10), detail('رقم الفاتورة', number), detail('التاريخ', formatDate(data['createdAt'])),
+      if (isSale) detail('العميل', '${data['customerName'] ?? ''}'.trim().isEmpty ? 'بيع نقدي' : '${data['customerName']}'),
+      if (isSale && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) detail('هاتف العميل', '${data['customerPhone']}'),
+      if (!isSale) detail('المورد', '${data['supplierName'] ?? ''}'),
+      if (!isSale && '${data['supplierPhone'] ?? ''}'.trim().isNotEmpty) detail('هاتف المورد', '${data['supplierPhone']}'),
+      pw.SizedBox(height: 8),
+      if (thermal) ...[
+        for (var i = 0; i < items.length; i++) pw.Container(padding: const pw.EdgeInsets.symmetric(vertical: 6),
+          decoration: const pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey400, width: .5))),
+          child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+            text('${i + 1}. ${items[i]['productName'] ?? ''}', bold: true), pw.SizedBox(height: 4),
+            pw.Row(children: [pw.Expanded(child: text('${items[i]['quantity'] ?? 0} × ${money(unit(items[i]))}')),
+              text('${money(lineTotal(items[i]))} ج.م', bold: true)]),
+          ])),
+      ] else table,
+      pw.SizedBox(height: 12),
+      pw.Container(padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: pw.BoxDecoration(color: pale,
+        border: pw.Border.all(color: PdfColors.grey400, width: .6), borderRadius: pw.BorderRadius.circular(6)),
+        child: pw.Column(children: [summaryRow('الإجمالي', total, strong: true), summaryRow('المدفوع في الفاتورة', paid),
+          if (receiptPaid > 0) summaryRow('محصّل بسندات قبض', receiptPaid),
+          summaryRow('المتبقي', due - receiptPaid, strong: true)])),
+      if (isSale && data.containsKey('customerPreviousBalance')) ...[
+        pw.SizedBox(height: 8), detail('رصيد العميل السابق', '${money(data['customerPreviousBalance'])} ج.م'),
+        detail('رصيد العميل بعد الفاتورة', '${money(data['customerBalanceAfter'])} ج.م'),
+      ],
+      if (data['status'] == 'returned') ...[pw.SizedBox(height: 10), text('فاتورة مرتجعة', bold: true, color: PdfColors.red)],
+      pw.SizedBox(height: 14),
+    ]));
   return pdf.save();
 }
-
 
 Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<String, dynamic> data) async {
   try {
