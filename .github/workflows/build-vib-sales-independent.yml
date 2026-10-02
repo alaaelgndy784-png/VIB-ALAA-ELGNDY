@@ -52,7 +52,9 @@ jobs:
         run: |
           mkdir VIB-SALES-INDEPENDENT
           unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d VIB-SALES-INDEPENDENT
-          cp overrides/lib/main.dart VIB-SALES-INDEPENDENT/lib/main.dart
+          cp overrides/lib/*.dart VIB-SALES-INDEPENDENT/lib/
+          mkdir -p VIB-SALES-INDEPENDENT/vib_overrides
+          cp overrides/android/prepare_cheque_notifications.py VIB-SALES-INDEPENDENT/vib_overrides/
           cp overrides/pubspec.yaml VIB-SALES-INDEPENDENT/pubspec.yaml
           mkdir -p VIB-SALES-INDEPENDENT/test
           cp overrides/test/*.dart VIB-SALES-INDEPENDENT/test/
@@ -65,7 +67,9 @@ jobs:
 
       - name: Create independent Android platform
         working-directory: VIB-SALES-INDEPENDENT
-        run: flutter create --platforms=android --org com.alaa.vibsales --project-name manager .
+        run: |
+          flutter create --platforms=android --org com.alaa.vibsales --project-name manager .
+          python3 vib_overrides/prepare_cheque_notifications.py
 
       - name: Prepare manager app
         working-directory: VIB-SALES-INDEPENDENT
@@ -80,13 +84,16 @@ jobs:
           sed -i '/<manifest/a\    <uses-permission android:name="android.permission.USE_BIOMETRIC" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
           perl -0pi -e "s/'role':\s*'pending',\s*'active':\s*false/'role': 'owner', 'active': true/g" lib/main.dart
           cp -r assets/icons/manager/mipmap-* android/app/src/main/res/
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            cp ../overrides/assets/manager-icon.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
           cp firebase/google-services.json android/app/google-services.json
           flutter pub get
 
       - name: Verify invoice PDF rendering
         if: matrix.app == 'manager'
         working-directory: VIB-SALES-INDEPENDENT
-        run: flutter test test/accounting_test.dart test/invoice_pdf_test.dart
+        run: flutter test test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart
 
       - name: Upload invoice PDF previews
         if: matrix.app == 'manager'
@@ -117,6 +124,9 @@ jobs:
           grep -q 'applicationId = "com.alaa.vibsales.staffscan"' android/app/build.gradle.kts
           perl -0pi -e "s/'role':\s*'owner',\s*'active':\s*true/'role': 'pending', 'active': false/g" lib/main.dart
           cp -r assets/icons/staff/mipmap-* android/app/src/main/res/
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+            cp ../overrides/assets/staff-icon.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"
+          done
           flutter clean
           flutter pub get
           flutter build apk --release --split-per-abi

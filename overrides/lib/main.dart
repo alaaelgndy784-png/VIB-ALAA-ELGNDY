@@ -23,9 +23,15 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tzdata;
+
+part 'cheques.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  initializeChequeTimeZones();
   runApp(const VibBootstrap());
 }
 
@@ -138,7 +144,7 @@ class Gate extends StatelessWidget {
             ])));
           }
           activeResetAt = data['resetAt'] as Timestamp?;
-          final home = Home(uid: auth.data!.uid, role: data['role'] as String, branchId: (data['branchId'] ?? '') as String, name: (data['name'] ?? '') as String);
+          final home = Home(key:ValueKey('${auth.data!.uid}:${data['role']}'), uid: auth.data!.uid, role: data['role'] as String, branchId: (data['branchId'] ?? '') as String, name: (data['name'] ?? '') as String);
           return data['role'] == 'owner' ? OwnerSecurity(child: home) : home;
         },
       );
@@ -435,6 +441,8 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> {
   int page = 0;
+  @override void initState() { super.initState(); if(widget.role == 'owner') ChequeReminders.instance.watch(widget.uid); }
+  @override void dispose() { if(widget.role == 'owner') ChequeReminders.instance.stop(); super.dispose(); }
 
   void openPage(String title, Widget child) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
@@ -535,7 +543,11 @@ class OwnerDashboard extends StatelessWidget {
         Expanded(child: tile('الموردين', Icons.local_shipping_outlined, () => openPage('الموردين', const Accounts(startWithSuppliers: true)), height)),
       ]),
       const SizedBox(height: gap),
-      tile('سندات صرف الموردين', Icons.receipt_long, () => openPage('سندات صرف الموردين', const SupplierPaymentVouchers()), 132),
+      Row(children:[
+        Expanded(child:tile('سندات صرف الموردين', Icons.receipt_long, () => openPage('سندات صرف الموردين', const SupplierPaymentVouchers()), 132)),
+        const SizedBox(width:gap),
+        Expanded(child:tile('مواعيد الشيكات',Icons.event_note,() => openPage('مواعيد الشيكات',ChequeAgenda(uid:uid)),132)),
+      ]),
       const SizedBox(height: 18),
       const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         Icon(Icons.info_outline, color: gold, size: 20), SizedBox(width: 8),
