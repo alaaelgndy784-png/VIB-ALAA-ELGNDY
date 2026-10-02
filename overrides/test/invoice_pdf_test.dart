@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/main.dart';
 
@@ -26,6 +27,31 @@ void main() {
       expect(find.byType(InvoiceSavedDialog), findsNothing);
     });
   }
+  testWidgets('invoice error appears above open purchase dialog and leaves form intact', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: Builder(builder: (context) =>
+      TextButton(onPressed: () => showDialog<void>(context: context, builder: (invoiceContext) =>
+        AlertDialog(title: const Text('فاتورة مشتريات'), actions: [
+          TextButton(onPressed: () => showInvoiceSaveProblem(invoiceContext, 'قيمة المدفوع غير صحيحة'),
+            child: const Text('حفظ الفاتورة')),
+        ])), child: const Text('open'))))));
+    await tester.tap(find.text('open'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('حفظ الفاتورة'));
+    await tester.pumpAndSettle();
+    expect(find.text('تنبيه حفظ الفاتورة'), findsOneWidget);
+    expect(find.text('قيمة المدفوع غير صحيحة'), findsOneWidget);
+    expect(find.byType(SnackBar), findsNothing);
+    await tester.tap(find.text('رجوع لتعديل الفاتورة'));
+    await tester.pumpAndSettle();
+    expect(find.text('تنبيه حفظ الفاتورة'), findsNothing);
+    expect(find.text('فاتورة مشتريات'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+  test('permission failure is explained without reporting success', () {
+    final text = invoiceSaveFailureMessage(FirebaseException(plugin: 'cloud_firestore', code: 'permission-denied'));
+    expect(text, contains('الخادم رفض صلاحيات العملية'));
+    expect(text, isNot(contains('تم حفظ')));
+  });
   final rows = [
     {'productName': 'حنفية غسالة تركي', 'quantity': 2, 'unitPrice': 175, 'lineTotal': 350},
     {'productName': 'حنفية نصف بوصة الحياة', 'quantity': 3, 'unitPrice': 195, 'lineTotal': 585},

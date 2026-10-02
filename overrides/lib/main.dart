@@ -1035,12 +1035,13 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         actions: [
           TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
+            FocusScope.of(c).unfocus();
             if (!owner && lines.length > 4) {
-              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('فاتورة الموظف تقبل حتى 4 أصناف مختلفة لضمان حفظ المخزون والحسابات معًا. استخدم فاتورة أخرى لباقي الأصناف.')));
+              await showInvoiceSaveProblem(c, 'فاتورة الموظف تقبل حتى 4 أصناف مختلفة لضمان حفظ المخزون والحسابات معًا. استخدم فاتورة أخرى لباقي الأصناف.');
               return;
             }
             if (lines.isEmpty) {
-              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('أضف منتجًا واحدًا على الأقل قبل حفظ الفاتورة')));
+              await showInvoiceSaveProblem(c, 'أضف منتجًا واحدًا على الأقل قبل حفظ الفاتورة');
               return;
             }
             final entries = <({String id, String name, int qty, double price, double? cost})>[];
@@ -1051,13 +1052,13 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               final qty = int.tryParse(row.quantity.text.trim());
               final price = double.tryParse(row.price.text.trim().replaceAll(',', '.'));
               if (id == null || qty == null || qty <= 0 || price == null || !price.isFinite || price < 0 || entries.any((e) => e.id == id)) {
-                ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('راجع البنود: المنتج والكمية والسعر، ولا تكرر نفس المنتج')));
+                await showInvoiceSaveProblem(c, 'راجع البنود: المنتج والكمية والسعر، ولا تكرر نفس المنتج');
                 return;
               }
               final p = productDoc(id).data();
               final cost = (p['purchasePrice'] as num?)?.toDouble();
               if (cost != null && price < cost && !(owner && allowBelowCost)) {
-                ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('سعر ${p['name']} أقل من التكلفة')));
+                await showInvoiceSaveProblem(c, 'سعر ${p['name']} أقل من التكلفة');
                 return;
               }
               entries.add((id: id, name: '${p['name'] ?? ''}', qty: qty, price: price, cost: cost));
@@ -1066,16 +1067,16 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
             final payment = credit ? (double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? -1) : total;
             if (payment < 0 || payment > total) {
-              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('قيمة المدفوع غير صحيحة')));
+              await showInvoiceSaveProblem(c, 'قيمة المدفوع غير صحيحة');
               return;
             }
             final due = total - payment;
             if ((!owner || due > 0) && customerId.isEmpty) {
-              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اختر عميلًا مسجلًا لربط الفاتورة ورصيد المديونية بحسابه')));
+              await showInvoiceSaveProblem(c, 'اختر عميلًا مسجلًا لربط الفاتورة ورصيد المديونية بحسابه');
               return;
             }
             if ((allowShortage || allowBelowCost) && reason.text.trim().isEmpty) {
-              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اكتب سبب الاستثناء')));
+              await showInvoiceSaveProblem(c, 'اكتب سبب الاستثناء');
               return;
             }
 
@@ -1260,11 +1261,11 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
             } catch (e) {
               if (c.mounted) {
                 update(() => saving = false);
-                final message = 'تعذر حفظ الفاتورة: $e';
-                ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text(message)));
+                final message = invoiceSaveFailureMessage(e);
+                await showInvoiceSaveProblem(c, message);
               }
             }
-          }, child: const Text('حفظ الفاتورة')),
+          }, child: InvoiceSaveButtonLabel(saving: saving)),
         ],
       );
     }),
@@ -2192,8 +2193,9 @@ Future<void> purchaseDialog(BuildContext context) async {
         actions: [
           TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
+            FocusScope.of(c).unfocus();
             if (lines.isEmpty) {
-              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('أضف منتجًا واحدًا على الأقل قبل حفظ الفاتورة')));
+              await showInvoiceSaveProblem(c, 'أضف منتجًا واحدًا على الأقل قبل حفظ الفاتورة');
               return;
             }
             final entries = <({String id, int qty, double cost})>[];
@@ -2202,7 +2204,7 @@ Future<void> purchaseDialog(BuildContext context) async {
               final qty = int.tryParse(row.quantity.text.trim());
               final unitCost = double.tryParse(row.cost.text.trim().replaceAll(',', '.'));
               if (row.productId == null || qty == null || qty <= 0 || unitCost == null || !unitCost.isFinite || unitCost < 0 || entries.any((e) => e.id == row.productId)) {
-                ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('راجع كل بند: المنتج والكمية والسعر، ولا تكرر نفس المنتج')));
+                await showInvoiceSaveProblem(c, 'راجع كل بند: المنتج والكمية والسعر، ولا تكرر نفس المنتج');
                 return;
               }
               entries.add((id: row.productId!, qty: qty, cost: unitCost));
@@ -2211,11 +2213,11 @@ Future<void> purchaseDialog(BuildContext context) async {
             final payment = double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? -1;
             final increase = markup.text.trim().isEmpty ? null : double.tryParse(markup.text.trim().replaceAll(',', '.'));
             if (!total.isFinite || !payment.isFinite || payment < 0 || payment > total) {
-              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('قيمة المدفوع غير صحيحة')));
+              await showInvoiceSaveProblem(c, 'قيمة المدفوع غير صحيحة');
               return;
             }
             if (markup.text.trim().isNotEmpty && (increase == null || !increase.isFinite || increase < 0 || increase > 1000)) {
-              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('نسبة زيادة سعر البيع غير صحيحة')));
+              await showInvoiceSaveProblem(c, 'نسبة زيادة سعر البيع غير صحيحة');
               return;
             }
 
@@ -2328,10 +2330,10 @@ Future<void> purchaseDialog(BuildContext context) async {
             } catch (e) {
               if (c.mounted) {
                 setLocal(() => saving = false);
-                ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر حفظ الفاتورة: $e')));
+                await showInvoiceSaveProblem(c, invoiceSaveFailureMessage(e));
               }
             }
-          }, child: const Text('حفظ الفاتورة')),
+          }, child: InvoiceSaveButtonLabel(saving: saving)),
         ],
       );
     }),
@@ -3591,6 +3593,48 @@ Future<void> sendInvoiceWhatsApp(BuildContext context, String id, Map<String, dy
 }
 
 
+
+
+class InvoiceSaveButtonLabel extends StatelessWidget {
+  final bool saving;
+  const InvoiceSaveButtonLabel({super.key, required this.saving});
+  @override Widget build(BuildContext context) => saving
+    ? const Row(mainAxisSize: MainAxisSize.min, children: [
+        SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)),
+        SizedBox(width: 8), Text('جاري حفظ الفاتورة…'),
+      ])
+    : const Text('حفظ الفاتورة');
+}
+
+String invoiceSaveFailureMessage(Object error) {
+  if (error is FirebaseException) {
+    if (error.code == 'permission-denied') {
+      return 'تعذر حفظ الفاتورة: الخادم رفض صلاحيات العملية. راجع تفعيل الحساب وقواعد حفظ الفواتير.\nرمز الخطأ: permission-denied';
+    }
+    if (error.code == 'unavailable' || error.code == 'deadline-exceeded') {
+      return 'تعذر تأكيد حفظ الفاتورة بسبب الاتصال بالخادم. راجع الاتصال ثم حاول مرة أخرى من نفس الفاتورة.\nرمز الخطأ: ${error.code}';
+    }
+    if (error.code == 'unauthenticated') return 'انتهت جلسة الدخول. سجّل الدخول مرة أخرى ثم أعد المحاولة.';
+  }
+  return 'تعذر حفظ الفاتورة: $error';
+}
+
+Future<void> showInvoiceSaveProblem(BuildContext context, String message) async {
+  if (!context.mounted) return;
+  FocusScope.of(context).unfocus();
+  await showDialog<void>(
+    context: context, useRootNavigator: true, barrierDismissible: false,
+    builder: (dialog) => Directionality(textDirection: TextDirection.rtl,
+      child: AlertDialog(
+        title: const Row(children: [
+          Icon(Icons.error_outline, color: Colors.orangeAccent), SizedBox(width: 8),
+          Expanded(child: Text('تنبيه حفظ الفاتورة')),
+        ]),
+        content: SingleChildScrollView(child: SelectableText(message)),
+        actions: [FilledButton(onPressed: () => Navigator.pop(dialog), child: const Text('رجوع لتعديل الفاتورة'))],
+      )),
+  );
+}
 
 class InvoiceSavedDialog extends StatelessWidget {
   final String invoiceId;
