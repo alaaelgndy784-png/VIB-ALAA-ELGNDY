@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
@@ -15,6 +16,44 @@ void main() {
     await (FontLoader('VibPreview')..addFont(rootBundle.load('assets/fonts/DejaVuSans.ttf'))).load();
     await (FontLoader('MaterialIcons')..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
   });
+  for(final width in [360.0,564.0]) {
+    testWidgets('invoice product dropdown shows complete name, live stock and unit cost at $width', (tester) async {
+      tester.view.physicalSize=Size(width,760);tester.view.devicePixelRatio=1;
+      addTearDown(() {tester.view.resetPhysicalSize();tester.view.resetDevicePixelRatio();});
+      final stock=StreamController<int?>.broadcast();
+      final boundaryKey=GlobalKey();String? selected;
+      const name='بوش الحياة نحاس اسم المنتج كامل 1.5×1';
+      await tester.pumpWidget(RepaintBoundary(key:boundaryKey,child:MaterialApp(
+        theme:ThemeData(brightness:Brightness.dark,fontFamily:'VibPreview'),home:Scaffold(body:MediaQuery(
+          data:MediaQueryData(size:Size(width,760),textScaler:const TextScaler.linear(1.3)),
+          child:Directionality(textDirection:TextDirection.rtl,child:Padding(padding:const EdgeInsets.all(12),
+            child:InvoiceProductsBar(products:const [(id:'a',name:name),(id:'b',name:'صنف بدون تكلفة')],
+              unitCosts:const {'a':145.5},stockStreamFor:(id)=>id=='a' ? stock.stream : Stream<int?>.value(0),
+              enabled:true,onSearch:() {},onSelect:(id)=>selected=id),
+          ))),
+        ))));
+      await tester.tap(find.byType(DropdownButton<String>));await tester.pumpAndSettle();
+      stock.add(24);await tester.pumpAndSettle();
+      expect(find.text(name),findsOneWidget);
+      expect(find.text('المتاح: 24'),findsOneWidget);
+      expect(find.text('المتاح: 0'),findsOneWidget);
+      expect(find.text('تكلفة الوحدة: 145.50 ج.م'),findsOneWidget);
+      expect(find.text('تكلفة الوحدة: غير مسجلة'),findsOneWidget);
+      stock.add(18);await tester.pumpAndSettle();expect(find.text('المتاح: 18'),findsOneWidget);
+      Directory('dist').createSync(recursive:true);
+      await tester.runAsync(() async {
+        final boundary=boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+        final image=await boundary.toImage(pixelRatio:2);final data=await image.toByteData(format:ui.ImageByteFormat.png);
+        File('dist/VIB-PRODUCT-CHOICES-${width.toInt()}.png').writeAsBytesSync(data!.buffer.asUint8List());image.dispose();
+      });
+      stock.addError(StateError('permission denied'));await tester.pumpAndSettle();
+      expect(find.text('المتاح: تعذر التحميل'),findsOneWidget); // Never silently report zero stock on failure.
+      await tester.tap(find.text(name));await tester.pumpAndSettle();expect(selected,'a');
+      expect(tester.takeException(),isNull);
+      await tester.pumpWidget(const SizedBox());await stock.close();
+    });
+  }
+
   testWidgets('purchase final line total sets discounted cost without rounding drift and survives checkout', (tester) async {
     final cost=TextEditingController(text:'100');
     final quantity=TextEditingController(text:'10');

@@ -865,6 +865,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         title: checkout ? 'حفظ فاتورة المبيعات' : 'فاتورة مبيعات',checkout:checkout,total:previewTotal,
         headerAction:IgnorePointer(ignoring:saving,child:ChatShortcut(owner:owner)),
         toolbar:InvoiceProductsBar(
+          unitCosts:{for(final product in products) product.id:product.data()['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
           products:[for(final product in products) if(!lines.any((row)=>row.productId == product.id))
             (id:product.id,name:'${product.data()['name'] ?? ''}')],
           enabled:!saving && lines.length < (owner ? 50 : 4),onSelect:addSelected,
@@ -1868,8 +1869,7 @@ Future<String?> pickPurchaseProduct(
                         final d = p.data();
                         return ListTile(
                           leading: Text('${i + 1}', style: const TextStyle(color: gold)),
-                          title: Text('${d['name'] ?? ''}', softWrap: true),
-                          subtitle: Text('سعر الشراء: ${d['purchasePrice'] ?? 0} ج.م'),
+                          title: InvoiceProductOptionRow(name:'${d['name'] ?? ''}',unitCost:d['purchasePrice'] as num?,quantityStream:invoiceMainStock(p.id)),
                           trailing: const Icon(Icons.chevron_left, color: gold),
                           onTap: () => Navigator.pop(sheet, p.id),
                         );
@@ -2148,6 +2148,7 @@ Future<void> purchaseDialog(BuildContext context) async {
         title:checkout ? 'حفظ فاتورة المشتريات' : 'فاتورة مشتريات',checkout:checkout,total:previewTotal,
         headerAction:IgnorePointer(ignoring:saving,child:const ChatShortcut(owner:true)),
         toolbar:InvoiceProductsBar(
+          unitCosts:{for(final product in products.docs) product.id:product.data()['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
           products:[for(final product in products.docs) if(!lines.any((row)=>row.productId == product.id))
             (id:product.id,name:'${product.data()['name'] ?? ''}')],
           enabled:!saving && lines.length < 50,onSelect:addSelected,
@@ -4736,9 +4737,7 @@ Future<String?> selectSaleProduct(BuildContext context, List<QueryDocumentSnapsh
         Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد أصناف مطابقة')) : ListView.separated(separatorBuilder: (_, __) => const Divider(height: 1), itemCount: rows.length, itemBuilder: (context, index) {
           final row = rows[index];
           return ListTile(leading: Text('${index + 1}', style: const TextStyle(color: gold)),
-            title: Text('${row.data()['name'] ?? ''}', softWrap: true),
-            subtitle: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(stream: db.collection('stock').doc('main_${row.id}').snapshots(),
-              builder: (context, stock) => Text('السعر: ${row.data()['price'] ?? 0} ج.م • المتاح: ${stock.hasError ? 'تعذر التحميل' : !stock.hasData ? 'جارٍ التحميل' : stock.data?.data()?['quantity'] ?? 0}')),
+            title: InvoiceProductOptionRow(name:'${row.data()['name'] ?? ''}',unitCost:row.data()['purchasePrice'] as num?,quantityStream:invoiceMainStock(row.id)),
             trailing: Icon(added.contains(row.id) ? Icons.check : Icons.add, color: gold),
             onTap: added.contains(row.id) ? null : () => Navigator.pop(dialog, row.id));
         })),

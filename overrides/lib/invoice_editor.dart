@@ -35,17 +35,46 @@ class InvoiceEditorFrame extends StatelessWidget {
 class InvoiceProductsBar extends StatelessWidget {
   final List<({String id,String name})> products;
   final bool enabled;
+  final Map<String,num?> unitCosts;
+  final Stream<int?> Function(String)? stockStreamFor;
   final VoidCallback onSearch;
   final ValueChanged<String> onSelect;
-  const InvoiceProductsBar({super.key,required this.products,required this.enabled,required this.onSearch,required this.onSelect});
+  const InvoiceProductsBar({super.key,required this.products,required this.enabled,required this.onSearch,required this.onSelect,this.unitCosts=const {},this.stockStreamFor});
   @override Widget build(BuildContext context) => Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
     OutlinedButton.icon(onPressed:enabled ? onSearch : null,icon:const Icon(Icons.search,color:gold),label:const Text('بحث')),
     const SizedBox(height:6),
     DropdownButtonFormField<String>(
-      key:ValueKey(products.map((p)=>p.id).join('|')),isExpanded:true,
+      key:ValueKey(products.map((p)=>p.id).join('|')),isExpanded:true,itemHeight:null,
+      menuMaxHeight:MediaQuery.sizeOf(context).height*.7,dropdownColor:const Color(0xFF111015),
       decoration:_vibInvoiceInput('اختيار الصنف'),hint:const Text('اختيار الصنف'),
-      items:products.map((p)=>DropdownMenuItem(value:p.id,child:Text(p.name,maxLines:2,overflow:TextOverflow.ellipsis))).toList(),
+      selectedItemBuilder:(context)=>products.map((p)=>Align(alignment:AlignmentDirectional.centerStart,
+        child:Text(p.name,maxLines:1,overflow:TextOverflow.ellipsis))).toList(),
+      items:products.map((p)=>DropdownMenuItem(value:p.id,child:Padding(padding:const EdgeInsets.symmetric(vertical:8),
+        child:InvoiceProductOptionRow(name:p.name,unitCost:unitCosts[p.id],quantityStream:stockStreamFor?.call(p.id))))).toList(),
       onChanged:enabled ? (id) {if(id != null) onSelect(id);} : null,
     ),
+  ]);
+}
+
+
+Stream<int?> invoiceMainStock(String productId) => db.collection('stock').doc('main_$productId').snapshots()
+    .map((snapshot) => snapshot.exists ? (snapshot.data()?['quantity'] as num?)?.toInt() : 0);
+
+class InvoiceProductOptionRow extends StatelessWidget {
+  final String name;
+  final num? unitCost;
+  final Stream<int?>? quantityStream;
+  const InvoiceProductOptionRow({super.key,required this.name,this.unitCost,this.quantityStream});
+  @override Widget build(BuildContext context) => Row(crossAxisAlignment:CrossAxisAlignment.center,children:[
+    Expanded(flex:5,child:Text(name,softWrap:true,style:const TextStyle(fontSize:14))),
+    const SizedBox(width:8),
+    Expanded(flex:4,child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+      StreamBuilder<int?>(stream:quantityStream,builder:(context,snapshot)=>Text(
+        'المتاح: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.connectionState == ConnectionState.waiting ? 'جارٍ التحميل' : snapshot.data == null ? 'غير متاح' : snapshot.data}',
+        softWrap:true,style:const TextStyle(fontSize:12,color:gold))),
+      const SizedBox(height:3),
+      Text('تكلفة الوحدة: ${unitCost == null ? 'غير مسجلة' : '${unitCost!.toStringAsFixed(2)} ج.م'}',
+        softWrap:true,style:const TextStyle(fontSize:12)),
+    ])),
   ]);
 }
