@@ -3694,6 +3694,11 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   pw.Text text(String value, {double? fontSize, bool bold = false, PdfColor? color, pw.TextAlign align = pw.TextAlign.right}) =>
     pw.Text(value, textAlign: align, style: pw.TextStyle(fontSize: fontSize ?? size,
       fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal, color: color ?? PdfColors.black));
+  pw.Widget identifier(String label, String value) => pw.Row(children: [
+    text('$label: '),
+    pw.Directionality(textDirection: pw.TextDirection.ltr,
+      child: text(value, align: pw.TextAlign.left)),
+  ]);
   pw.Widget brand() => pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
     pw.Center(child: pw.Image(logo, width: thermal ? 38 : 62, height: thermal ? 38 : 62)),
     pw.SizedBox(height: 6), text(company, fontSize: thermal ? 12 : 22, bold: true, color: navy, align: pw.TextAlign.center),
@@ -3701,8 +3706,8 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
     if (address.isNotEmpty) ...[pw.SizedBox(height: 4), text('العنوان: $address', fontSize: size, align: pw.TextAlign.center)],
     if (!thermal && (taxNumber.isNotEmpty || commercialRegister.isNotEmpty)) ...[
       pw.SizedBox(height: 6), pw.Row(children: [
-        if (taxNumber.isNotEmpty) pw.Expanded(child: text('رقم البطاقة الضريبية: $taxNumber')),
-        if (commercialRegister.isNotEmpty) pw.Expanded(child: text('رقم السجل التجاري: $commercialRegister')),
+        if (taxNumber.isNotEmpty) pw.Expanded(child: identifier('رقم البطاقة الضريبية', taxNumber)),
+        if (commercialRegister.isNotEmpty) pw.Expanded(child: identifier('رقم السجل التجاري', commercialRegister)),
       ]),
     ],
     if (phones.isNotEmpty) ...[pw.SizedBox(height: 4), pw.Wrap(alignment: pw.WrapAlignment.center, spacing: 10, runSpacing: 3,
