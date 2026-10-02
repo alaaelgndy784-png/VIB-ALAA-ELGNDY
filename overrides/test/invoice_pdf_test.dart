@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show rootBundle, FontLoader;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -11,6 +11,10 @@ import '../lib/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() async {
+    await (FontLoader('VibPreview')..addFont(rootBundle.load('assets/fonts/DejaVuSans.ttf'))).load();
+    await (FontLoader('MaterialIcons')..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
+  });
   for (final thermal in [false,true]) {
     test('supplier payment voucher renders balances on ${thermal ? '80MM' : 'A4'}', () async {
       final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
@@ -31,7 +35,8 @@ void main() {
       final paid=TextEditingController(text:'200');
       final ids=List.generate(21,(i)=>i);
       final boundaryKey=GlobalKey();var checkout=false,credit=true,saves=0;
-      await tester.pumpWidget(RepaintBoundary(key:boundaryKey,child:MaterialApp(theme:ThemeData.dark(),home:Scaffold(
+      await tester.pumpWidget(RepaintBoundary(key:boundaryKey,child:MaterialApp(theme:ThemeData(brightness:Brightness.dark,fontFamily:'VibPreview',
+        colorScheme:ColorScheme.fromSeed(seedColor:gold,brightness:Brightness.dark)),home:Scaffold(
         body:MediaQuery(data:MediaQueryData(size:Size(width,760),textScaler:const TextScaler.linear(1.3)),
           child:Directionality(textDirection:TextDirection.rtl,child:StatefulBuilder(builder:(context,update)=>InvoiceEditorFrame(
             title:checkout ? 'حفظ الفاتورة' : sale ? 'فاتورة مبيعات' : 'فاتورة مشتريات',checkout:checkout,total:94386,
