@@ -1645,12 +1645,18 @@ class _ProfitReportState extends State<ProfitReport> {
             builder: (context, salesSnap) {
               if (salesSnap.hasError) return const Center(child: Text('تعذر تحميل المبيعات'));
               if (!salesSnap.hasData) return const Center(child: CircularProgressIndicator());
-              final sales = salesSnap.data!.docs.where((d) => visibleAfterReset(d.data()) && d.data()['status'] != 'returned').toList();
+              final sales = salesSnap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
+              return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: db.collection('salesReturns').where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start)).where('createdAt', isLessThan: Timestamp.fromDate(end)).snapshots(),
+                builder: (context, returnsSnap) {
+                  if (returnsSnap.hasError) return const Center(child: Text('تعذر تحميل المرتجعات'));
+                  if (!returnsSnap.hasData) return const Center(child: CircularProgressIndicator());
+                  final returns = returnsSnap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
               double revenue = 0, knownCost = 0;
               int missingCost = 0;
-              for (final item in sales) {
-                final sale = item.data();
-                revenue += (sale['total'] as num?)?.toDouble() ?? 0;
+              for (final event in [...sales.map((d) => (data: d.data(), sign: 1)), ...returns.map((d) => (data: d.data(), sign: -1))]) {
+                final sale = event.data;
+                revenue += event.sign * ((sale['total'] as num?)?.toDouble() ?? 0);
                 final rawItems = (sale['items'] as List?) ?? const [];
                 if (rawItems.isNotEmpty) {
                   for (final raw in rawItems) {
@@ -1660,7 +1666,7 @@ class _ProfitReportState extends State<ProfitReport> {
                     final currentCost = products['${raw['productId']}']?['purchasePrice'];
                     final cost = storedCost ?? (currentCost is num ? currentCost.toDouble() : null);
                     if (cost != null && cost >= 0) {
-                      knownCost += qty * cost;
+                      knownCost += event.sign * qty * cost;
                     } else {
                       missingCost++;
                     }
@@ -1669,7 +1675,7 @@ class _ProfitReportState extends State<ProfitReport> {
                   final qty = (sale['quantity'] as num?)?.toDouble() ?? 0;
                   final cost = products['${sale['productId']}']?['purchasePrice'];
                   if (cost is num && cost >= 0) {
-                    knownCost += qty * cost.toDouble();
+                    knownCost += event.sign * qty * cost.toDouble();
                   } else {
                     missingCost++;
                   }
@@ -1681,7 +1687,8 @@ class _ProfitReportState extends State<ProfitReport> {
                 final expenses = expensesSnap.data!.docs.where((d) { final data = d.data(); final date = (data['createdAt'] as Timestamp?)?.toDate(); return visibleAfterReset(data) && date != null && !date.isBefore(start) && date.isBefore(end); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
               return ListView(padding: const EdgeInsets.all(16), children: [
                 ListTile(title: const Text('عدد فواتير البيع'), trailing: Text('${sales.length}')),
-                ListTile(title: const Text('إجمالي المبيعات'), trailing: Text('${revenue.toStringAsFixed(2)} ج.م')),
+                ListTile(title: const Text('عدد المرتجعات خلال الفترة'), trailing: Text('${returns.length}')),
+                ListTile(title: const Text('صافي المبيعات بعد المرتجعات'), trailing: Text('${revenue.toStringAsFixed(2)} ج.م')),
                 ListTile(title: const Text('تكلفة الأصناف المعروفة'), trailing: Text('${knownCost.toStringAsFixed(2)} ج.م')),
                 ListTile(title: const Text('المصروفات'), trailing: Text('${expenses.toStringAsFixed(2)} ج.م')),
                 ListTile(title: const Text('الربح الإجمالي التقديري'),
@@ -1692,6 +1699,7 @@ class _ProfitReportState extends State<ProfitReport> {
                 const SizedBox(height: 16),
                 const Text('هذا تقدير حسب سعر الشراء المسجل حاليًا للصنف. يشمل المصروفات المسجلة في الفترة، وقد يختلف إذا تغيرت التكلفة بعد البيع.'),
               ]);
+              });
               });
             },
           );
@@ -1850,9 +1858,17 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
           }
 
           final before = (supplierSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
+          final cashRef = db.collection('settings').doc('cash');
+          final cashSnapshot = await tx.get(cashRef);
+          final cashBefore = (cashSnapshot.data()?['balance'] as num?)?.toDouble() ?? 0;
+          if (cashBefore < payment) throw Exception('رصيد الصندوق لا يكفي لسداد المشتريات');
           final due = total - payment;
           final actor = FirebaseAuth.instance.currentUser!.uid;
           final items = <Map<String, dynamic>>[];
+          if (payment > 0) {
+            tx.set(cashRef, {'balance': cashBefore - payment, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+            tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'purchasePayment', 'amount': payment, 'delta': -payment, 'balanceBefore': cashBefore, 'balanceAfter': cashBefore - payment, 'accountId': supplierId, 'accountName': supplier['name'], 'referenceId': purchaseRef.id, 'reason': 'سداد فاتورة مشتريات', 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+          }
 
           tx.update(supplierRef, {'balance': before + due, 'updatedAt': FieldValue.serverTimestamp()});
 
@@ -1903,6 +1919,7 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
             'itemCount': items.length,
             'total': total,
             'paid': payment,
+                  'cashPosted': true,
             'due': due,
             'status': 'completed',
             'actorId': actor,
@@ -2196,7 +2213,7 @@ Future<void> purchaseDialog(BuildContext context) async {
             }
             final payment = double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? 0;
             final increase = markup.text.trim().isEmpty ? null : double.tryParse(markup.text.trim().replaceAll(',', '.'));
-            if (payment < 0 || payment > total) {
+            if (!payment.isFinite || payment < 0 || payment > total) {
               ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('قيمة المدفوع غير صحيحة')));
               return;
             }
@@ -2220,9 +2237,17 @@ Future<void> purchaseDialog(BuildContext context) async {
                 }
 
                 final beforeBalance = (supplierSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
-                final due = total - payment;
+                final cashRef = db.collection('settings').doc('cash');
+          final cashSnapshot = await tx.get(cashRef);
+          final cashBefore = (cashSnapshot.data()?['balance'] as num?)?.toDouble() ?? 0;
+          if (cashBefore < payment) throw Exception('رصيد الصندوق لا يكفي لسداد المشتريات');
+          final due = total - payment;
                 final actor = FirebaseAuth.instance.currentUser!.uid;
                 final items = <Map<String, dynamic>>[];
+          if (payment > 0) {
+            tx.set(cashRef, {'balance': cashBefore - payment, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+            tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'purchasePayment', 'amount': payment, 'delta': -payment, 'balanceBefore': cashBefore, 'balanceAfter': cashBefore - payment, 'accountId': supplierId, 'accountName': supplier['name'], 'referenceId': purchaseRef.id, 'reason': 'سداد فاتورة مشتريات', 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+          }
 
                 tx.update(supplierRef, {'balance': beforeBalance + due, 'updatedAt': FieldValue.serverTimestamp()});
 
@@ -2272,6 +2297,7 @@ Future<void> purchaseDialog(BuildContext context) async {
                   'itemCount': items.length,
                   'total': total,
                   'paid': payment,
+                  'cashPosted': true,
                   'due': due,
                   'status': 'completed',
                   'source': 'manual',
@@ -2337,7 +2363,7 @@ class AccountMovements extends StatelessWidget {
   );
 }
 
-String movementName(String kind) => switch (kind) { 'purchase' => 'مشتريات', 'payment' => 'سداد مورد', 'collection' => 'تحصيل عميل', 'sale' => 'مبيعات', 'sales_return' => 'مرتجع مبيعات', 'purchase_return' => 'مرتجع مشتريات', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر', 'adjustment' => 'تسوية مخزون', _ => kind };
+String movementName(String kind) => switch (kind) { 'purchase' => 'مشتريات', 'payment' => 'سداد مورد', 'collection' => 'تحصيل عميل', 'sale' => 'مبيعات', 'sales_return' => 'مرتجع مبيعات', 'purchase_return' => 'مرتجع مشتريات', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر', 'adjustment' => 'تسوية مخزون', 'purchasePayment' => 'سداد فاتورة مشتريات', 'supplierPayment' => 'سداد مورد', 'customerCollection' => 'تحصيل عميل', 'deposit' => 'إيداع بالصندوق', 'withdrawal' => 'سحب من الصندوق', 'expense' => 'مصروف', 'opening' => 'رصيد افتتاحي', _ => kind };
 
 Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynamic> data) async {
   final name = TextEditingController(text: '${data['name'] ?? ''}');
@@ -2465,13 +2491,13 @@ class ReceiptVouchers extends StatelessWidget {
   }
 }
 
-Future<void> createReceiptVoucher(BuildContext context, String branchId) async {
+Future<void> createReceiptVoucher(BuildContext context, String branchId, {String? initialCustomerId}) async {
   final amount = TextEditingController(), note = TextEditingController(), invoiceNumber = TextEditingController();
   // Reuse this ID on transaction retries and after an uncertain network response.
   final receiptRef = db.collection('receipts').doc();
   final customerMovement = db.collection('accountMovements').doc();
   final cashMovement = db.collection('accountMovements').doc();
-  String? customerId;
+  String? customerId = initialCustomerId;
   bool saving = false;
   await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(
     builder: (dialog, update) => AlertDialog(
@@ -2675,6 +2701,10 @@ Future<void> createAccountDialog(BuildContext context, String collection, bool s
 }
 
 Future<void> accountDialog(BuildContext context, String collection, String id, Map<String, dynamic> account) async {
+  if (collection == 'customers') {
+    await createReceiptVoucher(context, 'main', initialCustomerId: id);
+    return;
+  }
   final amount = TextEditingController();
   final isSupplier = collection == 'suppliers';
   await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
@@ -3345,6 +3375,7 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
       added.add(addition);
     }
     final payment = cents(extraPaid), addedDue = addedTotal - payment;
+    if (purchase && cents((cash?['balance'] as num?) ?? 0) < payment) throw Exception('رصيد الصندوق لا يكفي لسداد المشتريات');
     if (additions.isEmpty || items.length > 50 || addedTotal > 1000000000000 || payment < 0 || addedDue < 0) {
       throw Exception('راجع البنود وقيمة المدفوع');
     }
@@ -3386,6 +3417,7 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
     tx.update(invoiceRef, {'items': items, 'itemCount': items.length, 'total': total / 100, 'paid': paid / 100,
       'due': (total - paid) / 100, 'paymentStatus': total > paid ? 'credit' : 'cash',
       'revision': revision + 1, 'updatedAt': FieldValue.serverTimestamp(), 'lastEditedBy': actor,
+      if (purchase) 'cashPaidPosted': (cents((old['cashPaidPosted'] as num?) ?? 0) + payment) / 100,
       if (!purchase) 'customerBalanceAfter': account == null ? 0 :
         (cents((account['balance'] as num?) ?? 0) + addedDue) / 100,
       if (items.length == 1) ...{'productId': items.first['productId'], 'productName': items.first['productName'],
@@ -3530,49 +3562,6 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
     for (final line in lines) { line.dispose(); }
     paid.dispose(); search.dispose();
   }
-}
-
-Future<void> correctSaleDialog(BuildContext context, String id, Map<String, dynamic> data) async {
-  final quantity = TextEditingController(text: '${data['quantity'] ?? 1}');
-  final price = TextEditingController(text: '${data['unitPrice'] ?? 0}');
-  final reason = TextEditingController();
-  await showDialog<void>(context: context, builder: (dialog) => AlertDialog(title: const Text('تصحيح فاتورة بيع'), content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-    const Text('ستبقى الفاتورة الأصلية محفوظة كمرتجع، وتُنشأ فاتورة بديلة مع تعديل المخزون.'),
-    TextField(controller: quantity, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الكمية الجديدة')),
-    TextField(controller: price, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'سعر البيع الجديد')),
-    TextField(controller: reason, decoration: const InputDecoration(labelText: 'سبب التصحيح (إلزامي)')),
-  ])), actions: [TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء')), FilledButton(onPressed: () async {
-    final qty = int.tryParse(quantity.text), unit = double.tryParse(price.text);
-    if (qty == null || qty <= 0 || unit == null || !unit.isFinite || unit < 0 || reason.text.trim().isEmpty) {
-      ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content: Text('أدخل كمية وسعرًا صحيحين وسبب التصحيح'))); return;
-    }
-    final replacement = db.collection('sales').doc();
-    try {
-      await db.runTransaction((tx) async {
-        final oldRef = db.collection('sales').doc(id), old = await tx.get(oldRef);
-        if (!old.exists || old.data()?['status'] != 'completed') throw Exception('الفاتورة غير متاحة للتصحيح');
-        final original = old.data()!;
-        final productId = '${original['productId']}', branch = '${original['branchId']}';
-        final stockRef = db.collection('stock').doc('${branch}_$productId');
-        final stock = await tx.get(stockRef);
-        final product = await tx.get(db.collection('products').doc(productId));
-        final oldQty = (original['quantity'] as num).toInt();
-        final current = (stock.data()?['quantity'] as num?)?.toInt() ?? 0;
-        final balance = current + oldQty - qty;
-        if (balance < 0) throw Exception('الكمية الجديدة تتجاوز المخزون؛ صحح المخزون أو استخدم عملية بيع بموافقة المدير');
-        final cost = (product.data()?['purchasePrice'] as num?)?.toDouble();
-        if (cost != null && unit < cost) throw Exception('السعر الجديد أقل من تكلفة الشراء');
-        tx.update(oldRef, {'status': 'returned', 'returnedAt': FieldValue.serverTimestamp(), 'returnId': replacement.id});
-        tx.set(replacement, {'branchId': branch, 'employeeId': FirebaseAuth.instance.currentUser!.uid, 'customerPhone': original['customerPhone'] ?? '', 'productId': productId, 'productName': original['productName'], 'quantity': qty, 'unitPrice': unit, 'total': qty * unit, 'status': 'completed', 'createdAt': FieldValue.serverTimestamp(), 'correctsInvoiceId': id, 'correctionReason': reason.text.trim()});
-        tx.set(stockRef, {'branchId': branch, 'productId': productId, 'quantity': balance, 'lastSaleId': replacement.id}, SetOptions(merge: true));
-        for (final move in [('correction_return', oldQty, current + oldQty, id), ('correction_sale', -qty, balance, replacement.id)]) {
-          tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': original['productName'], 'branchId': branch, 'kind': move.$1, 'quantity': move.$2, 'balanceAfter': move.$3, 'referenceId': move.$4, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'reason': reason.text.trim(), 'createdAt': FieldValue.serverTimestamp()});
-        }
-      });
-      if (dialog.mounted) Navigator.pop(dialog);
-      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تم التصحيح، رقم الفاتورة الجديدة: ${replacement.id}')));
-    } catch (e) { if (dialog.mounted) ScaffoldMessenger.of(dialog).showSnackBar(SnackBar(content: Text('تعذر التصحيح: $e'))); }
-  }, child: const Text('حفظ التصحيح'))]));
 }
 
 Future<void> sendInvoiceWhatsApp(BuildContext context, String id, Map<String, dynamic> data) async {
@@ -3763,6 +3752,9 @@ Future<void> confirmReturn(BuildContext context, String type, String id, Map<Str
 }
 
 Future<void> returnInvoice(String type, String id) async {
+  final preflight = (await db.collection(type).doc(id).get()).data();
+  if (preflight == null) throw Exception('الفاتورة غير موجودة');
+  if (type == 'sales') await assertNoUnallocatedReceipt(preflight);
   await db.runTransaction((tx) async {
     final invoiceRef = db.collection(type).doc(id);
     final invoiceSnap = await tx.get(invoiceRef);
@@ -3799,15 +3791,24 @@ Future<void> returnInvoice(String type, String id) async {
 
       DocumentSnapshot<Map<String, dynamic>>? customerSnap;
       final customerId = '${d['customerId'] ?? ''}';
-      final due = (d['due'] as num?)?.toDouble() ?? 0;
+      final due = returnSettlement(d, sales: true).debt;
       if (customerId.isNotEmpty && due > 0) {
         customerSnap = await tx.get(db.collection('customers').doc(customerId));
       }
 
       DocumentSnapshot<Map<String, dynamic>>? cashSnap;
       final hasFinancialFields = d.containsKey('paid') || d.containsKey('due');
-      final paid = hasFinancialFields ? ((d['paid'] as num?)?.toDouble() ?? 0) : 0;
-      if (paid > 0) cashSnap = await tx.get(db.collection('settings').doc('cash'));
+      final paid = hasFinancialFields ? returnSettlement(d, sales: true).cash : 0;
+      if (paid > 0) {
+        cashSnap = await tx.get(db.collection('settings').doc('cash'));
+        if (((cashSnap.data()?['balance'] as num?)?.toDouble() ?? 0) < paid) throw Exception('رصيد الصندوق لا يكفي لرد المبلغ المحصل');
+      }
+      if (customerSnap != null && !customerSnap.exists) throw Exception('حساب العميل غير موجود');
+      final latest = '${customerSnap?.data()?['lastReceiptId'] ?? ''}';
+      if (latest.isNotEmpty) {
+        final receipt = (await tx.get(db.collection('receipts').doc(latest))).data();
+        if (receipt != null && unallocatedReceiptAfter(d, receipt)) throw Exception('حدد الفواتير الخاصة بسند القبض العام قبل المرتجع');
+      }
 
       final ret = db.collection('salesReturns').doc();
       for (final item in items) {
@@ -3872,7 +3873,12 @@ Future<void> returnInvoice(String type, String id) async {
     } else {
       final supplierRef = db.collection('suppliers').doc('${d['supplierId']}');
       final supplier = await tx.get(supplierRef);
+      if (!supplier.exists) throw Exception('حساب المورد غير موجود');
       final oldBalance = (supplier.data()?['balance'] as num?)?.toDouble() ?? 0;
+      final refund = returnSettlement(d, sales: false).cash;
+      final cashRef = db.collection('settings').doc('cash');
+      final cash = await tx.get(cashRef);
+      final cashBefore = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
       final due = (d['due'] as num?)?.toDouble() ?? 0;
 
       final stockSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
@@ -3907,6 +3913,10 @@ Future<void> returnInvoice(String type, String id) async {
         });
       }
 
+      if (refund > 0) {
+        tx.set(cashRef, {'balance': cashBefore + refund, 'updatedAt': now}, SetOptions(merge: true));
+        tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'purchase_return', 'amount': refund, 'delta': refund, 'balanceBefore': cashBefore, 'balanceAfter': cashBefore + refund, 'accountId': d['supplierId'], 'accountName': d['supplierName'], 'referenceId': ret.id, 'reason': 'استرداد نقدية مرتجع مشتريات', 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+      }
       tx.update(supplierRef, {'balance': oldBalance - due, 'updatedAt': now});
       tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
       tx.set(db.collection('accountMovements').doc(), {
@@ -4641,4 +4651,30 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
       'totalBefore': old['total'], 'totalAfter': total / 100, 'paidBefore': old['paid'], 'paidAfter': paid / 100,
       'revision': revision + 1, 'requestKey': key, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
   });
+}
+
+({double debt, double cash}) returnSettlement(Map<String, dynamic> invoice, {required bool sales}) {
+  int cents(String key) {
+    final value = (invoice[key] as num?)?.toDouble() ?? 0;
+    if (!value.isFinite || value < 0) throw StateError('قيمة مالية غير صحيحة');
+    return (value * 100).round();
+  }
+  final due = cents('due'), paid = cents('paid'), receipts = sales ? cents('receiptPaid') : 0;
+  if (receipts > due) throw StateError('سندات القبض تتجاوز باقي الفاتورة؛ راجع الحساب');
+  return (debt: (due - receipts) / 100, cash: sales ? (paid + receipts) / 100 : (invoice['cashPosted'] == true ? paid / 100 : cents('cashPaidPosted') / 100));
+}
+
+bool unallocatedReceiptAfter(Map<String, dynamic> invoice, Map<String, dynamic> receipt) {
+  if ('${receipt['invoiceId'] ?? ''}'.isNotEmpty) return false;
+  final created = invoice['createdAt'] as Timestamp?, at = receipt['createdAt'] as Timestamp?;
+  return created == null || at == null || at.compareTo(created) >= 0;
+}
+
+Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
+  final customerId = '${invoice['customerId'] ?? ''}';
+  if (customerId.isEmpty) return;
+  final receipts = await db.collection('receipts').where('customerId', isEqualTo: customerId).get();
+  if (receipts.docs.any((r) => unallocatedReceiptAfter(invoice, r.data()))) {
+    throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
+  }
 }

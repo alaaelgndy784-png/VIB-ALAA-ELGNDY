@@ -351,7 +351,7 @@ service cloud.firestore {
       allow read, create: if owner();
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
-      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
+      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cashPaidPosted','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
         && resource.data.status == 'completed' && request.resource.data.revision == resource.data.get('revision', 0) + 1
         && request.resource.data.lastEditedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
       allow delete: if false;
