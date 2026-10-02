@@ -152,6 +152,54 @@ service cloud.firestore {
         && m.createdAt == request.time && m.productName == x.productName;
     }
 
+    function chatAccess(employeeId) {
+      return owner() || (employee() && request.auth.uid == employeeId);
+    }
+    function chatEmployee(employeeId) {
+      let e = get(/databases/$(database)/documents/users/$(employeeId)).data;
+      return e.role == 'employee' && e.active == true;
+    }
+    function validChatSummary(employeeId) {
+      let c = request.resource.data;
+      let e = get(/databases/$(database)/documents/users/$(employeeId)).data;
+      let m = getAfter(/databases/$(database)/documents/staffChats/$(employeeId)/messages/$(c.lastMessageId)).data;
+      return chatEmployee(employeeId)
+        && c.keys().hasOnly(['employeeId','employeeName','branchId','lastMessageId','lastText','lastSenderId','lastSenderRole','lastMessageAt','ownerReadAt','employeeReadAt'])
+        && c.employeeId == employeeId && c.employeeName == e.name && c.branchId == e.branchId
+        && c.lastSenderId == request.auth.uid && c.lastSenderRole == profile().role
+        && c.lastMessageAt == request.time && m.createdAt == request.time
+        && !exists(/databases/$(database)/documents/staffChats/$(employeeId)/messages/$(c.lastMessageId))
+        && c.lastText == m.text && c.lastSenderId == m.senderId && c.lastSenderRole == m.senderRole;
+    }
+    match /staffChats/{employeeId} {
+      allow get: if chatAccess(employeeId);
+      allow list: if owner();
+      allow create: if chatAccess(employeeId) && validChatSummary(employeeId)
+        && !('ownerReadAt' in request.resource.data) && !('employeeReadAt' in request.resource.data);
+      allow update: if chatAccess(employeeId) && validChatSummary(employeeId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['employeeId','employeeName','branchId','lastMessageId','lastText','lastSenderId','lastSenderRole','lastMessageAt']);
+      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerReadAt'])
+        && request.resource.data.ownerReadAt is timestamp && request.resource.data.ownerReadAt <= resource.data.lastMessageAt;
+      allow update: if employee() && request.auth.uid == employeeId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['employeeReadAt'])
+        && request.resource.data.employeeReadAt is timestamp && request.resource.data.employeeReadAt <= resource.data.lastMessageAt;
+      allow delete: if false;
+      match /messages/{messageId} {
+        allow read: if chatAccess(employeeId);
+        allow create: if chatAccess(employeeId) && chatEmployee(employeeId)
+          && request.resource.data.keys().hasOnly(['senderId','senderName','senderRole','text','createdAt'])
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.senderName == profile().name && request.resource.data.senderRole == profile().role
+          && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 2000
+          && request.resource.data.createdAt == request.time
+          && getAfter(/databases/$(database)/documents/staffChats/$(employeeId)).data.lastMessageId == messageId
+          && getAfter(/databases/$(database)/documents/staffChats/$(employeeId)).data.lastSenderId == request.auth.uid
+          && getAfter(/databases/$(database)/documents/staffChats/$(employeeId)).data.lastText == request.resource.data.text
+          && getAfter(/databases/$(database)/documents/staffChats/$(employeeId)).data.lastMessageAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
     match /users/{uid} {
       allow read: if owner() || (signed() && request.auth.uid == uid);
       // A signed-in account can only request access. Branch and role are assigned by owner.
@@ -295,3 +343,4 @@ service cloud.firestore {
     }
   }
 }
+

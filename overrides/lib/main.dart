@@ -438,6 +438,7 @@ class _HomeState extends State<Home> {
         appBar: AppBar(
           title: const Text('VIB', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 28)),
           actions: [
+            const ChatShortcut(owner: true),
             IconButton(tooltip: 'الضبط والصلاحيات', onPressed: () => openPage('الضبط والصلاحيات', const Management()), icon: const Icon(Icons.settings)),
             IconButton(tooltip: 'خروج', onPressed: () => FirebaseAuth.instance.signOut(), icon: const Icon(Icons.logout)),
           ],
@@ -448,6 +449,7 @@ class _HomeState extends State<Home> {
 
     return Scaffold(
       appBar: AppBar(title: Text('VIB | ${widget.name}'), actions: [
+        const ChatShortcut(owner: false),
         IconButton(tooltip: 'خروج', onPressed: () => FirebaseAuth.instance.signOut(), icon: const Icon(Icons.logout)),
       ]),
       body: page == 0
@@ -886,6 +888,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           Text('فاتورة مبيعات', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
         ]),
         content: SizedBox(width: 650, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ChatShortcut(owner: owner, showLabel: true),
           _vibInvoicePanel(child: Column(children: [
             Row(children: [
               Expanded(child: OutlinedButton.icon(
@@ -4238,4 +4241,173 @@ class _StaffCustomersState extends State<StaffCustomers> {
       });
     })),
   ]);
+}
+
+void openStaffChat(BuildContext context, {required bool owner, String initialDraft = ''}) {
+  final uid = FirebaseAuth.instance.currentUser!.uid;
+  Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
+    textDirection: TextDirection.rtl,
+    child: owner ? const StaffChatInbox() : StaffChatPage(employeeId: uid, owner: false, title: 'محادثة المدير', initialDraft: initialDraft),
+  )));
+}
+
+class ChatShortcut extends StatelessWidget {
+  final bool owner;
+  final bool showLabel;
+  final String initialDraft;
+  const ChatShortcut({super.key, required this.owner, this.showLabel = false, this.initialDraft = ''});
+  @override
+  Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    Widget button(bool unread) {
+      final icon = Badge(isLabelVisible: unread, child: const Icon(Icons.chat_bubble_outline, color: gold));
+      return showLabel
+          ? TextButton.icon(onPressed: () => openStaffChat(context, owner: owner, initialDraft: initialDraft), icon: icon,
+              label: Text(owner ? 'محادثات الموظفين' : 'محادثة المدير'))
+          : IconButton(tooltip: owner ? 'محادثات الموظفين' : 'محادثة المدير', icon: icon,
+              onPressed: () => openStaffChat(context, owner: owner));
+    }
+    bool unread(Map<String, dynamic>? data) {
+      if (data == null || data['lastSenderRole'] == (owner ? 'owner' : 'employee')) return false;
+      final sent = data['lastMessageAt'] as Timestamp?;
+      final seen = data[owner ? 'ownerReadAt' : 'employeeReadAt'] as Timestamp?;
+      return sent != null && (seen == null || sent.compareTo(seen) > 0);
+    }
+    if (owner) return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('staffChats').snapshots(),
+      builder: (context, snapshot) => button(snapshot.data?.docs.any((d) => unread(d.data())) ?? false));
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(stream: db.collection('staffChats').doc(uid).snapshots(),
+      builder: (context, snapshot) => button(unread(snapshot.data?.data())));
+  }
+}
+
+class StaffChatInbox extends StatelessWidget {
+  const StaffChatInbox({super.key});
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('محادثات الموظفين')),
+    body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('users').where('role', isEqualTo: 'employee').snapshots(),
+      builder: (context, employees) {
+        if (employees.hasError) return const Center(child: Text('تعذر تحميل الموظفين'));
+        if (!employees.hasData) return const Center(child: CircularProgressIndicator());
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('staffChats').snapshots(), builder: (context, chats) {
+          if (chats.hasError) return const Center(child: Text('تعذر تحميل المحادثات؛ راجع صلاحيات المحادثة'));
+          if (!chats.hasData) return const Center(child: CircularProgressIndicator());
+          final threads = {for (final d in chats.data!.docs) d.id: d.data()};
+          final rows = employees.data!.docs.where((d) => d.data()['active'] == true).toList()
+            ..sort((a, b) => ((threads[b.id]?['lastMessageAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
+              .compareTo((threads[a.id]?['lastMessageAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+          if (rows.isEmpty) return const Center(child: Text('لا يوجد موظفون مفعلون بعد'));
+          return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
+            final employee = rows[index], thread = threads[employee.id];
+            final sent = thread?['lastMessageAt'] as Timestamp?, seen = thread?['ownerReadAt'] as Timestamp?;
+            final unread = thread?['lastSenderRole'] == 'employee' && sent != null && (seen == null || sent.compareTo(seen) > 0);
+            final name = '${employee.data()['name'] ?? employee.data()['phone'] ?? employee.id}';
+            return Card(child: ListTile(
+              leading: Badge(isLabelVisible: unread, child: const Icon(Icons.person_outline, color: gold)),
+              title: Text(name), subtitle: Text('${thread?['lastText'] ?? 'ابدأ محادثة مع الموظف'}', maxLines: 2, overflow: TextOverflow.ellipsis),
+              trailing: const Icon(Icons.chevron_left),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(textDirection: TextDirection.rtl,
+                child: StaffChatPage(employeeId: employee.id, owner: true, title: name)))),
+            ));
+          });
+        });
+      },
+    ),
+  );
+}
+
+class StaffChatPage extends StatefulWidget {
+  final String employeeId, title, initialDraft;
+  final bool owner;
+  const StaffChatPage({super.key, required this.employeeId, required this.owner, required this.title, this.initialDraft = ''});
+  @override
+  State<StaffChatPage> createState() => _StaffChatPageState();
+}
+class _StaffChatPageState extends State<StaffChatPage> {
+  late final TextEditingController message;
+  bool sending = false;
+  Timestamp? lastMarked;
+  DocumentReference<Map<String, dynamic>>? pendingRef;
+  String? pendingText;
+  DocumentReference<Map<String, dynamic>> get thread => db.collection('staffChats').doc(widget.employeeId);
+  @override
+  void initState() { super.initState(); message = TextEditingController(text: widget.initialDraft); }
+  @override
+  void dispose() { message.dispose(); super.dispose(); }
+
+  Future<void> markRead(Timestamp? date) async {
+    if (date == null || lastMarked == date) return;
+    lastMarked = date;
+    try { await thread.set({widget.owner ? 'ownerReadAt' : 'employeeReadAt': date}, SetOptions(merge: true)); }
+    catch (_) { if (lastMarked == date) lastMarked = null; }
+  }
+
+  Future<void> send() async {
+    final text = message.text.trim();
+    if (sending || text.isEmpty) return;
+    if (text.length > 2000) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الرسالة بحد أقصى 2000 حرف'))); return; }
+    if (pendingRef == null || pendingText != text) { pendingRef = thread.collection('messages').doc(); pendingText = text; }
+    final ref = pendingRef!;
+    setState(() => sending = true);
+    try {
+      final uid = FirebaseAuth.instance.currentUser!.uid;
+      await db.runTransaction((tx) async {
+        final prior = await tx.get(ref);
+        if (prior.exists) {
+          if (prior.data()?['senderId'] != uid || prior.data()?['text'] != text) throw Exception('راجع الرسالة قبل إعادة الإرسال');
+          return;
+        }
+        final sender = (await tx.get(db.collection('users').doc(uid))).data();
+        final employee = (await tx.get(db.collection('users').doc(widget.employeeId))).data();
+        if (sender?['active'] != true || employee?['active'] != true || employee?['role'] != 'employee') throw Exception('الحساب غير مفعل');
+        final role = '${sender?['role'] ?? ''}';
+        if (role != 'owner' && (role != 'employee' || uid != widget.employeeId)) throw Exception('المحادثة غير مسموحة لهذا الحساب');
+        final now = FieldValue.serverTimestamp();
+        tx.set(ref, {'senderId': uid, 'senderName': '${sender?['name'] ?? ''}', 'senderRole': role, 'text': text, 'createdAt': now});
+        tx.set(thread, {'employeeId': widget.employeeId, 'employeeName': '${employee?['name'] ?? ''}', 'branchId': '${employee?['branchId'] ?? ''}',
+          'lastMessageId': ref.id, 'lastText': text, 'lastSenderId': uid, 'lastSenderRole': role, 'lastMessageAt': now}, SetOptions(merge: true));
+      });
+      if (!mounted) return;
+      message.clear(); pendingRef = null; pendingText = null;
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر إرسال الرسالة؛ راجع الاتصال وصلاحيات المحادثة وحاول مرة أخرى')));
+    } finally { if (mounted) setState(() => sending = false); }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(widget.title)),
+    body: Column(children: [
+      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: thread.collection('messages').orderBy('createdAt', descending: true).limit(200).snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return const Center(child: Text('تعذر تحميل المحادثة؛ راجع الاتصال وصلاحيات الحساب'));
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          final rows = snapshot.data!.docs;
+          if (rows.isEmpty) return const Center(child: Text('اكتب رسالتك لبدء المحادثة'));
+          final latest = rows.first.data()['createdAt'] as Timestamp?;
+          WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted && ModalRoute.of(context)?.isCurrent == true) markRead(latest); });
+          return ListView.builder(reverse: true, padding: const EdgeInsets.all(12), itemCount: rows.length, itemBuilder: (context, index) {
+            final data = rows[index].data();
+            final mine = data['senderId'] == FirebaseAuth.instance.currentUser!.uid;
+            return Align(alignment: mine ? Alignment.centerRight : Alignment.centerLeft, child: Container(
+              constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * .85),
+              margin: const EdgeInsets.symmetric(vertical: 5), padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: mine ? const Color(0xFF463A20) : const Color(0xFF222222), borderRadius: BorderRadius.circular(14)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Text('${data['senderName'] ?? ''}${data['senderRole'] == 'owner' ? ' • المدير' : ''}', style: const TextStyle(color: gold, fontSize: 12)),
+                const SizedBox(height: 5), SelectableText('${data['text'] ?? ''}'),
+                const SizedBox(height: 5), Text(formatDate(data['createdAt']), style: const TextStyle(fontSize: 10, color: Colors.white60)),
+              ]),
+            ));
+          });
+        },
+      )),
+      SafeArea(top: false, child: Padding(padding: const EdgeInsets.all(10), child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        Expanded(child: TextField(controller: message, enabled: !sending, minLines: 1, maxLines: 5, maxLength: 2000,
+          decoration: const InputDecoration(hintText: 'اكتب رسالتك هنا…', border: OutlineInputBorder(), counterText: ''))),
+        const SizedBox(width: 8), IconButton.filled(tooltip: 'إرسال الرسالة', onPressed: sending ? null : send,
+          icon: sending ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send)),
+      ]))),
+    ]),
+  );
 }

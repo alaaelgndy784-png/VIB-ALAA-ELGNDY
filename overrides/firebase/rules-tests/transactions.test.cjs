@@ -1,7 +1,7 @@
 const {test,before,after,beforeEach}=require('node:test');
 const {readFileSync}=require('node:fs');
 const {initializeTestEnvironment,assertSucceeds,assertFails}=require('@firebase/rules-unit-testing');
-const {doc,setDoc,writeBatch,getDoc,serverTimestamp,runTransaction,deleteDoc}=require('firebase/firestore');
+const {doc,setDoc,writeBatch,getDoc,serverTimestamp,runTransaction,deleteDoc,getDocs,collection,query,orderBy}=require('firebase/firestore');
 const assert=require('node:assert/strict');
 let env;
 before(async()=>{env=await initializeTestEnvironment({projectId:'demo-vib',firestore:{rules:readFileSync('../firestore.rules','utf8')}})});
@@ -119,3 +119,48 @@ test('first mixed sale creates cash record atomically',async()=>{
 test('five staff lines are rejected before partial writes',async()=>assertFails(saleBatch(env.authenticatedContext('staff').firestore(),{n:5})));
 test('orphan stock movement is denied',async()=>assertFails(setDoc(doc(env.authenticatedContext('staff').firestore(),'stockMovements/orphan_p0'),{
   productId:'p0',productName:'Product0',branchId:'main',kind:'sale',quantity:-2,balanceAfter:8,referenceId:'orphan',actorId:'staff',createdAt:serverTimestamp()})));
+
+function chatBatch(db,{employeeId='staff',senderId='staff',senderName='Staff',senderRole='employee',text='Question about invoice',messageId='m1',summary=true}={}){
+ const batch=writeBatch(db);
+ batch.set(doc(db,`staffChats/${employeeId}/messages/${messageId}`),{senderId,senderName,senderRole,text,createdAt:serverTimestamp()});
+ if(summary)batch.set(doc(db,`staffChats/${employeeId}`),{employeeId,employeeName:'Staff',branchId:'staffbranch',lastMessageId:messageId,lastText:text,lastSenderId:senderId,lastSenderRole:senderRole,lastMessageAt:serverTimestamp()},{merge:true});
+ return batch.commit();
+}
+test('staff sends message, owner reads and replies; both can query message history',async()=>{
+ const staff=env.authenticatedContext('staff').firestore(),owner=env.authenticatedContext('owner').firestore();
+ await assertSucceeds(chatBatch(staff));
+ const first=(await assertSucceeds(getDoc(doc(owner,'staffChats/staff')))).data();
+ assert.equal(first.lastText,'Question about invoice');
+ await assertSucceeds(setDoc(doc(owner,'staffChats/staff'),{ownerReadAt:first.lastMessageAt},{merge:true}));
+ await assertSucceeds(chatBatch(owner,{senderId:'owner',senderName:'Owner',senderRole:'owner',text:'Reply from manager',messageId:'m2'}));
+ const reply=(await getDoc(doc(staff,'staffChats/staff'))).data();
+ assert.equal(reply.lastSenderRole,'owner');
+ await assertSucceeds(setDoc(doc(staff,'staffChats/staff'),{employeeReadAt:reply.lastMessageAt},{merge:true}));
+ await assertSucceeds(getDocs(query(collection(staff,'staffChats/staff/messages'),orderBy('createdAt','desc'))));
+ await assertSucceeds(getDocs(collection(owner,'staffChats')));
+});
+test('other employee cannot read, query, write, or mark another employee chat',async()=>{
+ const staff=env.authenticatedContext('staff').firestore();await chatBatch(staff);
+ await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'users/other'),{role:'employee',active:true,name:'Other',branchId:'staffbranch'}));
+ const other=env.authenticatedContext('other').firestore();
+ await assertFails(getDoc(doc(other,'staffChats/staff')));
+ await assertFails(getDocs(collection(other,'staffChats/staff/messages')));
+ await assertFails(chatBatch(other,{senderId:'other',senderName:'Other',messageId:'m2'}));
+ await assertFails(setDoc(doc(other,'staffChats/staff'),{employeeReadAt:serverTimestamp()},{merge:true}));
+ await assertFails(getDocs(collection(staff,'staffChats')));
+});
+for(const [name,options] of [['fake sender',{senderId:'owner'}],['fake role',{senderRole:'owner'}],['fake name',{senderName:'Owner'}],['empty text',{text:''}],['oversize text',{text:'x'.repeat(2001)}],['missing summary',{summary:false}]])
+ test('chat rejects '+name,async()=>assertFails(chatBatch(env.authenticatedContext('staff').firestore(),options)));
+test('inactive and signed out cannot access chats',async()=>{
+ await chatBatch(env.authenticatedContext('staff').firestore());
+ for(const context of [env.authenticatedContext('inactive'),env.unauthenticatedContext()]){
+  await assertFails(getDoc(doc(context.firestore(),'staffChats/staff/messages/m1')));
+  await assertFails(chatBatch(context.firestore(),{messageId:'m2'}));
+ }
+});
+test('messages are immutable and staff cannot change owner read status',async()=>{
+ const staff=env.authenticatedContext('staff').firestore();await chatBatch(staff);
+ await assertFails(setDoc(doc(staff,'staffChats/staff/messages/m1'),{text:'edited'},{merge:true}));
+ await assertFails(deleteDoc(doc(staff,'staffChats/staff/messages/m1')));
+ await assertFails(setDoc(doc(staff,'staffChats/staff'),{ownerReadAt:serverTimestamp()},{merge:true}));
+});
