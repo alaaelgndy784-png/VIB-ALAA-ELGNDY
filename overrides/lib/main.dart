@@ -857,6 +857,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
       }
       return InvoiceEditorFrame(
         title: checkout ? 'حفظ فاتورة المبيعات' : 'فاتورة مبيعات',checkout:checkout,total:previewTotal,
+        headerAction:IgnorePointer(ignoring:saving,child:ChatShortcut(owner:owner)),
         toolbar:InvoiceProductsBar(
           products:[for(final product in products) if(!lines.any((row)=>row.productId == product.id))
             (id:product.id,name:'${product.data()['name'] ?? ''}')],
@@ -2010,6 +2011,7 @@ Future<void> purchaseDialog(BuildContext context) async {
       }
       return InvoiceEditorFrame(
         title:checkout ? 'حفظ فاتورة المشتريات' : 'فاتورة مشتريات',checkout:checkout,total:previewTotal,
+        headerAction:IgnorePointer(ignoring:saving,child:const ChatShortcut(owner:true)),
         toolbar:InvoiceProductsBar(
           products:[for(final product in products.docs) if(!lines.any((row)=>row.productId == product.id))
             (id:product.id,name:'${product.data()['name'] ?? ''}')],
@@ -4646,7 +4648,7 @@ class ChatShortcut extends StatelessWidget {
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     Widget button(bool unread) {
-      final icon = Badge(isLabelVisible: unread, child: const Icon(Icons.chat_bubble_outline, color: gold));
+      final icon = Badge(isLabelVisible: unread, backgroundColor:Colors.greenAccent,smallSize:10,child: const Icon(Icons.chat_bubble_outline, color: gold));
       return showLabel
           ? TextButton.icon(onPressed: () => openStaffChat(context, owner: owner, initialDraft: initialDraft), icon: icon,
               label: Text(owner ? 'محادثات الموظفين' : 'محادثة المدير'))
@@ -4689,7 +4691,7 @@ class StaffChatInbox extends StatelessWidget {
             final unread = thread?['lastSenderRole'] == 'employee' && sent != null && (seen == null || sent.compareTo(seen) > 0);
             final name = '${employee.data()['name'] ?? employee.data()['phone'] ?? employee.id}';
             return Card(child: ListTile(
-              leading: Badge(isLabelVisible: unread, child: const Icon(Icons.person_outline, color: gold)),
+              leading: Badge(isLabelVisible: unread, backgroundColor:Colors.greenAccent,smallSize:10,child: const Icon(Icons.person_outline, color: gold)),
               title: Text(name), subtitle: Text('${thread?['lastText'] ?? 'ابدأ محادثة مع الموظف'}', maxLines: 2, overflow: TextOverflow.ellipsis),
               trailing: const Icon(Icons.chevron_left),
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(textDirection: TextDirection.rtl,

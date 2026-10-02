@@ -35,6 +35,7 @@ void main() {
         body:MediaQuery(data:MediaQueryData(size:Size(width,760),textScaler:const TextScaler.linear(1.3)),
           child:Directionality(textDirection:TextDirection.rtl,child:StatefulBuilder(builder:(context,update)=>InvoiceEditorFrame(
             title:checkout ? 'حفظ الفاتورة' : sale ? 'فاتورة مبيعات' : 'فاتورة مشتريات',checkout:checkout,total:94386,
+            headerAction:IconButton(tooltip:'المحادثة',onPressed:() {},icon:const Icon(Icons.chat_bubble_outline)),
             toolbar:InvoiceProductsBar(products:[(id:'extra',name:'صنف إضافي')],enabled:ids.length < 22,
               onSearch:()=>update(()=>ids.add(21)),onSelect:(_)=>update(()=>ids.add(21))),
             body:checkout ? ListView(children:[const Text('اختيار العميل أو المورد'),
@@ -52,6 +53,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(tester.takeException(),isNull);
       expect(find.text('بحث'),findsOneWidget);expect(find.text('إضافة بند جديد'),findsNothing);
+      expect(find.byTooltip('المحادثة'),findsOneWidget);
       expect(find.text('آجل'),findsNothing);expect(find.text('اختيار العميل أو المورد'),findsNothing);
       expect(find.text('حنفية غسالة تركي نحاس اسم الصنف كامل رقم 1'),findsOneWidget);
       await tester.tap(find.text('بحث'));await tester.pumpAndSettle();expect(ids.length,22);
@@ -65,6 +67,7 @@ void main() {
       });
       await tester.tap(find.text('إضافة'));await tester.pumpAndSettle();expect(saves,0);
       expect(find.text('بحث'),findsNothing);expect(find.text('اختيار العميل أو المورد'),findsOneWidget);
+      expect(find.byTooltip('المحادثة'),findsOneWidget);
       expect(find.text('آجل'),findsOneWidget);expect(paid.text,'200');
       await tester.tap(find.text('نقدي'));await tester.pumpAndSettle();expect(credit,false);
       await tester.tap(find.text('آجل'));await tester.pumpAndSettle();expect(credit,true);

@@ -6,14 +6,19 @@ class InvoiceEditorFrame extends StatelessWidget {
   final double total;
   final Widget body;
   final Widget? toolbar;
+  final Widget? headerAction;
   final List<Widget> actions;
   const InvoiceEditorFrame({super.key,required this.title,required this.checkout,required this.total,
-    required this.body,required this.actions,this.toolbar});
+    required this.body,required this.actions,this.toolbar,this.headerAction});
   @override Widget build(BuildContext context) => Dialog(
     backgroundColor:const Color(0xFF080808),insetPadding:const EdgeInsets.symmetric(horizontal:6,vertical:10),
     shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(16),side:const BorderSide(color:gold)),
     child:SizedBox(width:650,height:double.infinity,child:Padding(padding:const EdgeInsets.all(10),child:Column(children:[
-      Padding(padding:const EdgeInsets.only(bottom:10),child:Text(title,style:const TextStyle(fontSize:19,fontWeight:FontWeight.bold))),
+      Padding(padding:const EdgeInsets.only(bottom:10),child:Row(children:[
+        if(headerAction != null) headerAction!,
+        Expanded(child:Text(title,textAlign:TextAlign.center,style:const TextStyle(fontSize:19,fontWeight:FontWeight.bold))),
+        if(headerAction != null) const SizedBox(width:48),
+      ])),
       if(!checkout && toolbar != null) Padding(padding:const EdgeInsets.only(bottom:10),child:toolbar!),
       Expanded(child:body),
       if(!checkout) Padding(padding:const EdgeInsets.symmetric(vertical:8),child:Row(children:[

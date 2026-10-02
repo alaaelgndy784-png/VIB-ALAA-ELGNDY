@@ -102,7 +102,7 @@ jobs:
           name: VIB-INVOICE-PDF-PREVIEWS
           path: |
             VIB-SALES-INDEPENDENT/dist/*.pdf
-            VIB-SALES-INDEPENDENT/dist/VIB-PURCHASE-FORM-*.png
+            VIB-SALES-INDEPENDENT/dist/*.png
           if-no-files-found: error
 
       - name: Build manager APK
