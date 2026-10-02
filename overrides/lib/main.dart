@@ -28,6 +28,7 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzdata;
 
 part 'cheques.dart';
+part 'chat_alerts.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -441,8 +442,8 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> {
   int page = 0;
-  @override void initState() { super.initState(); if(widget.role == 'owner') ChequeReminders.instance.watch(widget.uid); }
-  @override void dispose() { if(widget.role == 'owner') ChequeReminders.instance.stop(); super.dispose(); }
+  @override void initState() { super.initState(); if(widget.role == 'owner') ChequeReminders.instance.watch(widget.uid); ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
+  @override void dispose() { ChatAlerts.instance.stop(); if(widget.role == 'owner') ChequeReminders.instance.stop(); super.dispose(); }
 
   void openPage(String title, Widget child) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
@@ -4883,7 +4884,7 @@ class StaffChatInbox extends StatelessWidget {
   const StaffChatInbox({super.key});
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('محادثات الموظفين')),
+    appBar: AppBar(title: const Text('محادثات الموظفين'),actions:const [ChatAlertsButton()]),
     body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('users').where('role', isEqualTo: 'employee').snapshots(),
       builder: (context, employees) {
         if (employees.hasError) return const Center(child: Text('تعذر تحميل الموظفين'));
@@ -5065,7 +5066,7 @@ class _StaffChatPageState extends State<StaffChatPage> with WidgetsBindingObserv
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: Text(widget.title)),
+    appBar: AppBar(title: Text(widget.title),actions:const [ChatAlertsButton()]),
     body: Column(children: [
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: thread.collection('messages').orderBy('createdAt', descending: true).limit(50).snapshots(),
         builder: (context, snapshot) {
