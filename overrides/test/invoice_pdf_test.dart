@@ -22,59 +22,67 @@ void main() {
   }
 
   for (final width in [360.0, 564.0]) {
-    testWidgets('purchase form keeps names, add button, settlement and save usable at width $width', (tester) async {
-      tester.view.physicalSize = Size(width, 760);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
-      final costs = List.generate(22, (_) => TextEditingController(text: '145.00'));
-      final quantities = List.generate(22, (_) => TextEditingController(text: '24'));
-      final paid = TextEditingController(text: '0');
-      final boundaryKey = GlobalKey();
-      var count = 21, credit = true, saves = 0;
-      await tester.pumpWidget(RepaintBoundary(key: boundaryKey, child: MaterialApp(theme: ThemeData.dark(), home: Scaffold(
-        body: MediaQuery(data: MediaQueryData(size: Size(width, 760), textScaler: const TextScaler.linear(1.3)),
-          child: Directionality(textDirection: TextDirection.rtl, child: StatefulBuilder(builder: (context, update) => PurchaseInvoiceFrame(
-            itemCount: count, onAdd: () => update(() => count++),
-            body: ListView(children: [for (var i = 0; i < count; i++) PurchaseInvoiceLine(
-              number: i + 1, name: 'حنفية غسالة تركي نحاس اسم الصنف كامل رقم ${i + 1}',
-              cost: costs[i], quantity: quantities[i], enabled: true, onChanged: () => update(() {}),
-              onChoose: () {}, onDelete: () {},
+    for(final sale in [false,true]) {
+    testWidgets('two-step ${sale ? 'sales' : 'purchase'} editor at width $width retains edits and renumbers after deletion', (tester) async {
+      tester.view.physicalSize=Size(width,760);tester.view.devicePixelRatio=1;
+      addTearDown(() {tester.view.resetPhysicalSize();tester.view.resetDevicePixelRatio();});
+      final costs=List.generate(22,(_)=>TextEditingController(text:'145.00'));
+      final quantities=List.generate(22,(_)=>TextEditingController(text:'24'));
+      final paid=TextEditingController(text:'200');
+      final ids=List.generate(21,(i)=>i);
+      final boundaryKey=GlobalKey();var checkout=false,credit=true,saves=0;
+      await tester.pumpWidget(RepaintBoundary(key:boundaryKey,child:MaterialApp(theme:ThemeData.dark(),home:Scaffold(
+        body:MediaQuery(data:MediaQueryData(size:Size(width,760),textScaler:const TextScaler.linear(1.3)),
+          child:Directionality(textDirection:TextDirection.rtl,child:StatefulBuilder(builder:(context,update)=>InvoiceEditorFrame(
+            title:checkout ? 'حفظ الفاتورة' : sale ? 'فاتورة مبيعات' : 'فاتورة مشتريات',checkout:checkout,total:94386,
+            toolbar:InvoiceProductsBar(products:[(id:'extra',name:'صنف إضافي')],enabled:ids.length < 22,
+              onSearch:()=>update(()=>ids.add(21)),onSelect:(_)=>update(()=>ids.add(21))),
+            body:checkout ? ListView(children:[const Text('اختيار العميل أو المورد'),
+              PurchaseSettlementPanel(total:94386,previousBalance:30000,credit:credit,paid:paid,enabled:true,
+                partyLabel:sale ? 'العميل' : 'المورد',onModeChanged:(v)=>update(()=>credit=v),onChanged:()=>update(() {})),
+            ]) : ListView(children:[for(var i=0;i<ids.length;i++) PurchaseInvoiceLine(
+              key:ValueKey(ids[i]),number:i+1,name:'حنفية غسالة تركي نحاس اسم الصنف كامل رقم ${ids[i]+1}',
+              cost:costs[ids[i]],quantity:quantities[ids[i]],enabled:true,onChanged:()=>update(() {}),onChoose:() {},
+              onDelete:()=>update(()=>ids.removeAt(i)),
             )]),
-            settlement: PurchaseSettlementPanel(total: 94386, previousBalance: 30000, credit: credit,
-              paid: paid, enabled: true, onModeChanged: (v) => update(() => credit = v), onChanged: () => update(() {})),
-            actions: [TextButton(onPressed: () {}, child: const Text('إلغاء')),
-              FilledButton(onPressed: () => saves++, child: const Text('حفظ الفاتورة'))],
+            actions:[TextButton(onPressed:()=>update(()=>checkout=false),child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
+              FilledButton(onPressed:() {if(checkout) {saves++;} else {update(()=>checkout=true);}},child:Text(checkout ? 'تأكيد الحفظ' : 'إضافة'))],
           )))),
       ))));
       await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull);
-      expect(find.text('حنفية غسالة تركي نحاس اسم الصنف كامل رقم 1'), findsOneWidget);
-      expect(find.text('إضافة بند جديد'), findsOneWidget);
-      expect(find.text('آجل'), findsOneWidget);
-      await tester.tap(find.text('إضافة بند جديد'));
-      await tester.pumpAndSettle();
-      expect(count, 22);
-      expect(costs.first.text, '145.00');
-      await tester.tap(find.text('نقدي'));
-      await tester.pumpAndSettle();
-      expect(credit, isFalse);
-      await tester.tap(find.text('آجل'));
-      await tester.pumpAndSettle();
-      expect(credit, isTrue);
-      await tester.tap(find.text('حفظ الفاتورة'));
-      expect(saves, 1);
-      expect(tester.takeException(), isNull);
-      Directory('dist').createSync(recursive: true);
+      expect(tester.takeException(),isNull);
+      expect(find.text('بحث'),findsOneWidget);expect(find.text('إضافة بند جديد'),findsNothing);
+      expect(find.text('آجل'),findsNothing);expect(find.text('اختيار العميل أو المورد'),findsNothing);
+      expect(find.text('حنفية غسالة تركي نحاس اسم الصنف كامل رقم 1'),findsOneWidget);
+      await tester.tap(find.text('بحث'));await tester.pumpAndSettle();expect(ids.length,22);
+      await tester.enterText(find.widgetWithText(TextField,'145.00').first,'150.00');await tester.pumpAndSettle();
+      expect(costs.first.text,'150.00');
+      Directory('dist').createSync(recursive:true);
       await tester.runAsync(() async {
-        final boundary = boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
-        final image = await boundary.toImage(pixelRatio: 2);
-        final data = await image.toByteData(format: ui.ImageByteFormat.png);
-        File('dist/VIB-PURCHASE-FORM-${width.toInt()}.png').writeAsBytesSync(data!.buffer.asUint8List());
-        image.dispose();
+        final boundary=boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+        final image=await boundary.toImage(pixelRatio:2);final data=await image.toByteData(format:ui.ImageByteFormat.png);
+        File('dist/VIB-${sale ? 'SALES' : 'PURCHASE'}-EDITOR-${width.toInt()}.png').writeAsBytesSync(data!.buffer.asUint8List());image.dispose();
       });
-      await tester.pumpWidget(const SizedBox());
-      for (final controller in [...costs, ...quantities, paid]) { controller.dispose(); }
+      await tester.tap(find.text('إضافة'));await tester.pumpAndSettle();expect(saves,0);
+      expect(find.text('بحث'),findsNothing);expect(find.text('اختيار العميل أو المورد'),findsOneWidget);
+      expect(find.text('آجل'),findsOneWidget);expect(paid.text,'200');
+      await tester.tap(find.text('نقدي'));await tester.pumpAndSettle();expect(credit,false);
+      await tester.tap(find.text('آجل'));await tester.pumpAndSettle();expect(credit,true);
+      await tester.tap(find.text('رجوع للبنود'));await tester.pumpAndSettle();
+      expect(costs.first.text,'150.00');expect(ids.length,22);expect(paid.text,'200');
+      await tester.tap(find.byTooltip('حذف البند').first);await tester.pumpAndSettle();
+      expect(ids.length,21);expect(find.text('1.'),findsOneWidget);
+      expect(find.text('حنفية غسالة تركي نحاس اسم الصنف كامل رقم 2'),findsOneWidget);
+      await tester.tap(find.text('إضافة'));await tester.pumpAndSettle();
+      await tester.tap(find.text('تأكيد الحفظ'));expect(saves,1);expect(tester.takeException(),isNull);
+      await tester.runAsync(() async {
+        final boundary=boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+        final image=await boundary.toImage(pixelRatio:2);final data=await image.toByteData(format:ui.ImageByteFormat.png);
+        File('dist/VIB-${sale ? 'SALES' : 'PURCHASE'}-CHECKOUT-${width.toInt()}.png').writeAsBytesSync(data!.buffer.asUint8List());image.dispose();
+      });
+      await tester.pumpWidget(const SizedBox());for(final controller in [...costs,...quantities,paid]) {controller.dispose();}
     });
+    }
   }
   for (final thermal in [false, true]) {
   for (final count in [1, 140]) {

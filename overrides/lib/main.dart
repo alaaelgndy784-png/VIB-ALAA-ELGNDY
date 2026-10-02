@@ -29,6 +29,7 @@ import 'package:timezone/data/latest.dart' as tzdata;
 
 part 'cheques.dart';
 part 'chat_alerts.dart';
+part 'invoice_editor.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -831,10 +832,9 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
   bool credit = false;
   bool allowShortage = false;
   bool allowBelowCost = false;
-  bool saving = false;
+  bool saving = false, checkout = false;
   final paid = TextEditingController(text: '0');
   final reason = TextEditingController();
-  final productSearch = TextEditingController();
   final saleRef = db.collection('sales').doc();
 
   await showDialog<void>(
@@ -847,211 +847,58 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         final p = double.tryParse(row.price.text.trim().replaceAll(',', '.')) ?? 0;
         previewTotal += q * p;
       }
-      final previewPaid = credit ? (double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? 0) : previewTotal;
-      final previewDue = (previewTotal - previewPaid).clamp(0, double.infinity).toDouble();
       final selectedCustomer = customerId.isEmpty ? null : customersSnap.docs.firstWhere((d) => d.id == customerId);
 
       final previousBalance = (selectedCustomer?.data()['balance'] as num?)?.toDouble() ?? 0;
-      final totalOutstanding = previousBalance + previewDue;
-      return AlertDialog(
-        backgroundColor: const Color(0xFF080808),
-        insetPadding: const EdgeInsets.symmetric(horizontal: 7, vertical: 10),
-        titlePadding: const EdgeInsets.fromLTRB(12, 10, 12, 5),
-        contentPadding: const EdgeInsets.fromLTRB(8, 4, 8, 2),
-        actionsPadding: const EdgeInsets.fromLTRB(8, 3, 8, 7),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18), side: const BorderSide(color: Color(0xFF8C6F2A))),
-        title: const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-          Icon(Icons.description_outlined, color: gold, size: 22),
-          SizedBox(width: 6),
-          Text('فاتورة مبيعات', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
+      void addSelected(String id) {
+        if (saving || lines.length >= (owner ? 50 : 4) || lines.any((row) => row.productId == id)) return;
+        final product=productDoc(id).data();
+        update(() => lines.add(SaleLine(productId:id,unitPrice:(product['price'] as num?)?.toDouble() ?? 0)));
+      }
+      return InvoiceEditorFrame(
+        title: checkout ? 'حفظ فاتورة المبيعات' : 'فاتورة مبيعات',checkout:checkout,total:previewTotal,
+        toolbar:InvoiceProductsBar(
+          products:[for(final product in products) if(!lines.any((row)=>row.productId == product.id))
+            (id:product.id,name:'${product.data()['name'] ?? ''}')],
+          enabled:!saving && lines.length < (owner ? 50 : 4),onSelect:addSelected,
+          onSearch:() async {
+            final id=await selectSaleProduct(c,products,lines.map((row)=>row.productId).whereType<String>().toSet());
+            if(id != null && c.mounted) addSelected(id);
+          },
+        ),
+        body:checkout ? ListView(children:[
+          OutlinedButton.icon(icon:const Icon(Icons.person_search),
+            label:Text(customerId.isEmpty ? 'اسم العميل — اختيار عميل' : '${selectedCustomer?.data()['name'] ?? ''}',softWrap:true),
+            onPressed:saving ? null : () async {
+              final id=await selectRegisteredCustomer(c);
+              if(id == null || !c.mounted) return;
+              final refreshed=await db.collection('customers').get();
+              if(c.mounted) update(() {customersSnap=refreshed;customerId=id;});
+            }),
+          const SizedBox(height:10),
+          PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
+            paid:paid,enabled:!saving,partyLabel:'العميل',
+            onModeChanged:(value)=>update(() => credit=value),onChanged:()=>update(() {})),
+          if(owner) ExpansionTile(title:const Text('صلاحيات المدير',style:TextStyle(fontSize:13)),children:[
+            SwitchListTile(dense:true,title:const Text('السماح بالبيع رغم نقص الكمية'),value:allowShortage,onChanged:saving ? null : (v)=>update(()=>allowShortage=v)),
+            SwitchListTile(dense:true,title:const Text('السماح بسعر أقل من التكلفة'),value:allowBelowCost,onChanged:saving ? null : (v)=>update(()=>allowBelowCost=v)),
+            if(allowShortage || allowBelowCost) TextField(controller:reason,enabled:!saving,decoration:_vibInvoiceInput('سبب الاستثناء (إلزامي)')),
+          ]),
+        ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
+          for(var i=0;i<lines.length;i++) PurchaseInvoiceLine(
+            key:ObjectKey(lines[i]),number:i+1,name:'${productDoc(lines[i].productId!).data()['name'] ?? ''}',
+            cost:lines[i].price,quantity:lines[i].quantity,enabled:!saving,priceEditable:owner,
+            onChanged:()=>update(() {}),onDelete:() {final row=lines.removeAt(i);row.dispose();update(() {});},
+            onChoose:() async {
+              final row=lines[i];
+              final id=await selectSaleProduct(c,products,lines.where((other)=>other != row).map((other)=>other.productId).whereType<String>().toSet());
+              if(id == null || !c.mounted) return;
+              update(() {row.productId=id;row.price.text=((productDoc(id).data()['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);});
+            },
+          ),
         ]),
-        content: SizedBox(width: 650, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          ChatShortcut(owner: owner, showLabel: true),
-          _vibInvoicePanel(child: Column(children: [
-            Row(children: [
-              Expanded(child: OutlinedButton.icon(
-                icon: const Icon(Icons.person_search),
-                label: Text(customerId.isEmpty ? 'اختيار عميل مسجل' : '${selectedCustomer?.data()['name'] ?? ''}', maxLines: 2),
-                onPressed: saving ? null : () async {
-                  final id = await selectRegisteredCustomer(c);
-                  if (id != null) {
-                    final refreshed = await db.collection('customers').get();
-                    if (c.mounted) update(() { customersSnap = refreshed; customerId = id; });
-                  }
-                },
-              )),
-              const SizedBox(width: 8),
-              Container(
-                constraints: const BoxConstraints(minWidth: 112),
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
-                decoration: BoxDecoration(border: Border.all(color: gold), borderRadius: BorderRadius.circular(10)),
-                child: Column(children: [
-                  const Text('الرصيد السابق', style: TextStyle(fontSize: 11)),
-                  Text('${previousBalance.toStringAsFixed(2)} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 16)),
-                ]),
-              ),
-            ]),
-            const SizedBox(height: 6),
-            TextField(
-              controller: productSearch,
-              enabled: !saving,
-              decoration: _vibInvoiceInput('بحث عن منتج بالاسم — اكتب أي حرف', icon: Icons.search),
-              onChanged: (_) => update(() {}),
-            ),
-              SizedBox(height: 220, child: Builder(builder: (context) {
-                final query = productSearch.text.trim().toLowerCase();
-                final matches = products.where((p) => '${p.data()['name'] ?? ''}'.toLowerCase().contains(query)).toList();
-                if (matches.isEmpty) return const Center(child: Text('لا توجد أصناف مطابقة'));
-                return ListView.separated(separatorBuilder: (_, __) => const Divider(height: 1, color: Color(0xFF4A3A18)), itemCount: matches.length, itemBuilder: (context, index) {
-                  final product = matches[index];
-                  final added = lines.any((line) => line.productId == product.id);
-                  return ListTile(
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
-                    leading: Text('${index + 1}', style: const TextStyle(color: gold)),
-                    title: Text('${product.data()['name'] ?? ''}', softWrap: true, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                    subtitle: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-                      stream: db.collection('stock').doc('main_${product.id}').snapshots(),
-                      builder: (context, stock) => Text('السعر: ${product.data()['price'] ?? 0} ج.م • المتاح: ${stock.hasError ? 'تعذر التحميل' : !stock.hasData ? 'جارٍ التحميل' : stock.data?.data()?['quantity'] ?? 0}'),
-                    ),
-                    trailing: Icon(added ? Icons.check : Icons.add, color: gold),
-                    onTap: saving || added || lines.length >= (owner ? 50 : 4) ? null : () => update(() {
-                      lines.add(SaleLine(productId: product.id, unitPrice: (product.data()['price'] as num?)?.toDouble() ?? 0));
-                      productSearch.clear();
-                    }),
-                  );
-                });
-              })),
-            TextButton.icon(
-              onPressed: saving || lines.length >= (owner ? 50 : 4) ? null : () async {
-                final id = await selectSaleProduct(c, products, lines.map((line) => line.productId).whereType<String>().toSet());
-                if (id == null || !c.mounted) return;
-                final product = productDoc(id).data();
-                update(() => lines.add(SaleLine(productId: id, unitPrice: (product['price'] as num?)?.toDouble() ?? 0)));
-              },
-              icon: const Icon(Icons.add), label: const Text('اختيار وإضافة منتج'),
-            ),
-          ])),
-          if (!owner) const Padding(padding: EdgeInsets.symmetric(vertical: 4), child: Text('يمكن إضافة حتى 4 أصناف مختلفة في فاتورة الموظف، والكمية لكل صنف حسب المخزون.', style: TextStyle(fontSize: 12, color: gold))),
-          const SizedBox(height: 7),
-          _vibInvoiceTableHeader(priceLabel: 'السعر'),
-
-          for (var i = 0; i < lines.length; i++)
-            Container(
-              key: ObjectKey(lines[i]),
-              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
-              decoration: BoxDecoration(
-                color: i.isEven ? const Color(0xFF0D0D0D) : const Color(0xFF121212),
-                border: const Border(bottom: BorderSide(color: Color(0xFF4A3A18), width: .7)),
-              ),
-              child: Row(children: [
-                SizedBox(width: 26, child: Text('${i + 1}', textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold))),
-                Expanded(flex: 5, child: DropdownButtonFormField<String>(
-                  initialValue: lines[i].productId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 5, vertical: 7), border: InputBorder.none),
-                  items: products.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)))).toList(),
-                  onChanged: saving ? null : (v) {
-                    if (v == null) return;
-                    final p = productDoc(v).data();
-                    update(() {
-                      lines[i].productId = v;
-                      lines[i].price.text = ((p['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
-                    });
-                  },
-                )),
-                Expanded(flex: 3, child: owner
-                  ? TextField(controller: lines[i].price, textAlign: TextAlign.center, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 3, vertical: 7), border: InputBorder.none), onChanged: (_) => update(() {}))
-                  : Text(lines[i].price.text, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13))),
-                Expanded(flex: 2, child: TextField(controller: lines[i].quantity, textAlign: TextAlign.center, keyboardType: TextInputType.number, decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 2, vertical: 7), border: InputBorder.none), onChanged: (_) => update(() {}))),
-                Expanded(flex: 3, child: Text(
-                  (((int.tryParse(lines[i].quantity.text.trim()) ?? 0) * (double.tryParse(lines[i].price.text.trim().replaceAll(',', '.')) ?? 0)).toStringAsFixed(2)),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                )),
-                SizedBox(width: 36, child: IconButton(
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints.tightFor(width: 34, height: 34),
-                  tooltip: 'حذف البند',
-                  icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
-                  onPressed: saving ? null : () {
-                    final removed = lines.removeAt(i);
-                    removed.dispose();
-                    update(() {});
-                  },
-                )),
-              ]),
-            ),
-          const SizedBox(height: 7),
-
-          _vibInvoicePanel(child: Column(children: [
-            Row(children: [
-              Expanded(child: Text('إجمالي الفاتورة الحالية', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
-              Text('${previewTotal.toStringAsFixed(2)} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 22)),
-            ]),
-          ]), padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8)),
-          const SizedBox(height: 7),
-          _vibInvoicePanel(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            const Text('تفاصيل السداد والرصيد', style: TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 15)),
-            const SizedBox(height: 4),
-            _vibMoneyRow('الرصيد السابق على العميل', '${previousBalance.toStringAsFixed(2)} ج.م'),
-            _vibMoneyRow('إجمالي المستحق (السابق + الحالي)', '${(previousBalance + previewTotal).toStringAsFixed(2)} ج.م'),
-            Row(children: [
-              const Expanded(child: Text('طريقة السداد', style: TextStyle(fontSize: 13))),
-              SegmentedButton<bool>(
-                style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                segments: const [
-                  ButtonSegment(value: false, label: Text('نقدي')),
-                  ButtonSegment(value: true, label: Text('آجل')),
-                ],
-                selected: {credit},
-                onSelectionChanged: saving ? null : (v) => update(() {
-                  credit = v.first;
-                  if (!credit) paid.text = '0';
-                }),
-              ),
-            ]),
-            if (credit) Padding(
-              padding: const EdgeInsets.only(top: 5),
-              child: TextField(controller: paid, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: _vibInvoiceInput('المدفوع نقدًا الآن'), onChanged: (_) => update(() {})),
-            ),
-            _vibMoneyRow('المدفوع نقدًا', '${previewPaid.toStringAsFixed(2)} ج.م'),
-            _vibMoneyRow('باقي هذه الفاتورة', '${previewDue.toStringAsFixed(2)} ج.م', valueColor: previewDue == 0 ? Colors.greenAccent : gold, bold: true),
-            _vibMoneyRow('إجمالي المتبقي على العميل', '${totalOutstanding.toStringAsFixed(2)} ج.م', valueColor: gold, bold: true),
-            Container(
-              margin: const EdgeInsets.only(top: 7),
-              padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
-              decoration: BoxDecoration(
-                color: const Color(0xFF07351D),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.green),
-              ),
-              child: Row(children: [
-                const Icon(Icons.check_circle_outline, color: Colors.greenAccent, size: 22),
-                const SizedBox(width: 7),
-                Expanded(child: Text(
-                  previewDue == 0 ? 'حالة الفاتورة الحالية: مدفوعة بالكامل' : 'حالة الفاتورة الحالية: متبقي ${previewDue.toStringAsFixed(2)} ج.م',
-                  style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold),
-                )),
-              ]),
-            ),
-          ])),
-          if (owner) ...[
-            const SizedBox(height: 6),
-            ExpansionTile(
-              dense: true,
-              tilePadding: const EdgeInsets.symmetric(horizontal: 4),
-              title: const Text('صلاحيات المدير لهذه الفاتورة', style: TextStyle(fontSize: 13)),
-              children: [
-                SwitchListTile(dense: true, title: const Text('السماح بالبيع رغم نقص الكمية'), value: allowShortage, onChanged: saving ? null : (v) => update(() => allowShortage = v)),
-                SwitchListTile(dense: true, title: const Text('السماح بسعر أقل من التكلفة'), value: allowBelowCost, onChanged: saving ? null : (v) => update(() => allowBelowCost = v)),
-                if (allowShortage || allowBelowCost)
-                  TextField(controller: reason, decoration: _vibInvoiceInput('سبب الاستثناء (إلزامي)')),
-              ],
-            ),
-          ],
-        ]))),
         actions: [
-          TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
+          TextButton(onPressed:saving ? null : () {if(checkout) {update(()=>checkout=false);} else {Navigator.pop(c);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
             FocusScope.of(c).unfocus();
             if (!owner && lines.length > 4) {
@@ -1062,6 +909,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               await showInvoiceSaveProblem(c, 'أضف منتجًا واحدًا على الأقل قبل حفظ الفاتورة');
               return;
             }
+            if (!checkout) {update(() => checkout=true);return;}
             final entries = <({String id, String name, int qty, double price, double? cost})>[];
             double total = 0;
 
@@ -1283,7 +1131,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 await showInvoiceSaveProblem(c, message);
               }
             }
-          }, child: InvoiceSaveButtonLabel(saving: saving)),
+          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? 'تأكيد الحفظ' : 'إضافة')),
         ],
       );
     }),
@@ -1292,7 +1140,6 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
   for (final row in lines) { row.dispose(); }
   paid.dispose();
   reason.dispose();
-  productSearch.dispose();
 }
 
 Future<void> saleDialog(BuildContext context, String productId, Map<String, dynamic> product, String uid, String branchId, {bool owner = false}) async {
@@ -2030,50 +1877,21 @@ Future<String?> pickPurchaseProduct(
 double purchaseInvoicePayment(double total, bool credit, String paid) => credit
     ? double.tryParse(paid.trim().replaceAll(',', '.')) ?? -1 : total;
 
-class PurchaseInvoiceFrame extends StatelessWidget {
-  final Widget body, settlement;
-  final List<Widget> actions;
-  final int itemCount;
-  final VoidCallback? onAdd;
-  const PurchaseInvoiceFrame({super.key, required this.body, required this.settlement,
-    required this.actions, required this.itemCount, required this.onAdd});
-  @override
-  Widget build(BuildContext context) => Dialog(
-    backgroundColor: const Color(0xFF080808), insetPadding: const EdgeInsets.all(6),
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: gold)),
-    child: SizedBox(width: 650, height: double.infinity, child: Padding(padding: const EdgeInsets.all(8),
-      child: LayoutBuilder(builder: (context, constraints) => Column(children: [
-        const Padding(padding: EdgeInsets.only(bottom: 6), child: Text('فاتورة مشتريات',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
-        Expanded(child: body),
-        Row(children: [
-          Expanded(child: FilledButton.icon(onPressed: onAdd, icon: const Icon(Icons.add, size: 18),
-            label: const Text('إضافة بند جديد', style: TextStyle(fontSize: 12)))),
-          const SizedBox(width: 8), Text('البنود: $itemCount', style: const TextStyle(fontSize: 12)),
-        ]),
-        ConstrainedBox(constraints: BoxConstraints(maxHeight: constraints.maxHeight * .43),
-          child: SingleChildScrollView(child: settlement)),
-        const SizedBox(height: 4),
-        Wrap(alignment: WrapAlignment.end, spacing: 4, children: actions),
-      ])),
-    )),
-  );
-}
-
 class PurchaseInvoiceLine extends StatelessWidget {
   final int number;
   final String name;
   final TextEditingController cost, quantity;
   final bool enabled;
+  final bool priceEditable;
   final VoidCallback onChoose, onDelete, onChanged;
   const PurchaseInvoiceLine({super.key, required this.number, required this.name, required this.cost,
-    required this.quantity, required this.enabled, required this.onChoose, required this.onDelete, required this.onChanged});
+    required this.quantity, required this.enabled, required this.onChoose, required this.onDelete, required this.onChanged,this.priceEditable = true});
   @override
   Widget build(BuildContext context) {
     final total = (int.tryParse(quantity.text.trim()) ?? 0) *
       (double.tryParse(cost.text.trim().replaceAll(',', '.')) ?? 0);
     Widget field(TextEditingController controller, String label, {bool integer = false}) => TextField(
-      controller: controller, enabled: enabled, textAlign: TextAlign.center,
+      controller: controller, enabled: enabled && (integer || priceEditable), textAlign: TextAlign.center,
       style: const TextStyle(fontSize: 13),
       keyboardType: TextInputType.numberWithOptions(decimal: !integer),
       decoration: InputDecoration(labelText: label, floatingLabelBehavior: FloatingLabelBehavior.always,
@@ -2117,8 +1935,9 @@ class PurchaseSettlementPanel extends StatelessWidget {
   final TextEditingController paid;
   final ValueChanged<bool> onModeChanged;
   final VoidCallback onChanged;
+  final String partyLabel;
   const PurchaseSettlementPanel({super.key, required this.total, required this.previousBalance,
-    required this.credit, required this.paid, required this.enabled, required this.onModeChanged, required this.onChanged});
+    required this.credit, required this.paid, required this.enabled, required this.onModeChanged, required this.onChanged,this.partyLabel = 'المورد'});
   @override
   Widget build(BuildContext context) {
     final payment = purchaseInvoicePayment(total, credit, paid.text);
@@ -2146,9 +1965,8 @@ class PurchaseSettlementPanel extends StatelessWidget {
           contentPadding: EdgeInsets.symmetric(vertical: 7, horizontal: 5)), onChanged: (_) => onChanged())
       else money('المدفوع نقدًا الآن', payment),
       money('باقي هذه الفاتورة', due, bold: true),
-      money('الرصيد السابق للمورد', previousBalance),
-      money('إجمالي المستحق', previousBalance + total),
-      money('المتبقي على المورد', previousBalance + due, bold: true),
+      money('الرصيد السابق', previousBalance),
+      money(partyLabel == 'العميل' ? 'إجمالي المديونية' : 'المتبقي للمورد', previousBalance + due, bold: true),
     ]));
   }
 }
@@ -2162,12 +1980,14 @@ Future<void> purchaseDialog(BuildContext context) async {
     return;
   }
 
-  String supplierId = suppliers.docs.first.id;
-  final lines = <ScannedLine>[ScannedLine(productId: products.docs.first.id)];
+  final activeSuppliers=suppliers.docs.where((d)=>d.data()['active'] != false).toList();
+  if(activeSuppliers.isEmpty) {ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('أضف موردًا مفعلًا أولًا')));return;}
+  String supplierId = '';
+  final lines = <ScannedLine>[];
   final paid = TextEditingController(text: '0');
   final invoice = TextEditingController();
   final markup = TextEditingController();
-  bool saving = false, credit = true;
+  bool saving = false, credit = true, checkout = false;
 
   await showDialog<void>(
     context: context,
@@ -2179,97 +1999,63 @@ Future<void> purchaseDialog(BuildContext context) async {
         final cost = double.tryParse(row.cost.text.trim().replaceAll(',', '.')) ?? 0;
         previewTotal += q * cost;
       }
-      final selectedSupplier = suppliers.docs.firstWhere((d) => d.id == supplierId);
-      final previousSupplierBalance = (selectedSupplier.data()['balance'] as num?)?.toDouble() ?? 0;
-      Future<void> addProduct() async {
-        if (saving || lines.length >= 50) return;
-        final selected = await pickPurchaseProduct(c, products.docs,
-          lines.where((e) => e.productId != null).map((e) => e.productId!).toSet());
-        if (selected == null || !c.mounted) return;
-        final product = products.docs.firstWhere((d) => d.id == selected);
-        final row = ScannedLine(productId: selected);
-        final cost = (product.data()['purchasePrice'] as num?)?.toDouble();
-        if (cost != null) row.cost.text = cost.toStringAsFixed(2);
-        setLocal(() => lines.add(row));
+      final selectedSupplier = supplierId.isEmpty ? null : activeSuppliers.firstWhere((d) => d.id == supplierId);
+      final previousSupplierBalance = (selectedSupplier?.data()['balance'] as num?)?.toDouble() ?? 0;
+      void addSelected(String id) {
+        if(saving || lines.length >= 50 || lines.any((row)=>row.productId == id)) return;
+        final product=products.docs.firstWhere((d)=>d.id == id);
+        final row=ScannedLine(productId:id);
+        row.cost.text=((product.data()['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
+        setLocal(()=>lines.add(row));
       }
-      return PurchaseInvoiceFrame(
-        itemCount: lines.length,
-        onAdd: saving || lines.length >= 50 ? null : addProduct,
-        body: ListView(children: [
-          _vibInvoicePanel(child: Column(children: [
-            Row(children: [
-              Expanded(child: DropdownButtonFormField<String>(
-                initialValue: supplierId,
-                isExpanded: true,
-                decoration: _vibInvoiceInput('اختيار مورد', icon: Icons.person),
-                items: suppliers.docs.where((d) => d.data()['active'] != false).map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(),
-                onChanged: saving ? null : (v) { if (v != null) setLocal(() => supplierId = v); },
-              )),
-              const SizedBox(width: 8),
-              Container(
-                constraints: const BoxConstraints(minWidth: 112),
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 8),
-                decoration: BoxDecoration(border: Border.all(color: gold), borderRadius: BorderRadius.circular(10)),
-                child: Column(children: [
-                  const Text('الرصيد السابق', style: TextStyle(fontSize: 11)),
-                  Text('${previousSupplierBalance.toStringAsFixed(2)} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 16)),
-                ]),
-              ),
-            ]),
-            const SizedBox(height: 6),
-            Row(children: [
-              Expanded(child: TextField(controller: invoice, decoration: _vibInvoiceInput('رقم فاتورة المورد'))),
-              const SizedBox(width: 6),
-              Expanded(child: SizedBox(
-                height: 43,
-                child: OutlinedButton.icon(
-                  icon: const Icon(Icons.search, size: 19),
-                  label: const Text('بحث واختيار منتج'),
-                  onPressed: saving ? null : addProduct,
-                ),
-              )),
-            ]),
-          ])),
-          const SizedBox(height: 7),
-          ExpansionTile(
-            tilePadding: EdgeInsets.zero, title: const Text('زيادة سعر البيع % (اختياري)', style: TextStyle(fontSize: 12)),
-            children: [TextField(controller: markup, enabled: !saving,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: _vibInvoiceInput('النسبة مثل 5 أو 10'))],
-          ),
-          for (var i = 0; i < lines.length; i++)
-            PurchaseInvoiceLine(
-              key: ObjectKey(lines[i]), number: i + 1,
-              name: '${products.docs.firstWhere((d) => d.id == lines[i].productId).data()['name'] ?? ''}',
-              cost: lines[i].cost, quantity: lines[i].quantity, enabled: !saving,
-              onChanged: () => setLocal(() {}),
-              onChoose: () async {
-                final selected = await pickPurchaseProduct(c, products.docs,
-                  lines.where((e) => e != lines[i] && e.productId != null).map((e) => e.productId!).toSet());
-                if (selected == null || !c.mounted) return;
-                setLocal(() {
-                  lines[i].productId = selected;
-                  final cost = (products.docs.firstWhere((d) => d.id == selected).data()['purchasePrice'] as num?)?.toDouble();
-                  lines[i].cost.text = cost?.toStringAsFixed(2) ?? '0';
-                });
-              },
-              onDelete: () { final removed = lines.removeAt(i); removed.dispose(); setLocal(() {}); },
-            ),
-        ]),
-        settlement: PurchaseSettlementPanel(
-          total: previewTotal, previousBalance: previousSupplierBalance, credit: credit,
-          paid: paid, enabled: !saving,
-          onModeChanged: (value) => setLocal(() => credit = value),
-          onChanged: () => setLocal(() {}),
+      return InvoiceEditorFrame(
+        title:checkout ? 'حفظ فاتورة المشتريات' : 'فاتورة مشتريات',checkout:checkout,total:previewTotal,
+        toolbar:InvoiceProductsBar(
+          products:[for(final product in products.docs) if(!lines.any((row)=>row.productId == product.id))
+            (id:product.id,name:'${product.data()['name'] ?? ''}')],
+          enabled:!saving && lines.length < 50,onSelect:addSelected,
+          onSearch:() async {
+            final id=await pickPurchaseProduct(c,products.docs,lines.map((row)=>row.productId).whereType<String>().toSet());
+            if(id != null && c.mounted) addSelected(id);
+          },
         ),
+        body:checkout ? ListView(children:[
+          DropdownButtonFormField<String>(initialValue:supplierId.isEmpty ? null : supplierId,isExpanded:true,
+            decoration:_vibInvoiceInput('اسم المورد'),
+            items:activeSuppliers.map((d)=>DropdownMenuItem(value:d.id,child:Text('${d.data()['name'] ?? ''}',maxLines:2,overflow:TextOverflow.ellipsis))).toList(),
+            onChanged:saving ? null : (id) {if(id != null) setLocal(()=>supplierId=id);}),
+          const SizedBox(height:10),
+          PurchaseSettlementPanel(total:previewTotal,previousBalance:previousSupplierBalance,credit:credit,
+            paid:paid,enabled:!saving,onModeChanged:(value)=>setLocal(()=>credit=value),onChanged:()=>setLocal(() {})),
+          ExpansionTile(title:const Text('تفاصيل إضافية (اختياري)',style:TextStyle(fontSize:13)),children:[
+            TextField(controller:invoice,enabled:!saving,decoration:_vibInvoiceInput('رقم فاتورة المورد')),
+            const SizedBox(height:8),
+            TextField(controller:markup,enabled:!saving,keyboardType:const TextInputType.numberWithOptions(decimal:true),
+              decoration:_vibInvoiceInput('زيادة سعر البيع %')),
+          ]),
+        ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
+          for(var i=0;i<lines.length;i++) PurchaseInvoiceLine(
+            key:ObjectKey(lines[i]),number:i+1,name:'${products.docs.firstWhere((d)=>d.id == lines[i].productId).data()['name'] ?? ''}',
+            cost:lines[i].cost,quantity:lines[i].quantity,enabled:!saving,onChanged:()=>setLocal(() {}),
+            onDelete:() {final row=lines.removeAt(i);row.dispose();setLocal(() {});},
+            onChoose:() async {
+              final row=lines[i];
+              final id=await pickPurchaseProduct(c,products.docs,lines.where((other)=>other != row).map((other)=>other.productId).whereType<String>().toSet());
+              if(id == null || !c.mounted) return;
+              setLocal(() {row.productId=id;row.cost.text=((products.docs.firstWhere((d)=>d.id == id).data()['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);});
+            },
+          ),
+        ]),
         actions: [
-          TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
+          TextButton(onPressed:saving ? null : () {if(checkout) {setLocal(()=>checkout=false);} else {Navigator.pop(c);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
             FocusScope.of(c).unfocus();
             if (lines.isEmpty) {
               await showInvoiceSaveProblem(c, 'أضف منتجًا واحدًا على الأقل قبل حفظ الفاتورة');
               return;
             }
+            if (!checkout) {setLocal(() => checkout=true);return;}
+            if(supplierId.isEmpty) {await showInvoiceSaveProblem(c,'اختر المورد لحفظ الفاتورة في حسابه');return;}
             final entries = <({String id, int qty, double cost})>[];
             double total = 0;
             for (final row in lines) {
@@ -2408,7 +2194,7 @@ Future<void> purchaseDialog(BuildContext context) async {
                 await showInvoiceSaveProblem(c, invoiceSaveFailureMessage(e));
               }
             }
-          }, child: InvoiceSaveButtonLabel(saving: saving)),
+          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? 'تأكيد الحفظ' : 'إضافة')),
         ],
       );
     }),
