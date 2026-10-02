@@ -1911,6 +1911,8 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
           tx.set(purchaseRef, {
             'invoiceNumber': invoice.text.trim(),
             'source': 'camera',
+            'supplierPreviousBalance': before,
+            'supplierBalanceAfter': before + due,
             'supplierId': supplierId,
             'supplierName': supplier['name'],
             'items': items,
@@ -2034,7 +2036,7 @@ class PurchaseInvoiceFrame extends StatelessWidget {
         ConstrainedBox(constraints: BoxConstraints(maxHeight: constraints.maxHeight * .43),
           child: SingleChildScrollView(child: settlement)),
         const SizedBox(height: 4),
-        Row(mainAxisAlignment: MainAxisAlignment.end, children: actions),
+        Wrap(alignment: WrapAlignment.end, spacing: 4, children: actions),
       ])),
     )),
   );
@@ -2114,10 +2116,11 @@ class PurchaseSettlementPanel extends StatelessWidget {
     return _vibInvoicePanel(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       money('إجمالي الفاتورة', total, bold: true),
       Row(children: [
-        Expanded(child: SegmentedButton<bool>(
-          style: const ButtonStyle(visualDensity: VisualDensity.compact),
-          segments: const [ButtonSegment(value: false, label: Text('نقدي')), ButtonSegment(value: true, label: Text('آجل'))],
-          selected: {credit}, onSelectionChanged: enabled ? (values) => onModeChanged(values.first) : null)),
+        Expanded(child: ChoiceChip(label: const Text('نقدي', style: TextStyle(fontSize: 12)),
+          showCheckmark: false, selected: !credit, onSelected: enabled ? (_) => onModeChanged(false) : null)),
+        const SizedBox(width: 6),
+        Expanded(child: ChoiceChip(label: const Text('آجل', style: TextStyle(fontSize: 12)),
+          showCheckmark: false, selected: credit, onSelected: enabled ? (_) => onModeChanged(true) : null)),
       ]),
       if (credit) TextField(controller: paid, enabled: enabled, style: const TextStyle(fontSize: 13),
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -2349,6 +2352,8 @@ Future<void> purchaseDialog(BuildContext context) async {
                   'paid': payment,
                   'cashPosted': true,
                   'paymentStatus': due > 0 ? 'credit' : 'cash',
+                  'supplierPreviousBalance': beforeBalance,
+                  'supplierBalanceAfter': beforeBalance + due,
                   'due': due,
                   'status': 'completed',
                   'source': 'manual',
@@ -3680,6 +3685,7 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
       'due': (total - paid) / 100, 'paymentStatus': total > paid ? 'credit' : 'cash',
       'revision': revision + 1, 'updatedAt': FieldValue.serverTimestamp(), 'lastEditedBy': actor,
       if (purchase) 'cashPaidPosted': (cents((old['cashPaidPosted'] as num?) ?? 0) + payment) / 100,
+      if (purchase) 'supplierBalanceAfter': (cents((account?['balance'] as num?) ?? 0) + addedDue) / 100,
       if (!purchase) 'customerBalanceAfter': account == null ? 0 :
         (cents((account['balance'] as num?) ?? 0) + addedDue) / 100,
       if (items.length == 1) ...{'productId': items.first['productId'], 'productName': items.first['productName'],
@@ -3726,7 +3732,8 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
     } else if (!purchase) {
       lines.add(SaleLine(productId: products.first.id, unitPrice: priceFor(products.first)));
     }
-    bool saving = false, cash = replaceSale ? data['paymentStatus'] == 'cash' : true;
+    bool saving = false, cash = replaceSale ? data['paymentStatus'] == 'cash' :
+      purchase ? ((data['due'] as num?)?.toDouble() ?? 0) == 0 : true;
     await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(
       builder: (c, update) {
         final addedTotal = lines.fold<double>(0, (sum, line) => sum +
@@ -4016,6 +4023,14 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   final paid = (data['paid'] as num?)?.toDouble() ?? (isSale ? total : 0);
   final due = (data['due'] as num?)?.toDouble() ?? total - paid;
   final receiptPaid = (data['receiptPaid'] as num?)?.toDouble() ?? 0;
+  num? supplierBalance = data['supplierBalanceAfter'] as num?;
+  bool liveSupplierBalance = false;
+  if (!isSale && supplierBalance == null && settingsOverride == null && '${data['supplierId'] ?? ''}'.isNotEmpty) {
+    try {
+      supplierBalance = (await db.collection('suppliers').doc('${data['supplierId']}').get()).data()?['balance'] as num?;
+      liveSupplierBalance = true;
+    } catch (_) { /* Keep missing historical balances explicit instead of printing zero. */ }
+  }
   final format = thermal ? (narrow ? PdfPageFormat(58 * PdfPageFormat.mm, double.infinity) : PdfPageFormat.roll80) : PdfPageFormat.a4;
   pw.Text text(String value, {double? fontSize, bool bold = false, PdfColor? color, pw.TextAlign align = pw.TextAlign.right}) =>
     pw.Text(value, textAlign: align, style: pw.TextStyle(fontSize: fontSize ?? size,
@@ -4089,11 +4104,19 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
             summaryRow('الرصيد السابق', data['customerPreviousBalance']),
           if (isSale && data.containsKey('customerPreviousBalance'))
             summaryRow('الإجمالي المستحق', (data['customerPreviousBalance'] as num).toDouble() + total),
+          if (!isSale && data.containsKey('supplierPreviousBalance'))
+            summaryRow('الرصيد السابق للمورد', data['supplierPreviousBalance']),
+          if (!isSale && data.containsKey('supplierPreviousBalance'))
+            summaryRow('الإجمالي المستحق', (data['supplierPreviousBalance'] as num).toDouble() + total),
           summaryRow('المدفوع نقدًا', paid),
           if (receiptPaid > 0) summaryRow('محصّل بسندات قبض', receiptPaid),
           summaryRow('باقي هذه الفاتورة', due - receiptPaid, strong: true),
           if (isSale && data.containsKey('customerBalanceAfter'))
             summaryRow('رصيد العميل بعد الفاتورة', data['customerBalanceAfter'], strong: true),
+          if (!isSale && supplierBalance != null)
+            summaryRow(liveSupplierBalance ? 'إجمالي الباقي عليك للمورد حاليًا' : 'إجمالي الباقي عليك للمورد بعد السداد', supplierBalance, strong: true),
+          if (!isSale && supplierBalance == null)
+            text('إجمالي الباقي للمورد: الرصيد غير متاح', bold: true),
         ])),
       if (data['status'] == 'returned') ...[pw.SizedBox(height: 10), text('فاتورة مرتجعة', bold: true, color: PdfColors.red)],
       pw.SizedBox(height: 14),

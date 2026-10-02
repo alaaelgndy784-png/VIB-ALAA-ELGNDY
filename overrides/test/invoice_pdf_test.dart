@@ -88,6 +88,19 @@ void main() {
   }
   final brand = <String, dynamic>{'companyName': 'VIB للتجارة والتوزيع', 'address': 'عنوان الشركة - مثال توضيحي',
     'taxNumber': '123-456-789', 'commercialRegister': '54321', 'phone': '01000000000', 'phone2': '01100000000', 'invoiceFooter': 'شكراً لتعاملكم معنا - نموذج توضيحي للطباعة'};
+  for (final paper in ['a4', '80']) {
+    test('purchase $paper prints supplier outstanding balance after instalment', () async {
+      final bytes = await createInvoicePdf('purchases', 'PURCHASE-DEMO', {
+        'items': [{'productName': 'حنفية غسالة تركي نحاس', 'quantity': 24, 'unitCost': 145, 'lineTotal': 3480}],
+        'total': 3480, 'paid': 1000, 'due': 2480, 'supplierName': 'مورد تجريبي',
+        'supplierPreviousBalance': 30000, 'supplierBalanceAfter': 32480, 'status': 'completed',
+        'createdAt': Timestamp.fromDate(DateTime(2026, 10, 2, 23)),
+      }, paperChoice: paper, settingsOverride: brand);
+      expect(String.fromCharCodes(bytes.take(4)), '%PDF');
+      Directory('dist').createSync(recursive: true);
+      File('dist/VIB-PURCHASE-BALANCE-${paper.toUpperCase()}.pdf').writeAsBytesSync(bytes);
+    });
+  }
   for (final action in [('طباعة الفاتورة — A4 أو 80 مللي', 'print'), ('مشاركة PDF / إرسال على واتساب', 'share'), ('إغلاق', 'close')]) {
     testWidgets('saved invoice confirmation returns ${action.$2} after closing', (tester) async {
       String? selected;
