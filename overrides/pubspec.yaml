@@ -24,6 +24,8 @@ dependencies:
   share_plus: ^10.1.4
   flutter_secure_storage: ^9.2.4
   package_info_plus: ^8.3.1
+  record: ^6.2.1
+  audioplayers: ^6.5.1
 
 dev_dependencies:
   flutter_test:

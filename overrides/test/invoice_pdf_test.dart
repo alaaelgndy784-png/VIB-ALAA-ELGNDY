@@ -11,6 +11,16 @@ import '../lib/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  for (final thermal in [false,true]) {
+    test('supplier payment voucher renders balances on ${thermal ? '80MM' : 'A4'}', () async {
+      final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+      final bytes = await createSupplierPaymentVoucherPdf('PAY-001', {'accountName':'مورد الأدوات الصحية', 'supplierPhone':'01000000000', 'amount':1000.50, 'balanceBefore':30000, 'balanceAfter':28999.50, 'cashBefore':5000, 'cashAfter':3999.50, 'actorName':'علاء الجندي', 'note':'سداد مديونية المورد', 'createdAt':Timestamp.fromDate(DateTime(2026,10,3,12))}, font, thermal:thermal);
+      expect(bytes.length,greaterThan(1000));
+      Directory('dist').createSync(recursive:true);
+      File('dist/VIB-SUPPLIER-PAYMENT-${thermal ? '80MM' : 'A4'}.pdf').writeAsBytesSync(bytes);
+    });
+  }
+
   for (final width in [360.0, 564.0]) {
     testWidgets('purchase form keeps names, add button, settlement and save usable at width $width', (tester) async {
       tester.view.physicalSize = Size(width, 760);

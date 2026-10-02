@@ -1,4 +1,7 @@
 import 'dart:typed_data';
+import 'dart:async';
+import 'package:record/record.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'package:tesseract_ocr/tesseract_ocr.dart';
@@ -531,6 +534,8 @@ class OwnerDashboard extends StatelessWidget {
         const SizedBox(width: gap),
         Expanded(child: tile('الموردين', Icons.local_shipping_outlined, () => openPage('الموردين', const Accounts(startWithSuppliers: true)), height)),
       ]),
+      const SizedBox(height: gap),
+      tile('سندات صرف الموردين', Icons.receipt_long, () => openPage('سندات صرف الموردين', const SupplierPaymentVouchers()), 132),
       const SizedBox(height: 18),
       const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         Icon(Icons.info_outline, color: gold, size: 20), SizedBox(width: 8),
@@ -2908,6 +2913,7 @@ class _AccountsState extends State<Accounts> {
       Padding(padding: const EdgeInsets.all(12), child: Column(children: [SegmentedButton<bool>(
         segments: const [ButtonSegment(value: false, label: Text('العملاء')), ButtonSegment(value: true, label: Text('الموردون'))],
         selected: {suppliers}, onSelectionChanged: (values) => setState(() => suppliers = values.first)),
+        if (suppliers) Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const Directionality(textDirection: TextDirection.rtl, child: Scaffold(appBar: null, body: SafeArea(child: SupplierPaymentVouchers()))))), icon: const Icon(Icons.receipt_long), label: const Text('سندات صرف الموردين'))),
         const SizedBox(height: 8), FilledButton.icon(onPressed: () => createAccountDialog(context, collection, suppliers), icon: const Icon(Icons.person_add), label: Text(suppliers ? 'إضافة مورد' : 'إضافة عميل')),
       ])),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -2967,60 +2973,111 @@ Future<void> accountDialog(BuildContext context, String collection, String id, M
     await createReceiptVoucher(context, 'main', initialCustomerId: id);
     return;
   }
-  final amount = TextEditingController();
-  final isSupplier = collection == 'suppliers';
-  await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
-    title: Text('${account['name'] ?? ''}'),
-    content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-      Text('رصيد البداية: ${account['openingBalance'] ?? 0} ج.م'),
-      Text('الرصيد الحالي: ${account['balance'] ?? 0} ج.م'),
-      const SizedBox(height: 14),
-      TextField(controller: amount, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        decoration: InputDecoration(labelText: isSupplier ? 'مبلغ السداد' : 'مبلغ التحصيل')),
-    ]),
-    actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
-      FilledButton(onPressed: () async {
-        final paid = double.tryParse(amount.text.trim());
-        if (paid == null || !paid.isFinite || paid <= 0) return;
-        try {
-          await db.runTransaction((tx) async {
-            final ref = db.collection(collection).doc(id);
-            final snapshot = await tx.get(ref);
-            final cashRef = db.collection('settings').doc('cash');
-            final cash = await tx.get(cashRef);
-            final balance = (snapshot.data()?['balance'] as num?)?.toDouble();
-            if (balance == null || paid > balance) throw Exception('المبلغ أكبر من الرصيد الحالي');
-            final beforeCash = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
-            final cashDelta = isSupplier ? -paid : paid;
-            if (beforeCash + cashDelta < 0) throw Exception('رصيد الصندوق لا يكفي');
-            tx.update(ref, {'balance': balance - paid, 'updatedAt': FieldValue.serverTimestamp()});
-            tx.set(db.collection('accountMovements').doc(), {
-              'accountType': collection, 'accountId': id, 'accountName': snapshot.data()?['name'],
-              'kind': isSupplier ? 'payment' : 'collection', 'amount': paid,
-              'balanceBefore': balance, 'balanceAfter': balance - paid,
-              'createdAt': FieldValue.serverTimestamp(),
-              'actorId': FirebaseAuth.instance.currentUser!.uid,
-            });
-            tx.set(cashRef, {'balance': beforeCash + cashDelta,
-              'updatedAt': FieldValue.serverTimestamp()});
-            tx.set(db.collection('accountMovements').doc(), {
-              'accountType': 'cash',
-              'kind': isSupplier ? 'supplierPayment' : 'customerCollection',
-              'accountId': id, 'accountName': snapshot.data()?['name'],
-              'amount': paid, 'delta': cashDelta,
-              'balanceBefore': beforeCash, 'balanceAfter': beforeCash + cashDelta,
-              'reason': isSupplier ? 'سداد مورد' : 'تحصيل عميل',
-              'actorId': FirebaseAuth.instance.currentUser!.uid,
-              'createdAt': FieldValue.serverTimestamp(),
-            });
-          });
-          if (dialogContext.mounted) Navigator.pop(dialogContext);
-        } catch (e) {
-          if (dialogContext.mounted) ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text('تعذر تسجيل الحركة: $e')));
-        }
-      }, child: Text(isSupplier ? 'تسجيل السداد' : 'تسجيل التحصيل'))],
-  ));
+  await createSupplierPaymentVoucher(context, initialSupplierId: id);
 }
+
+({double supplierAfter, double cashAfter}) supplierPaymentBalances(double balance, double cash, double amount) {
+  if (!balance.isFinite || !cash.isFinite || !amount.isFinite || amount <= 0) throw StateError('اكتب مبلغًا صحيحًا أكبر من صفر');
+  final paid = (amount * 100).round(), debt = (balance * 100).round(), available = (cash * 100).round();
+  if (paid <= 0) throw StateError('المبلغ أقل من قرش');
+  if (paid > debt) throw StateError('المبلغ أكبر من مديونية المورد');
+  if (paid > available) throw StateError('رصيد الصندوق لا يكفي');
+  return (supplierAfter: (debt - paid) / 100, cashAfter: (available - paid) / 100);
+}
+
+class SupplierPaymentVouchers extends StatelessWidget {
+  const SupplierPaymentVouchers({super.key});
+  @override Widget build(BuildContext context) => Column(children: [
+    Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(onPressed: () => createSupplierPaymentVoucher(context), icon: const Icon(Icons.add), label: const Text('إنشاء سند صرف لمورد'))),
+    Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'suppliers').snapshots(includeMetadataChanges: true), builder: (context, snapshot) {
+      if (snapshot.hasError) return Center(child: Text('تعذر تحميل سندات الصرف: ${snapshot.error}'));
+      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+      final rows = snapshot.data!.docs.where((d) => d.data()['kind'] == 'payment' && visibleAfterReset(d.data())).toList()
+        ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+      if (rows.isEmpty) return const Center(child: Text('لا توجد سندات صرف للموردين بعد'));
+      return ListView.builder(itemCount: rows.length, itemBuilder: (context, i) {
+        final row = rows[i], data = row.data();
+        final confirmed = !row.metadata.hasPendingWrites && !snapshot.data!.metadata.isFromCache;
+        return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('${data['accountName'] ?? ''} • ${data['amount']} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+          Text('رقم السند: ${row.id}\n${formatDate(data['createdAt'])}\nالباقي للمورد: ${data['balanceAfter']} ج.م'),
+          if (!confirmed) const Text('بانتظار تأكيد البيانات من الخادم'),
+          Wrap(spacing: 8, children: [for (final thermal in [false,true]) OutlinedButton.icon(onPressed: confirmed ? () => printSupplierPaymentVoucher(context, row.id, data, thermal: thermal) : null, icon: const Icon(Icons.print), label: Text(thermal ? 'طباعة 80 مللي' : 'طباعة A4'))]),
+        ])));
+      });
+    })),
+  ]);
+}
+
+Future<void> createSupplierPaymentVoucher(BuildContext context, {String? initialSupplierId}) async {
+  final amount = TextEditingController(), note = TextEditingController();
+  final voucherRef = db.collection('accountMovements').doc(), cashMovement = db.collection('accountMovements').doc();
+  String? supplierId = initialSupplierId;
+  bool saving = false;
+  await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(builder: (dialog, update) => AlertDialog(
+    title: const Text('سند صرف لمورد'),
+    content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream: db.collection('suppliers').snapshots(), builder: (context,snap) {
+        if (snap.hasError) return const Text('تعذر تحميل الموردين');
+        if (!snap.hasData) return const CircularProgressIndicator();
+        final rows = snap.data!.docs.where((d) => d.data()['active'] != false).toList()..sort((a,b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
+        return DropdownButtonFormField<String>(initialValue: rows.any((d) => d.id == supplierId) ? supplierId : null, isExpanded: true, decoration: const InputDecoration(labelText: 'اختيار المورد'), items: rows.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}'))).toList(), onChanged: saving ? null : (id) => update(() => supplierId = id));
+      }),
+      if (supplierId != null) StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(stream: db.collection('suppliers').doc(supplierId).snapshots(), builder: (_,snap) => Text('مديونية المورد الحالية: ${snap.data?.data()?['balance'] ?? '…'} ج.م')),
+      TextField(controller: amount, enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'المبلغ المصروف للمورد')),
+      TextField(controller: note, enabled: !saving, maxLength: 2000, decoration: const InputDecoration(labelText: 'البيان / ملاحظات')),
+      const Text('حفظ السند يخصم المبلغ من الصندوق ومن مديونية المورد معًا.'),
+    ])),
+    actions: [TextButton(onPressed: saving ? null : () => Navigator.pop(dialog), child: const Text('إلغاء')), FilledButton(onPressed: saving ? null : () async {
+      final raw = double.tryParse(amount.text.trim().replaceAll(',', '.')), id = supplierId;
+      if (id == null || raw == null || !raw.isFinite || raw <= 0) { await showInvoiceSaveProblem(dialog,'اختر المورد واكتب مبلغًا صحيحًا'); return; }
+      final paid = (raw * 100).round() / 100;
+      update(() => saving = true);
+      try {
+        final actor = FirebaseAuth.instance.currentUser!.uid;
+        await db.runTransaction((tx) async {
+          final existing = await tx.get(voucherRef);
+          if (existing.exists) return;
+          final user = (await tx.get(db.collection('users').doc(actor))).data();
+          if (user?['role'] != 'owner' || user?['active'] != true) throw StateError('سند الصرف متاح للمدير فقط');
+          final supplierRef = db.collection('suppliers').doc(id), cashRef = db.collection('settings').doc('cash');
+          final supplier = (await tx.get(supplierRef)).data(), cash = (await tx.get(cashRef)).data();
+          if (supplier == null || supplier['active'] == false) throw StateError('المورد غير متاح');
+          final balance = (supplier['balance'] as num).toDouble(), beforeCash = ((cash?['balance'] as num?) ?? 0).toDouble();
+          final after = supplierPaymentBalances(balance,beforeCash,paid), now = FieldValue.serverTimestamp();
+          tx.update(supplierRef, {'balance': after.supplierAfter,'updatedAt': now});
+          tx.set(cashRef, {'balance': after.cashAfter,'updatedAt': now},SetOptions(merge: true));
+          tx.set(voucherRef, {'accountType':'suppliers','accountId':id,'accountName':supplier['name'],'supplierPhone':supplier['phone'] ?? '', 'kind':'payment','amount':paid,'balanceBefore':balance,'balanceAfter':after.supplierAfter,'cashBefore':beforeCash,'cashAfter':after.cashAfter,'referenceId':voucherRef.id,'cashMovementId':cashMovement.id,'note':note.text.trim(),'actorId':actor,'actorName':user?['name'] ?? '', 'createdAt':now});
+          tx.set(cashMovement, {'accountType':'cash','accountId':id,'accountName':supplier['name'],'kind':'supplierPayment','amount':paid,'delta':-paid,'balanceBefore':beforeCash,'balanceAfter':after.cashAfter,'referenceId':voucherRef.id,'reason':'سند صرف لمورد','actorId':actor,'createdAt':now});
+        });
+        if (dialog.mounted) Navigator.pop(dialog);
+        if (context.mounted) await showInvoiceSaveProblem(context,'تم حفظ سند الصرف وتحديث حساب المورد والصندوق. السند متاح للطباعة في سندات صرف الموردين.');
+      } catch(e) { if (dialog.mounted) { update(() => saving = false); await showInvoiceSaveProblem(dialog,'تعذر حفظ سند الصرف: $e'); } }
+    }, child: Text(saving ? 'جارٍ الحفظ…' : 'حفظ سند الصرف'))],
+  )));
+  amount.dispose(); note.dispose();
+}
+
+Future<Uint8List> createSupplierPaymentVoucherPdf(String id, Map<String,dynamic> data, pw.Font font, {bool thermal = false}) async {
+  final pdf = pw.Document();
+  final lines = ['رقم السند: $id', 'التاريخ: ${formatDate(data['createdAt'])}', 'صرفنا إلى المورد: ${data['accountName'] ?? ''}', 'الهاتف: ${data['supplierPhone'] ?? ''}', 'المبلغ المصروف: ${data['amount']} ج.م', 'رصيد المورد قبل السداد: ${data['balanceBefore']} ج.م', 'الباقي عليك للمورد بعد السداد: ${data['balanceAfter']} ج.م', 'الصندوق قبل الصرف: ${data['cashBefore'] ?? 'غير مسجل'} ج.م', 'الصندوق بعد الصرف: ${data['cashAfter'] ?? 'غير مسجل'} ج.م', 'المسؤول: ${data['actorName'] ?? data['actorId'] ?? ''}', 'البيان: ${data['note'] ?? ''}'];
+  pdf.addPage(pw.MultiPage(pageFormat: thermal ? PdfPageFormat(80 * PdfPageFormat.mm, 400 * PdfPageFormat.mm) : PdfPageFormat.a4, margin: pw.EdgeInsets.all(thermal ? 4 * PdfPageFormat.mm : 30), theme: pw.ThemeData.withFont(base:font,bold:font), textDirection:pw.TextDirection.rtl, build: (_) => [
+    pw.Text('VIB للتجارة والتوزيع',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:thermal ? 14 : 22)),
+    pw.SizedBox(height:12),pw.Text('سند صرف لمورد',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:thermal ? 16 : 20,fontWeight:pw.FontWeight.bold)),
+    for (final line in lines) pw.Padding(padding:const pw.EdgeInsets.symmetric(vertical:6),child:pw.Text(line,style:pw.TextStyle(fontSize:thermal ? 10 : 13))),
+    pw.SizedBox(height:20),pw.Text('توقيع المستلم: __________________'),
+  ]));
+  return pdf.save();
+}
+
+Future<void> printSupplierPaymentVoucher(BuildContext context,String id,Map<String,dynamic> data,{bool thermal=false}) async {
+  try {
+    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final bytes = await createSupplierPaymentVoucherPdf(id,data,font,thermal:thermal);
+    await Printing.layoutPdf(name:'VIB-SUPPLIER-PAYMENT-$id-${thermal ? '80MM' : 'A4'}.pdf',onLayout:(_) async => bytes);
+  } catch(e) { if(context.mounted) await showInvoiceSaveProblem(context,'تعذر طباعة سند الصرف: $e'); }
+}
+
 
 class CashBox extends StatelessWidget {
   const CashBox({super.key});
@@ -4837,6 +4894,53 @@ class StaffChatInbox extends StatelessWidget {
   );
 }
 
+String chatProblem(Object? error) {
+  if (error is FirebaseException) {
+    if (error.code == 'permission-denied') return 'Firebase رفض صلاحيات المحادثة (permission-denied). يلزم نشر قواعد المحادثة والتأكد من تفعيل الحساب.';
+    if (error.code == 'unavailable') return 'خدمة المحادثة غير متاحة حاليًا؛ راجع الإنترنت وحاول مرة أخرى (unavailable).';
+    if (error.code == 'unauthenticated') return 'جلسة الدخول انتهت؛ سجّل الدخول مرة أخرى (unauthenticated).';
+    return 'تعذر الاتصال بالمحادثة: ${error.code}';
+  }
+  return 'تعذر إكمال المحادثة: $error';
+}
+
+class ChatVoicePlayer extends StatefulWidget {
+  final String encoded;
+  final int seconds;
+  const ChatVoicePlayer({super.key,required this.encoded,required this.seconds});
+  @override State<ChatVoicePlayer> createState() => _ChatVoicePlayerState();
+}
+class _ChatVoicePlayerState extends State<ChatVoicePlayer> {
+  AudioPlayer? player;
+  File? audioFile;
+  StreamSubscription<void>? completed;
+  bool playing = false, busy = false;
+  @override void dispose() { completed?.cancel(); player?.dispose(); final file = audioFile; if(file != null) file.exists().then((exists) { if(exists) file.delete(); }); super.dispose(); }
+  Future<void> toggle() async {
+    if (busy) return;
+    setState(() => busy = true);
+    try {
+      if (playing) { await player!.pause(); if(mounted) setState(() => playing = false); }
+      else {
+        if (player == null) {
+          player = AudioPlayer();
+          completed = player!.onPlayerComplete.listen((_) { if(mounted) setState(() => playing = false); });
+          final dir = await getTemporaryDirectory();
+          audioFile = File('${dir.path}/vib-play-${DateTime.now().microsecondsSinceEpoch}.m4a');
+          await audioFile!.writeAsBytes(base64Decode(widget.encoded));
+        }
+        await player!.play(DeviceFileSource(audioFile!.path));
+        if(mounted) setState(() => playing = true);
+      }
+    } catch(e) { if(mounted) await showInvoiceSaveProblem(context,'تعذر تشغيل الصوت: $e'); }
+    finally { if(mounted) setState(() => busy = false); }
+  }
+  @override Widget build(BuildContext context) => Row(mainAxisSize:MainAxisSize.min,children:[
+    IconButton(tooltip:playing ? 'إيقاف الصوت' : 'تشغيل الرسالة الصوتية',onPressed:busy ? null : toggle,icon:Icon(playing ? Icons.pause_circle : Icons.play_circle,color:gold)),
+    Flexible(child:Text('رسالة صوتية • ${widget.seconds} ثانية')),
+  ]);
+}
+
 class StaffChatPage extends StatefulWidget {
   final String employeeId, title, initialDraft;
   final bool owner;
@@ -4844,7 +4948,48 @@ class StaffChatPage extends StatefulWidget {
   @override
   State<StaffChatPage> createState() => _StaffChatPageState();
 }
-class _StaffChatPageState extends State<StaffChatPage> {
+class _StaffChatPageState extends State<StaffChatPage> with WidgetsBindingObserver {
+  AudioRecorder? recorder;
+  Timer? recordingTimer;
+  bool recording = false, recordingBusy = false;
+  int recordingSeconds = 0;
+  String? audioDraft;
+  int audioSeconds = 0;
+
+  Future<void> toggleRecording() async {
+    if (sending || recordingBusy) return;
+    setState(() => recordingBusy = true);
+    try {
+      if (recording) {
+        recordingTimer?.cancel();
+        final path = await recorder!.stop();
+        final duration = recordingSeconds.clamp(1,60).toInt();
+        if (path == null) throw StateError('لم يتم تسجيل الصوت');
+        final file = File(path), bytes = await File(path).readAsBytes();
+        await file.delete();
+        if (bytes.isEmpty || bytes.length > 600000) throw StateError('حجم التسجيل غير مناسب؛ سجل مرة أخرى');
+        if (mounted) setState(() { recording = false; audioDraft = base64Encode(bytes); audioSeconds = duration; });
+      } else {
+        recorder ??= AudioRecorder();
+        if (!await recorder!.hasPermission()) throw StateError('اسمح للتطبيق باستخدام الميكروفون من إعدادات الهاتف');
+        final dir = await getTemporaryDirectory();
+        await recorder!.start(const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 32000, sampleRate: 16000, numChannels: 1), path: '${dir.path}/vib-record-${DateTime.now().microsecondsSinceEpoch}.m4a');
+        if (!mounted) { await recorder!.cancel(); return; }
+        setState(() { recording = true; recordingSeconds = 0; });
+        recordingTimer = Timer.periodic(const Duration(seconds:1), (_) {
+          if (!mounted) return;
+          setState(() => recordingSeconds++);
+          if (recordingSeconds >= 60) toggleRecording();
+        });
+      }
+    } catch(e) {
+      recordingTimer?.cancel();
+      await recorder?.cancel();
+      if (mounted) { setState(() => recording = false); await showInvoiceSaveProblem(context,'تعذر التسجيل: $e'); }
+    } finally { if (mounted) setState(() => recordingBusy = false); }
+  }
+
+
   late final TextEditingController message;
   bool sending = false;
   Timestamp? lastMarked;
@@ -4852,9 +4997,10 @@ class _StaffChatPageState extends State<StaffChatPage> {
   String? pendingText;
   DocumentReference<Map<String, dynamic>> get thread => db.collection('staffChats').doc(widget.employeeId);
   @override
-  void initState() { super.initState(); message = TextEditingController(text: widget.initialDraft); }
+  void initState() { super.initState(); WidgetsBinding.instance.addObserver(this); message = TextEditingController(text: widget.initialDraft); }
+  @override void didChangeAppLifecycleState(AppLifecycleState state) { if(state != AppLifecycleState.resumed && recording && !recordingBusy) toggleRecording(); }
   @override
-  void dispose() { message.dispose(); super.dispose(); }
+  void dispose() { WidgetsBinding.instance.removeObserver(this); recordingTimer?.cancel(); recorder?.dispose(); message.dispose(); super.dispose(); }
 
   Future<void> markRead(Timestamp? date) async {
     if (date == null || lastMarked == date) return;
@@ -4864,10 +5010,11 @@ class _StaffChatPageState extends State<StaffChatPage> {
   }
 
   Future<void> send() async {
-    final text = message.text.trim();
-    if (sending || text.isEmpty) return;
+    final audio = audioDraft;
+    final text = audio == null ? message.text.trim() : 'رسالة صوتية';
+    if (sending || recording || recordingBusy || text.isEmpty) return;
     if (text.length > 2000) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الرسالة بحد أقصى 2000 حرف'))); return; }
-    if (pendingRef == null || pendingText != text) { pendingRef = thread.collection('messages').doc(); pendingText = text; }
+    if (pendingRef == null || pendingText != (audio ?? text)) { pendingRef = thread.collection('messages').doc(); pendingText = audio ?? text; }
     final ref = pendingRef!;
     setState(() => sending = true);
     try {
@@ -4875,7 +5022,7 @@ class _StaffChatPageState extends State<StaffChatPage> {
       await db.runTransaction((tx) async {
         final prior = await tx.get(ref);
         if (prior.exists) {
-          if (prior.data()?['senderId'] != uid || prior.data()?['text'] != text) throw Exception('راجع الرسالة قبل إعادة الإرسال');
+          if (prior.data()?['senderId'] != uid || prior.data()?['text'] != text || prior.data()?['audioBase64'] != audio) throw Exception('راجع الرسالة قبل إعادة الإرسال');
           return;
         }
         final sender = (await tx.get(db.collection('users').doc(uid))).data();
@@ -4884,14 +5031,14 @@ class _StaffChatPageState extends State<StaffChatPage> {
         final role = '${sender?['role'] ?? ''}';
         if (role != 'owner' && (role != 'employee' || uid != widget.employeeId)) throw Exception('المحادثة غير مسموحة لهذا الحساب');
         final now = FieldValue.serverTimestamp();
-        tx.set(ref, {'senderId': uid, 'senderName': '${sender?['name'] ?? ''}', 'senderRole': role, 'text': text, 'createdAt': now});
+        tx.set(ref, {'senderId': uid, 'senderName': '${sender?['name'] ?? ''}', 'senderRole': role, 'text': text, if(audio != null) 'audioBase64': audio, if(audio != null) 'audioSeconds': audioSeconds, if(audio != null) 'audioMime': 'audio/mp4', 'createdAt': now});
         tx.set(thread, {'employeeId': widget.employeeId, 'employeeName': '${employee?['name'] ?? ''}', 'branchId': '${employee?['branchId'] ?? ''}',
           'lastMessageId': ref.id, 'lastText': text, 'lastSenderId': uid, 'lastSenderRole': role, 'lastMessageAt': now}, SetOptions(merge: true));
       });
       if (!mounted) return;
-      message.clear(); pendingRef = null; pendingText = null;
-    } catch (_) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر إرسال الرسالة؛ راجع الاتصال وصلاحيات المحادثة وحاول مرة أخرى')));
+      if(audio == null) message.clear(); setState(() { audioDraft = null; audioSeconds = 0; }); pendingRef = null; pendingText = null;
+    } catch (e) {
+      if (mounted) await showInvoiceSaveProblem(context,chatProblem(e));
     } finally { if (mounted) setState(() => sending = false); }
   }
 
@@ -4899,9 +5046,9 @@ class _StaffChatPageState extends State<StaffChatPage> {
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: Text(widget.title)),
     body: Column(children: [
-      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: thread.collection('messages').orderBy('createdAt', descending: true).limit(200).snapshots(),
+      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: thread.collection('messages').orderBy('createdAt', descending: true).limit(50).snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return const Center(child: Text('تعذر تحميل المحادثة؛ راجع الاتصال وصلاحيات الحساب'));
+          if (snapshot.hasError) return Center(child: Padding(padding: const EdgeInsets.all(20), child: Column(mainAxisSize: MainAxisSize.min, children: [Text(chatProblem(snapshot.error), textAlign: TextAlign.center), const SizedBox(height: 12), OutlinedButton(onPressed: () async { await FirebaseAuth.instance.currentUser?.getIdToken(true); if(mounted) setState(() {}); }, child: const Text('إعادة المحاولة'))])));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           final rows = snapshot.data!.docs;
           if (rows.isEmpty) return const Center(child: Text('اكتب رسالتك لبدء المحادثة'));
@@ -4916,17 +5063,20 @@ class _StaffChatPageState extends State<StaffChatPage> {
               decoration: BoxDecoration(color: mine ? const Color(0xFF463A20) : const Color(0xFF222222), borderRadius: BorderRadius.circular(14)),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
                 Text('${data['senderName'] ?? ''}${data['senderRole'] == 'owner' ? ' • المدير' : ''}', style: const TextStyle(color: gold, fontSize: 12)),
-                const SizedBox(height: 5), SelectableText('${data['text'] ?? ''}'),
+                const SizedBox(height: 5), if(data['audioBase64'] is String) ChatVoicePlayer(key: ValueKey(rows[index].id), encoded:data['audioBase64'], seconds:(data['audioSeconds'] as num?)?.toInt() ?? 0) else SelectableText('${data['text'] ?? ''}'),
                 const SizedBox(height: 5), Text(formatDate(data['createdAt']), style: const TextStyle(fontSize: 10, color: Colors.white60)),
               ]),
             ));
           });
         },
       )),
+      if(recording) Row(mainAxisAlignment:MainAxisAlignment.center,children:[Text('جارٍ التسجيل: $recordingSeconds / 60 ثانية',style:const TextStyle(color:Colors.red)),TextButton(onPressed:recordingBusy ? null : () async { recordingTimer?.cancel(); await recorder?.cancel(); if(mounted) setState(() => recording=false); },child:const Text('إلغاء التسجيل'))]),
+      if(audioDraft != null) Row(children:[Expanded(child:ChatVoicePlayer(key:ValueKey(audioDraft),encoded:audioDraft!,seconds:audioSeconds)),IconButton(tooltip:'حذف التسجيل',onPressed:sending ? null : () => setState(() {audioDraft=null;audioSeconds=0;}),icon:const Icon(Icons.delete_outline))]),
       SafeArea(top: false, child: Padding(padding: const EdgeInsets.all(10), child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
-        Expanded(child: TextField(controller: message, enabled: !sending, minLines: 1, maxLines: 5, maxLength: 2000,
+        Expanded(child: TextField(controller: message, enabled: !sending && !recording && audioDraft == null, minLines: 1, maxLines: 5, maxLength: 2000,
           decoration: const InputDecoration(hintText: 'اكتب رسالتك هنا…', border: OutlineInputBorder(), counterText: ''))),
-        const SizedBox(width: 8), IconButton.filled(tooltip: 'إرسال الرسالة', onPressed: sending ? null : send,
+        const SizedBox(width: 4), IconButton(tooltip: recording ? 'إيقاف التسجيل' : 'تسجيل رسالة صوتية', onPressed:sending || recordingBusy || audioDraft != null ? null : toggleRecording, icon:Icon(recording ? Icons.stop_circle : Icons.mic,color:recording ? Colors.red : gold)),
+        IconButton.filled(tooltip: 'إرسال الرسالة', onPressed: sending || recording || recordingBusy ? null : send,
           icon: sending ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send)),
       ]))),
     ]),

@@ -180,6 +180,12 @@ service cloud.firestore {
         && m.createdAt == request.time && m.productName == x.productName;
     }
 
+    function validChatAudio(m) {
+      return !m.keys().hasAny(['audioBase64','audioSeconds','audioMime']) ||
+        (m.audioBase64 is string && m.audioBase64.size() > 0 && m.audioBase64.size() <= 800000
+          && m.audioSeconds is int && m.audioSeconds >= 1 && m.audioSeconds <= 60
+          && m.audioMime == 'audio/mp4' && m.text == 'رسالة صوتية');
+    }
     function chatAccess(employeeId) {
       return owner() || (employee() && request.auth.uid == employeeId);
     }
@@ -215,10 +221,11 @@ service cloud.firestore {
       match /messages/{messageId} {
         allow read: if chatAccess(employeeId);
         allow create: if chatAccess(employeeId) && chatEmployee(employeeId)
-          && request.resource.data.keys().hasOnly(['senderId','senderName','senderRole','text','createdAt'])
+          && request.resource.data.keys().hasOnly(['senderId','senderName','senderRole','text','createdAt','audioBase64','audioSeconds','audioMime'])
           && request.resource.data.senderId == request.auth.uid
           && request.resource.data.senderName == profile().name && request.resource.data.senderRole == profile().role
           && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 2000
+          && validChatAudio(request.resource.data)
           && request.resource.data.createdAt == request.time
           && getAfter(/databases/$(database)/documents/staffChats/$(employeeId)).data.lastMessageId == messageId
           && getAfter(/databases/$(database)/documents/staffChats/$(employeeId)).data.lastSenderId == request.auth.uid

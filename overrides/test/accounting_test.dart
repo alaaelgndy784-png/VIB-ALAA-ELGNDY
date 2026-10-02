@@ -3,6 +3,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../lib/main.dart';
 
 void main() {
+  test('supplier payment updates both balances in cents and rejects insufficient balances', () {
+    final result = supplierPaymentBalances(30000, 5000, 1000.50);
+    expect(result.supplierAfter, 28999.50);
+    expect(result.cashAfter, 3999.50);
+    expect(supplierPaymentBalances(0.3, 0.3, 0.1).supplierAfter, 0.2);
+    for (final amount in [0.0, -1.0, double.nan, double.infinity, 30001.0, 5001.0]) {
+      expect(() => supplierPaymentBalances(30000, 5000, amount), throwsStateError);
+    }
+  });
+
   test('purchase cash payment follows invoice total while credit preserves the entered instalment', () {
     expect(purchaseInvoicePayment(94386, false, '0'), 94386);
     expect(purchaseInvoicePayment(94386, false, '1000'), 94386);

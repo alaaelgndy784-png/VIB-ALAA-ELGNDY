@@ -120,9 +120,9 @@ test('five staff lines are rejected before partial writes',async()=>assertFails(
 test('orphan stock movement is denied',async()=>assertFails(setDoc(doc(env.authenticatedContext('staff').firestore(),'stockMovements/orphan_p0'),{
   productId:'p0',productName:'Product0',branchId:'main',kind:'sale',quantity:-2,balanceAfter:8,referenceId:'orphan',actorId:'staff',createdAt:serverTimestamp()})));
 
-function chatBatch(db,{employeeId='staff',senderId='staff',senderName='Staff',senderRole='employee',text='Question about invoice',messageId='m1',summary=true}={}){
+function chatBatch(db,{employeeId='staff',senderId='staff',senderName='Staff',senderRole='employee',text='Question about invoice',messageId='m1',summary=true,audio={}}={}){
  const batch=writeBatch(db);
- batch.set(doc(db,`staffChats/${employeeId}/messages/${messageId}`),{senderId,senderName,senderRole,text,createdAt:serverTimestamp()});
+ batch.set(doc(db,`staffChats/${employeeId}/messages/${messageId}`),{senderId,senderName,senderRole,text,...audio,createdAt:serverTimestamp()});
  if(summary)batch.set(doc(db,`staffChats/${employeeId}`),{employeeId,employeeName:'Staff',branchId:'staffbranch',lastMessageId:messageId,lastText:text,lastSenderId:senderId,lastSenderRole:senderRole,lastMessageAt:serverTimestamp()},{merge:true});
  return batch.commit();
 }
@@ -221,4 +221,16 @@ test('staff reads print branding but cannot change it or read manager settings',
  await assertSucceeds(getDoc(doc(db,'settings/invoiceBranding')));
  await assertFails(setDoc(doc(db,'settings/invoiceBranding'),{companyName:'Fake'}));
  await assertFails(getDoc(doc(db,'settings/main')));
+});
+
+test('voice messages retain participant permissions and require bounded audio fields',async()=>{
+ const staff=env.authenticatedContext('staff').firestore(), owner=env.authenticatedContext('owner').firestore();
+ const audio={audioBase64:'YXVkaW8=',audioSeconds:5,audioMime:'audio/mp4'};
+ await assertSucceeds(chatBatch(staff,{text:'رسالة صوتية',audio}));
+ await assertSucceeds(getDoc(doc(owner,'staffChats/staff/messages/m1')));
+ await assertSucceeds(chatBatch(owner,{senderId:'owner',senderName:'Owner',senderRole:'owner',messageId:'reply',text:'رسالة صوتية',audio}));
+ for (const [i,bad] of [{audioSeconds:61},{audioSeconds:0},{audioBase64:'x'.repeat(800001)},{audioMime:'video/mp4'},{audioBase64:''}].entries())
+   await assertFails(chatBatch(staff,{messageId:'bad'+i,text:'رسالة صوتية',audio:{...audio,...bad}}));
+ await assertFails(chatBatch(staff,{messageId:'partial',audio:{audioSeconds:5}}));
+ await assertFails(chatBatch(staff,{messageId:'badtext',audio}));
 });
