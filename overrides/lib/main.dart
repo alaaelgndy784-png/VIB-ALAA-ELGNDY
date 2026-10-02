@@ -1362,9 +1362,11 @@ Future<void> stockDialog(BuildContext context, String branchId) async {
   final id = TextEditingController(), qty = TextEditingController();
   await showDialog<void>(context: context, builder: (c) => AlertDialog(title: const Text('نقل من المخزون الرئيسي'), content: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: id, decoration: const InputDecoration(labelText: 'رمز المنتج')), TextField(controller: qty, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الكمية'))]), actions: [FilledButton(onPressed: () async {
     final q = int.tryParse(qty.text), p = id.text.trim(); if (q == null || q <= 0 || p.isEmpty) return;
+    if (branchId == 'main') { ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اختر فرعًا مختلفًا عن المخزون الرئيسي'))); return; }
     try { await db.runTransaction((tx) async {
       final mainRef = db.collection('stock').doc('main_$p'), branchRef = db.collection('stock').doc('${branchId}_$p');
       final main = await tx.get(mainRef), branch = await tx.get(branchRef), product = await tx.get(db.collection('products').doc(p));
+      if (!product.exists || product.data()?['active'] != true) throw Exception('الصنف غير موجود أو غير نشط');
       final available = (main.data()?['quantity'] as num?)?.toInt() ?? 0;
       if (available < q) throw Exception('المخزون الرئيسي غير كافٍ');
       tx.set(mainRef, {'branchId': 'main', 'productId': p, 'quantity': available - q});
@@ -1840,7 +1842,7 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
       if (markup.text.trim().isNotEmpty && (increase == null || !increase.isFinite || increase < 0 || increase > 1000)) {
         ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اكتب نسبة زيادة صحيحة من 0 إلى 1000'))); return;
       }
-      if (supplierId == null || payment == null || !payment.isFinite || payment < 0 || payment > total) {
+      if (!total.isFinite || supplierId == null || payment == null || !payment.isFinite || payment < 0 || payment > total) {
         ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اختر المورد وتأكد من المبلغ المدفوع'))); return;
       }
       update(() => saving = true);
@@ -2037,7 +2039,7 @@ Future<void> purchaseDialog(BuildContext context) async {
       }
       final selectedSupplier = suppliers.docs.firstWhere((d) => d.id == supplierId);
       final previousSupplierBalance = (selectedSupplier.data()['balance'] as num?)?.toDouble() ?? 0;
-      final previewPayment = double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? 0;
+      final previewPayment = double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? -1;
       final previewDue = (previewTotal - previewPayment).clamp(0, double.infinity).toDouble();
       return AlertDialog(
         backgroundColor: const Color(0xFF080808),
@@ -2211,9 +2213,9 @@ Future<void> purchaseDialog(BuildContext context) async {
               entries.add((id: row.productId!, qty: qty, cost: unitCost));
               total += qty * unitCost;
             }
-            final payment = double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? 0;
+            final payment = double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? -1;
             final increase = markup.text.trim().isEmpty ? null : double.tryParse(markup.text.trim().replaceAll(',', '.'));
-            if (!payment.isFinite || payment < 0 || payment > total) {
+            if (!total.isFinite || !payment.isFinite || payment < 0 || payment > total) {
               ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('قيمة المدفوع غير صحيحة')));
               return;
             }
@@ -2363,7 +2365,7 @@ class AccountMovements extends StatelessWidget {
   );
 }
 
-String movementName(String kind) => switch (kind) { 'purchase' => 'مشتريات', 'payment' => 'سداد مورد', 'collection' => 'تحصيل عميل', 'sale' => 'مبيعات', 'sales_return' => 'مرتجع مبيعات', 'purchase_return' => 'مرتجع مشتريات', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر', 'adjustment' => 'تسوية مخزون', 'purchasePayment' => 'سداد فاتورة مشتريات', 'supplierPayment' => 'سداد مورد', 'customerCollection' => 'تحصيل عميل', 'deposit' => 'إيداع بالصندوق', 'withdrawal' => 'سحب من الصندوق', 'expense' => 'مصروف', 'opening' => 'رصيد افتتاحي', _ => kind };
+String movementName(String kind) => switch (kind) { 'purchase' => 'مشتريات', 'payment' => 'سداد مورد', 'collection' => 'تحصيل عميل', 'sale' => 'مبيعات', 'sales_return' => 'مرتجع مبيعات', 'purchase_return' => 'مرتجع مشتريات', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر', 'adjustment' => 'تسوية مخزون', 'saleCorrection' => 'تعديل فاتورة بيع', 'purchasePayment' => 'سداد فاتورة مشتريات', 'supplierPayment' => 'سداد مورد', 'customerCollection' => 'تحصيل عميل', 'deposit' => 'إيداع بالصندوق', 'withdrawal' => 'سحب من الصندوق', 'expense' => 'مصروف', 'opening' => 'رصيد افتتاحي', _ => kind };
 
 Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynamic> data) async {
   final name = TextEditingController(text: '${data['name'] ?? ''}');
