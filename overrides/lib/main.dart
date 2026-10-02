@@ -3655,11 +3655,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   final paid = (data['paid'] as num?)?.toDouble() ?? (isSale ? total : 0);
   final due = (data['due'] as num?)?.toDouble() ?? total - paid;
   final receiptPaid = (data['receiptPaid'] as num?)?.toDouble() ?? 0;
-  final nameLines = items.fold<int>(0, (sum, item) => sum + ('${item['productName'] ?? ''}'.length / (narrow ? 20 : 30)).ceil());
-  final estimatedHeight = (145 + items.length * 13 + nameLines * 4 + (address.length + footer.length) / 20 * 4).clamp(180, 1500).toDouble();
-  final format = thermal
-    ? PdfPageFormat((narrow ? 58 : 80) * PdfPageFormat.mm, estimatedHeight * PdfPageFormat.mm, marginAll: 4 * PdfPageFormat.mm)
-    : PdfPageFormat.a4;
+  final format = thermal ? (narrow ? PdfPageFormat(58 * PdfPageFormat.mm, double.infinity) : PdfPageFormat.roll80) : PdfPageFormat.a4;
   pw.Text text(String value, {double? fontSize, bool bold = false, PdfColor? color, pw.TextAlign align = pw.TextAlign.right}) =>
     pw.Text(value, textAlign: align, style: pw.TextStyle(fontSize: fontSize ?? size,
       fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal, color: color ?? PdfColors.black));
@@ -3690,13 +3686,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
           .map((v) => pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 9),
             child: text(v, align: pw.TextAlign.center))).toList()),
     ]);
-  pdf.addPage(pw.MultiPage(pageFormat: format, margin: pw.EdgeInsets.all(thermal ? 4 * PdfPageFormat.mm : 18 * PdfPageFormat.mm),
-    maxPages: 100, theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
-    footer: (context) => pw.Column(children: [
-      pw.Divider(color: PdfColors.grey400, thickness: .6), text(footer, align: pw.TextAlign.center, fontSize: thermal ? 8 : 10),
-      if (!thermal) pw.Padding(padding: const pw.EdgeInsets.only(top: 5), child: text('صفحة ${context.pageNumber} / ${context.pagesCount}', fontSize: 8, align: pw.TextAlign.center)),
-    ]),
-    build: (_) => [
+  final content = <pw.Widget>[
       brand(),
       pw.Container(padding: pw.EdgeInsets.all(thermal ? 6 : 12), decoration: pw.BoxDecoration(color: pale,
         border: pw.Border.all(color: thermal ? PdfColors.grey500 : accent, width: .7), borderRadius: pw.BorderRadius.circular(thermal ? 3 : 8)),
@@ -3728,7 +3718,21 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
       ],
       if (data['status'] == 'returned') ...[pw.SizedBox(height: 10), text('فاتورة مرتجعة', bold: true, color: PdfColors.red)],
       pw.SizedBox(height: 14),
-    ]));
+    ];
+  pw.Widget thanks() => pw.Column(children: [pw.Divider(color: PdfColors.grey400, thickness: .6),
+    text(footer, align: pw.TextAlign.center, fontSize: thermal ? 8 : 10)]);
+  if (thermal) {
+    pdf.addPage(pw.Page(pageFormat: format, margin: const pw.EdgeInsets.all(4 * PdfPageFormat.mm),
+      theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
+      build: (_) => pw.Column(mainAxisSize: pw.MainAxisSize.min, crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+        children: [...content, thanks()])));
+  } else {
+    pdf.addPage(pw.MultiPage(pageFormat: format, margin: const pw.EdgeInsets.all(18 * PdfPageFormat.mm),
+      maxPages: 100, theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
+      footer: (context) => pw.Column(children: [thanks(),
+        pw.Padding(padding: const pw.EdgeInsets.only(top: 5), child: text('صفحة ${context.pageNumber} / ${context.pagesCount}', fontSize: 8, align: pw.TextAlign.center))]),
+      build: (_) => content));
+  }
   return pdf.save();
 }
 

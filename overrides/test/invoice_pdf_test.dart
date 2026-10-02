@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/main.dart';
 
@@ -19,7 +20,7 @@ void main() {
         final bytes = await createInvoicePdf('sales', 'VIB-DEMO-2026', {'items': items, 'total': total, 'paid': 500,
           'due': total - 500, 'customerName': 'عميل تجريبي', 'customerPhone': '01200000000',
           'customerPreviousBalance': 200, 'customerBalanceAfter': total - 300,
-          'status': 'completed', 'createdAt': null}, paperChoice: paper, settingsOverride: brand);
+          'status': 'completed', 'createdAt': Timestamp.fromDate(DateTime(2026, 10, 2, 15, 30))}, paperChoice: paper, settingsOverride: brand);
         expect(String.fromCharCodes(bytes.take(4)), '%PDF');
         expect(bytes.length, greaterThan(1000));
         Directory('dist').createSync(recursive: true);
