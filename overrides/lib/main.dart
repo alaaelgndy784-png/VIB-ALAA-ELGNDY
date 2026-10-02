@@ -740,10 +740,16 @@ Future<void> archiveProduct(BuildContext context, String id, String name) async 
   }
 }
 
+class PurchaseDiscountDraft {
+  double? baseCost;
+  double percent = 0;
+}
+
 class SaleLine {
   String? productId;
   final quantity = TextEditingController(text: '1');
   final price = TextEditingController();
+  final discount = PurchaseDiscountDraft();
   SaleLine({this.productId, double? unitPrice}) {
     if (unitPrice != null) price.text = unitPrice.toStringAsFixed(2);
   }
@@ -1615,6 +1621,7 @@ class ScannedLine {
   String? productId;
   final quantity = TextEditingController(text: '1');
   final cost = TextEditingController();
+  final discount = PurchaseDiscountDraft();
   ScannedLine({this.productId});
   void dispose() { quantity.dispose(); cost.dispose(); }
 }
@@ -1878,17 +1885,124 @@ Future<String?> pickPurchaseProduct(
 double purchaseInvoicePayment(double total, bool credit, String paid) => credit
     ? double.tryParse(paid.trim().replaceAll(',', '.')) ?? -1 : total;
 
-class PurchaseInvoiceLine extends StatelessWidget {
+class PurchaseInvoiceLine extends StatefulWidget {
   final int number;
   final String name;
   final TextEditingController cost, quantity;
   final bool enabled;
   final bool priceEditable;
+  final bool totalEditable;
+  final PurchaseDiscountDraft? discountDraft;
   final VoidCallback onChoose, onDelete, onChanged;
   const PurchaseInvoiceLine({super.key, required this.number, required this.name, required this.cost,
-    required this.quantity, required this.enabled, required this.onChoose, required this.onDelete, required this.onChanged,this.priceEditable = true});
+    required this.quantity, required this.enabled, required this.onChoose, required this.onDelete, required this.onChanged,this.priceEditable = true,this.totalEditable = false,this.discountDraft});
+  @override
+  State<PurchaseInvoiceLine> createState() => _PurchaseInvoiceLineState();
+}
+
+class _PurchaseInvoiceLineState extends State<PurchaseInvoiceLine> {
+  final _total = TextEditingController();
+  final _discount = TextEditingController();
+  late PurchaseDiscountDraft _draft;
+  String? _discountError;
+  bool _updatingCost = false;
+  String? _totalError;
+  @override
+  void initState() {
+    super.initState();
+    _draft = widget.discountDraft ?? PurchaseDiscountDraft();
+    _draft.baseCost ??= double.tryParse(widget.cost.text.replaceAll(',', '.')) ?? 0;
+    _discount.text = _draft.percent.toString();
+    widget.cost.addListener(_costChanged);
+    widget.quantity.addListener(_syncTotal);
+    _syncTotal();
+  }
+  @override
+  void didUpdateWidget(covariant PurchaseInvoiceLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.cost != widget.cost || oldWidget.quantity != widget.quantity) {
+      oldWidget.cost.removeListener(_costChanged);
+      oldWidget.quantity.removeListener(_syncTotal);
+      widget.cost.addListener(_costChanged);
+      widget.quantity.addListener(_syncTotal);
+      _syncTotal();
+    }
+  }
+  void _costChanged() {
+    if (_updatingCost) return;
+    _draft.baseCost = double.tryParse(widget.cost.text.replaceAll(',', '.')) ?? 0;
+    _draft.percent = 0;
+    _discount.text = '0';
+    _discountError = null;
+    _syncTotal();
+  }
+  void _applyDiscount(String text) {
+    final percent = double.tryParse(text.trim().replaceAll(',', '.'));
+    final valid = percent != null && percent.isFinite && percent >= 0 && percent <= 100;
+    _updatingCost = true;
+    if (valid) {
+      _draft.percent = percent;
+      widget.cost.text = ((_draft.baseCost ?? 0) * (1 - percent / 100)).toString();
+    } else {
+      widget.cost.text = ''; // Existing invoice validation prevents saving an invalid discount.
+    }
+    _updatingCost = false;
+    _syncTotal();
+    setState(() => _discountError = valid ? null : 'من 0 إلى 100');
+    widget.onChanged();
+  }
+  void _stepDiscount(double step) {
+    final value = (double.tryParse(_discount.text.replaceAll(',', '.')) ?? _draft.percent);
+    _discount.text = (value + step).clamp(0, 100).toString();
+    _applyDiscount(_discount.text);
+  }
+  void _syncTotal() {
+    if (_updatingCost) return;
+    final qty = int.tryParse(widget.quantity.text.trim()) ?? 0;
+    final cost = double.tryParse(widget.cost.text.trim().replaceAll(',', '.')) ?? 0;
+    final value = qty * cost;
+    final text = value.isFinite ? value.toStringAsFixed(2) : '';
+    if (_total.text != text) _total.text = text;
+    _totalError = null;
+  }
+  void _costFromTotal(String text) {
+    final qty = int.tryParse(widget.quantity.text.trim()) ?? 0;
+    final amount = double.tryParse(text.trim().replaceAll(',', '.'));
+    final valid = qty > 0 && amount != null && amount.isFinite && amount >= 0;
+    _updatingCost = true;
+    // Retain division precision: rounding the unit cost to cents changes
+    // the supplier's line total when the quantity does not divide evenly.
+    widget.cost.text = valid ? (amount / qty).toString() : '';
+    if (valid) {
+      final netCost = amount / qty;
+      final base = _draft.baseCost ?? 0;
+      if (base > 0 && netCost <= base) {
+        _draft.percent = (1 - netCost / base) * 100;
+      } else {
+        _draft.baseCost = netCost;
+        _draft.percent = 0;
+      }
+      _discount.text = _draft.percent.toStringAsFixed(2);
+      _discountError = null;
+    }
+    _updatingCost = false;
+    setState(() => _totalError = valid ? null : qty <= 0 ? 'أدخل العدد أولًا' : 'إجمالي غير صحيح');
+    widget.onChanged();
+  }
+  @override
+  void dispose() {
+    widget.cost.removeListener(_costChanged);
+    widget.quantity.removeListener(_syncTotal);
+    _total.dispose();
+    _discount.dispose();
+    super.dispose();
+  }
   @override
   Widget build(BuildContext context) {
+    final number = widget.number, name = widget.name;
+    final cost = widget.cost, quantity = widget.quantity;
+    final enabled = widget.enabled, priceEditable = widget.priceEditable;
+    final onChoose = widget.onChoose, onDelete = widget.onDelete, onChanged = widget.onChanged;
     final total = (int.tryParse(quantity.text.trim()) ?? 0) *
       (double.tryParse(cost.text.trim().replaceAll(',', '.')) ?? 0);
     Widget field(TextEditingController controller, String label, {bool integer = false}) => TextField(
@@ -1920,12 +2034,33 @@ class PurchaseInvoiceLine extends StatelessWidget {
         Row(children: [
           Expanded(flex: 4, child: field(cost, 'السعر')),
           const SizedBox(width: 5), Expanded(flex: 2, child: field(quantity, 'العدد', integer: true)),
-          const SizedBox(width: 5), Expanded(flex: 4, child: Column(children: [
+          const SizedBox(width: 5), Expanded(flex: 4, child: widget.totalEditable ? TextField(
+            controller: _total, enabled: enabled && priceEditable, textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: gold),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(labelText: 'الإجمالي', errorText: _totalError,
+              floatingLabelBehavior: FloatingLabelBehavior.always, labelStyle: const TextStyle(fontSize: 11),
+              isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
+              border: const OutlineInputBorder()), onChanged: _costFromTotal,
+          ) : Column(children: [
             const Text('الإجمالي', style: TextStyle(fontSize: 11)),
             FittedBox(fit: BoxFit.scaleDown, child: Text(total.toStringAsFixed(2),
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: gold))),
           ])),
         ]),
+        if(widget.totalEditable) Padding(padding:const EdgeInsets.only(top:6),child:Row(children:[
+          IconButton(tooltip:'تقليل نسبة الخصم',onPressed:enabled && priceEditable ? ()=>_stepDiscount(-1) : null,
+            constraints:const BoxConstraints.tightFor(width:32,height:32),padding:EdgeInsets.zero,
+            icon:const Icon(Icons.remove,size:18,color:gold)),
+          Expanded(child:TextField(controller:_discount,enabled:enabled && priceEditable,textAlign:TextAlign.center,
+            keyboardType:const TextInputType.numberWithOptions(decimal:true),style:const TextStyle(fontSize:12),
+            decoration:InputDecoration(labelText:'خصم %',errorText:_discountError,isDense:true,
+              floatingLabelBehavior:FloatingLabelBehavior.always,contentPadding:const EdgeInsets.symmetric(horizontal:5,vertical:7),
+              border:const OutlineInputBorder()),onChanged:_applyDiscount)),
+          IconButton(tooltip:'زيادة نسبة الخصم',onPressed:enabled && priceEditable ? ()=>_stepDiscount(1) : null,
+            constraints:const BoxConstraints.tightFor(width:32,height:32),padding:EdgeInsets.zero,
+            icon:const Icon(Icons.add,size:18,color:gold)),
+        ])),
       ]));
   }
 }
@@ -2038,7 +2173,7 @@ Future<void> purchaseDialog(BuildContext context) async {
         ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
           for(var i=0;i<lines.length;i++) PurchaseInvoiceLine(
             key:ObjectKey(lines[i]),number:i+1,name:'${products.docs.firstWhere((d)=>d.id == lines[i].productId).data()['name'] ?? ''}',
-            cost:lines[i].cost,quantity:lines[i].quantity,enabled:!saving,onChanged:()=>setLocal(() {}),
+            cost:lines[i].cost,quantity:lines[i].quantity,enabled:!saving,totalEditable:true,discountDraft:lines[i].discount,onChanged:()=>setLocal(() {}),
             onDelete:() {final row=lines.removeAt(i);row.dispose();setLocal(() {});},
             onChoose:() async {
               final row=lines[i];
@@ -3478,7 +3613,10 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
     for (var i = 0; i < additions.length; i++) {
       final row = additions[i], product = productSnaps[i].data();
       final quantity = row['quantity'] as int;
-      final price = cents(row['unitPrice'] as num);
+      final rawPrice = (row['unitPrice'] as num).toDouble();
+      if (!rawPrice.isFinite || rawPrice < 0) throw Exception('راجع سعر البند');
+      final price = cents(rawPrice);
+      final lineCents = purchase ? cents(rawPrice * quantity) : price * quantity;
       if (product == null || product['active'] != true || quantity <= 0 || quantity > 1000000 || price < 0) {
         throw Exception('راجع الصنف والسعر والكمية');
       }
@@ -3490,11 +3628,13 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
       final key = purchase ? 'unitCost' : 'unitPrice';
       final matching = items.where((x) => x['productId'] == row['productId']);
       final existing = matching.isEmpty ? null : matching.first;
-      if (existing != null && cents(existing[key] as num) != price) throw Exception('الصنف موجود بسعر مختلف');
+      if (existing != null && (purchase
+          ? ((existing[key] as num).toDouble() - rawPrice).abs() > 0.000000001
+          : cents(existing[key] as num) != price)) throw Exception('الصنف موجود بسعر مختلف');
       final addition = <String, dynamic>{'productId': row['productId'], 'productName': product['name'],
-        'quantity': quantity, key: price / 100, 'lineTotal': price * quantity / 100,
+        'quantity': quantity, key: purchase ? rawPrice : price / 100, 'lineTotal': lineCents / 100,
         if (!purchase) 'purchasePriceAtSale': (product['purchasePrice'] as num?)?.toDouble() ?? 0};
-      addedTotal += price * quantity;
+      addedTotal += lineCents;
       if (existing == null) {
         items.add(Map<String, dynamic>.from(addition));
       } else {
@@ -3504,7 +3644,7 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
             (addition['purchasePriceAtSale'] as num) * quantity) / (oldQty + quantity);
         }
         existing['quantity'] = oldQty + quantity;
-        existing['lineTotal'] = (cents(existing['lineTotal'] as num) + price * quantity) / 100;
+        existing['lineTotal'] = (cents(existing['lineTotal'] as num) + lineCents) / 100;
       }
       added.add(addition);
     }
@@ -3615,8 +3755,8 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
             TextField(controller: search, decoration: const InputDecoration(labelText: 'بحث عن صنف', prefixIcon: Icon(Icons.search)), onChanged: (_) => update(() {})),
             for (var i = 0; i < lines.length; i++)
               if (purchase) PurchaseInvoiceLine(
-                number: i + 1, name: '${products.firstWhere((p) => p.id == lines[i].productId).data()['name']}',
-                cost: lines[i].price, quantity: lines[i].quantity, enabled: !saving,
+                key: ObjectKey(lines[i]), number: i + 1, name: '${products.firstWhere((p) => p.id == lines[i].productId).data()['name']}',
+                cost: lines[i].price, quantity: lines[i].quantity, enabled: !saving, totalEditable: true, discountDraft: lines[i].discount,
                 onChanged: () => update(() {}),
                 onDelete: () => update(() { lines.removeAt(i).dispose(); }),
                 onChoose: () async {

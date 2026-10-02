@@ -15,6 +15,50 @@ void main() {
     await (FontLoader('VibPreview')..addFont(rootBundle.load('assets/fonts/DejaVuSans.ttf'))).load();
     await (FontLoader('MaterialIcons')..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
   });
+  testWidgets('purchase final line total sets discounted cost without rounding drift and survives checkout', (tester) async {
+    final cost=TextEditingController(text:'100');
+    final quantity=TextEditingController(text:'10');
+    var checkout=false;final discount=PurchaseDiscountDraft();
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:StatefulBuilder(builder:(context,update)=>Column(children:[
+      if(!checkout) PurchaseInvoiceLine(number:1,name:'صنف',cost:cost,quantity:quantity,enabled:true,totalEditable:true,discountDraft:discount,
+        onChoose:() {},onDelete:() {},onChanged:()=>update(() {})),
+      TextButton(onPressed:()=>update(()=>checkout=!checkout),child:const Text('انتقال')),
+    ])))));
+    Finder totalField()=>find.byWidgetPredicate((w)=>w is TextField && w.decoration?.labelText=='الإجمالي');
+    await tester.enterText(totalField(),'900');await tester.pump();
+    expect(double.parse(cost.text),90); // 10% supplier discount on 1000.
+    expect(discount.percent,closeTo(10,0.00000001));
+    await tester.tap(find.byTooltip('زيادة نسبة الخصم'));await tester.pump();expect(double.parse(cost.text),closeTo(89,0.00000001));
+    await tester.tap(find.byTooltip('تقليل نسبة الخصم'));await tester.pump();expect(double.parse(cost.text),closeTo(90,0.00000001));
+    await tester.tap(find.text('انتقال'));await tester.pump();
+    await tester.tap(find.text('انتقال'));await tester.pump();
+    expect(double.parse(cost.text),closeTo(90,0.00000001));
+    expect(discount.percent,closeTo(10,0.00000001));
+    expect((tester.widget<TextField>(totalField()).controller!).text,'900.00');
+    await tester.enterText(find.byWidgetPredicate((w)=>w is TextField && w.decoration?.labelText=='العدد'),'3');await tester.pump();
+    expect((tester.widget<TextField>(totalField()).controller!).text,'270.00');
+    await tester.enterText(totalField(),'100,00');await tester.pump();
+    expect(double.parse(cost.text)*3,closeTo(100,0.000000001));
+    await tester.enterText(totalField(),'-5');await tester.pump();expect(cost.text,isEmpty);
+    expect(find.text('إجمالي غير صحيح'),findsOneWidget);
+    await tester.enterText(totalField(),'');await tester.pump();expect(cost.text,isEmpty);
+    await tester.enterText(totalField(),'90');await tester.pump();expect(double.parse(cost.text),30);
+    await tester.enterText(find.byWidgetPredicate((w)=>w is TextField && w.decoration?.labelText=='السعر'),'40');await tester.pump();
+    expect((tester.widget<TextField>(totalField()).controller!).text,'120.00');
+    await tester.enterText(find.byWidgetPredicate((w)=>w is TextField && w.decoration?.labelText=='العدد'),'0');await tester.pump();
+    await tester.enterText(totalField(),'100');await tester.pump();expect(cost.text,isEmpty);
+    expect(find.text('أدخل العدد أولًا'),findsOneWidget);
+    await tester.enterText(find.byWidgetPredicate((w)=>w is TextField && w.decoration?.labelText=='العدد'),'10');await tester.pump();
+    await tester.enterText(find.byWidgetPredicate((w)=>w is TextField && w.decoration?.labelText=='السعر'),'100');await tester.pump();
+    final discountField=find.byWidgetPredicate((w)=>w is TextField && w.decoration?.labelText=='خصم %');
+    await tester.enterText(discountField,'10');await tester.pump();expect(double.parse(cost.text),90);
+    await tester.enterText(discountField,'20');await tester.pump();expect(double.parse(cost.text),80); // Never compound discounts.
+    await tester.enterText(discountField,'101');await tester.pump();expect(cost.text,isEmpty);
+    await tester.enterText(discountField,'0');await tester.pump();expect(double.parse(cost.text),100);
+    expect(tester.takeException(),isNull);
+    await tester.pumpWidget(const SizedBox());cost.dispose();quantity.dispose();
+  });
+
   for (final thermal in [false,true]) {
     test('supplier payment voucher renders balances on ${thermal ? '80MM' : 'A4'}', () async {
       final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
@@ -48,7 +92,7 @@ void main() {
                 partyLabel:sale ? 'العميل' : 'المورد',onModeChanged:(v)=>update(()=>credit=v),onChanged:()=>update(() {})),
             ]) : ListView(children:[for(var i=0;i<ids.length;i++) PurchaseInvoiceLine(
               key:ValueKey(ids[i]),number:i+1,name:'حنفية غسالة تركي نحاس اسم الصنف كامل رقم ${ids[i]+1}',
-              cost:costs[ids[i]],quantity:quantities[ids[i]],enabled:true,onChanged:()=>update(() {}),onChoose:() {},
+              cost:costs[ids[i]],quantity:quantities[ids[i]],enabled:true,totalEditable:!sale,onChanged:()=>update(() {}),onChoose:() {},
               onDelete:()=>update(()=>ids.removeAt(i)),
             )]),
             actions:[TextButton(onPressed:()=>update(()=>checkout=false),child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
