@@ -164,3 +164,50 @@ test('messages are immutable and staff cannot change owner read status',async()=
  await assertFails(deleteDoc(doc(staff,'staffChats/staff/messages/m1')));
  await assertFails(setDoc(doc(staff,'staffChats/staff'),{ownerReadAt:serverTimestamp()},{merge:true}));
 });
+
+async function seedEditableSale({receiptId='',latestReceipt=false,linkedOther=false}={}){
+ await env.withSecurityRulesDisabled(async ctx=>{
+  const db=ctx.firestore();
+  await setDoc(doc(db,'sales/editable'),{id:'editable',branchId:'staffbranch',customerId:'customer',status:'completed',total:30,paid:0,due:30,revision:0,createdAt:new Date('2026-01-01'),...(receiptId?{receiptId,receiptPaid:10}:{})});
+  if(latestReceipt){
+   await setDoc(doc(db,'receipts/prior'),{customerId:'customer',amount:10,createdAt:new Date('2026-01-02'),...(linkedOther?{invoiceId:'other'}:{})});
+   await setDoc(doc(db,'customers/customer'),{lastReceiptId:'prior'},{merge:true});
+  }
+ });
+}
+function editSaleBatch(db){
+ const b=writeBatch(db);
+ b.update(doc(db,'sales/editable'),{total:20,paid:0,due:20,items:[{productId:'p0',quantity:2,unitPrice:10,lineTotal:20}],itemCount:1,stockIndex:{p0:0},revision:1,lastEditedBy:'owner',updatedAt:serverTimestamp()});
+ return b.commit();
+}
+test('owner can replace unlinked invoice contents on same ID',async()=>{
+ await seedEditableSale();await assertSucceeds(editSaleBatch(env.authenticatedContext('owner').firestore()));
+});
+test('linked receipt prevents financial invoice edit even for owner',async()=>{
+ await seedEditableSale({receiptId:'r'});await assertFails(editSaleBatch(env.authenticatedContext('owner').firestore()));
+});
+test('legacy general customer receipt blocks older invoice edits',async()=>{
+ await seedEditableSale({latestReceipt:true});await assertFails(editSaleBatch(env.authenticatedContext('owner').firestore()));
+});
+test('receipt explicitly linked to another invoice does not lock this invoice',async()=>{
+ await seedEditableSale({latestReceipt:true,linkedOther:true});await assertSucceeds(editSaleBatch(env.authenticatedContext('owner').firestore()));
+});
+test('staff cannot replace invoice financial contents',async()=>{
+ await seedEditableSale();await assertFails(editSaleBatch(env.authenticatedContext('staff').firestore()));
+});
+test('staff receipt links invoice atomically and prevents later edits',async()=>{
+ await seedEditableSale();
+ const db=env.authenticatedContext('staff').firestore(),b=writeBatch(db),ts=serverTimestamp();
+ b.set(doc(db,'receipts/linked'),{invoiceId:'editable',customerId:'customer',customerName:'Customer',customerPhone:'010',amount:20,balanceBefore:100,balanceAfter:80,
+  cashBefore:500,cashAfter:520,actorId:'staff',actorName:'Staff',branchId:'staffbranch',note:'',createdAt:ts,customerMovementId:'lc',cashMovementId:'lk'});
+ b.update(doc(db,'customers/customer'),{balance:80,lastReceiptId:'linked',updatedAt:ts});
+ b.update(doc(db,'settings/cash'),{balance:520,lastReceiptId:'linked',updatedAt:ts});
+ b.update(doc(db,'sales/editable'),{receiptId:'linked',receiptPaid:20});
+ for(const cash of [false,true])b.set(doc(db,'accountMovements/'+(cash?'lk':'lc')),{accountType:cash?'cash':'customers',accountId:'customer',accountName:'Customer',kind:cash?'customerCollection':'collection',amount:20,...(cash?{delta:20}:{}),balanceBefore:cash?500:100,balanceAfter:cash?520:80,referenceId:'linked',reason:'',actorId:'staff',branchId:'staffbranch',createdAt:ts});
+ await assertSucceeds(b.commit());
+ await assertFails(editSaleBatch(env.authenticatedContext('owner').firestore()));
+});
+test('orphan invoice receipt link is denied',async()=>{
+ await seedEditableSale();
+ await assertFails(setDoc(doc(env.authenticatedContext('owner').firestore(),'sales/editable'),{receiptId:'fake',receiptPaid:20},{merge:true}));
+});

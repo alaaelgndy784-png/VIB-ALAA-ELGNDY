@@ -1327,10 +1327,17 @@ Future<void> saleDialog(BuildContext context, String productId, Map<String, dyna
 }
 
 
-class Sales extends StatelessWidget {
+class Sales extends StatefulWidget {
   final bool owner;
   final String branchId;
   const Sales({super.key, required this.owner, required this.branchId});
+  @override
+  State<Sales> createState() => _SalesState();
+}
+class _SalesState extends State<Sales> {
+  DateTime selectedDate = DateTime.now();
+  bool get owner => widget.owner;
+  String get branchId => widget.branchId;
   @override
   Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
     stream: (owner ? db.collection('sales') : db.collection('sales').where('branchId', isEqualTo: branchId)).snapshots(),
@@ -1338,12 +1345,25 @@ class Sales extends StatelessWidget {
     if (snap.hasError) return const Center(child: Text('تعذر عرض المبيعات'));
     if (!snap.hasData) return const Center(child: CircularProgressIndicator());
     final rows = snap.data!.docs
-        .where((d) => visibleAfterReset(d.data()) && (owner || d.data()['branchId'] == branchId))
+        .where((d) {
+          final date = (d.data()['createdAt'] as Timestamp?)?.toDate();
+          return visibleAfterReset(d.data()) && (owner || d.data()['branchId'] == branchId) &&
+            date != null && date.year == selectedDate.year && date.month == selectedDate.month && date.day == selectedDate.day;
+        })
         .toList()
       ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
     return Column(children: [
       Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة'), onPressed: () => newSaleDialog(context, owner, branchId))),
-      Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد مبيعات بعد')) : ListView(children: rows.map((d) {
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Wrap(spacing: 8, runSpacing: 8, children: [
+        OutlinedButton.icon(icon: const Icon(Icons.calendar_month), label: const Text('فواتير المبيعات'), onPressed: () async {
+          final date = await showDatePicker(context: context, initialDate: selectedDate, firstDate: DateTime(2020), lastDate: DateTime.now().add(const Duration(days: 365)));
+          if (date != null && mounted) setState(() => selectedDate = date);
+        }),
+        TextButton(onPressed: () => setState(() => selectedDate = DateTime.now()), child: const Text('فواتير اليوم')),
+        if (owner) OutlinedButton.icon(icon: const Icon(Icons.edit_note), label: const Text('تعديل فاتورة'), onPressed: () => editSaleByNumber(context)),
+      ])),
+      Padding(padding: const EdgeInsets.all(8), child: Text('فواتير ${selectedDate.day}/${selectedDate.month}/${selectedDate.year} • العدد: ${rows.length}')),
+      Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد فواتير في هذا التاريخ')) : ListView(children: rows.map((d) {
         final sale = d.data();
         final rawItems = (sale['items'] as List?) ?? const [];
         final itemCount = rawItems.isNotEmpty ? rawItems.length : 1;
@@ -1352,7 +1372,7 @@ class Sales extends StatelessWidget {
             : '${sale['productName'] ?? ''} × ${sale['quantity'] ?? 0}';
         final paymentText = sale.containsKey('paid') ? ' • مدفوع ${sale['paid'] ?? 0} • باقي ${sale['due'] ?? 0}' : '';
         return Card(child: ListTile(
-          title: Text('$itemText${itemCount > 3 ? ' • +${itemCount - 3} أصناف' : ''}'),
+          title: Text('رقم الفاتورة: ${d.id}\n$itemText${itemCount > 3 ? ' • +${itemCount - 3} أصناف' : ''}'),
           subtitle: Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجع' : ''}'),
           trailing: Text('${sale['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
           onTap: () => invoiceActions(context, 'sales', d.id, sale, canReturn: owner),
@@ -2467,7 +2487,7 @@ class ReceiptVouchers extends StatelessWidget {
 }
 
 Future<void> createReceiptVoucher(BuildContext context, String branchId) async {
-  final amount = TextEditingController(), note = TextEditingController();
+  final amount = TextEditingController(), note = TextEditingController(), invoiceNumber = TextEditingController();
   // Reuse this ID on transaction retries and after an uncertain network response.
   final receiptRef = db.collection('receipts').doc();
   final customerMovement = db.collection('accountMovements').doc();
@@ -2491,6 +2511,8 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId) async {
         TextField(controller: amount, enabled: !saving,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: const InputDecoration(labelText: 'المبلغ المقبوض')),
+        TextField(controller: invoiceNumber, enabled: !saving, decoration: const InputDecoration(labelText: 'رقم فاتورة المبيعات المرتبطة بالسند (اختياري)')),
+        const Text('تحديد الفاتورة يمنع تعديلها. السند العام يُحتسب على رصيد العميل، وتحتاج فواتيره السابقة مراجعة قبل التعديل.'),
         TextField(controller: note, enabled: !saving, decoration: const InputDecoration(labelText: 'البيان / ملاحظات')),
         const SizedBox(height: 12),
         const Text('يُخصم المبلغ من مديونية العميل ويُضاف للصندوق عند حفظ السند.'),
@@ -2500,6 +2522,9 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId) async {
         FilledButton(onPressed: saving ? null : () async {
           final paid = double.tryParse(amount.text.trim());
           final id = customerId;
+          if (invoiceNumber.text.trim().contains('/')) {
+            ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content: Text('رقم الفاتورة غير صحيح'))); return;
+          }
           if (id == null || paid == null || !paid.isFinite || paid <= 0) {
             ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content: Text('اختر العميل واكتب مبلغًا صحيحًا أكبر من صفر')));
             return;
@@ -2519,12 +2544,24 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId) async {
               final balance = (customer.data()?['balance'] as num?)?.toDouble() ?? 0;
               if (paid > balance) throw Exception('المبلغ أكبر من المديونية الحالية للعميل');
               final beforeCash = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
+              final invoiceId = invoiceNumber.text.trim();
+              final invoiceRef = invoiceId.isEmpty ? null : db.collection('sales').doc(invoiceId);
+              final invoice = invoiceRef == null ? null : (await tx.get(invoiceRef)).data();
+              if (invoiceRef != null && (invoice == null || invoice['customerId'] != id || invoice['status'] != 'completed')) {
+                throw Exception('الفاتورة غير موجودة أو لا تخص العميل المختار');
+              }
+              if (invoice != null && paid > ((invoice['due'] as num?)?.toDouble() ?? 0) - ((invoice['receiptPaid'] as num?)?.toDouble() ?? 0) + 0.000001) {
+                throw Exception('المبلغ أكبر من المتبقي غير المحصّل في الفاتورة');
+              }
               final now = FieldValue.serverTimestamp();
+              if (invoiceRef != null) tx.update(invoiceRef, {'receiptId': receiptRef.id,
+                'receiptPaid': ((invoice!['receiptPaid'] as num?)?.toDouble() ?? 0) + paid});
               final customerName = '${customer.data()?['name'] ?? ''}';
               tx.update(customerRef, {'balance': balance - paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now});
               tx.set(cashRef, {'balance': beforeCash + paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now}, SetOptions(merge: true));
               tx.set(receiptRef, {
                 'customerId': id, 'customerName': customerName, 'customerPhone': '${customer.data()?['phone'] ?? ''}',
+                if (invoiceNumber.text.trim().isNotEmpty) 'invoiceId': invoiceNumber.text.trim(),
                 'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
                 'cashBefore': beforeCash, 'cashAfter': beforeCash + paid,
                 'actorId': actor, 'actorName': '${profile?['name'] ?? ''}', 'branchId': branchId,
@@ -2556,6 +2593,7 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId) async {
   ));
   amount.dispose();
   note.dispose();
+  invoiceNumber.dispose();
 }
 
 Future<void> printReceiptVoucher(BuildContext context, String id, Map<String, dynamic> data) async {
@@ -3212,8 +3250,7 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
     ListTile(leading: const Icon(Icons.picture_as_pdf, color: gold), title: const Text('حفظ أو مشاركة الفاتورة PDF'), onTap: () { Navigator.pop(c); exportInvoicePdf(context, type, id, data); }),
-    if (!returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.playlist_add, color: gold), title: const Text('تعديل الفاتورة / إضافة بنود'), onTap: () { Navigator.pop(c); appendInvoiceDialog(context, type, id); }),
-    if (type == 'sales' && profile?['role'] == 'owner' && !returned && (data['items'] is! List || (data['items'] as List).isEmpty)) ListTile(leading: const Icon(Icons.edit_note, color: gold), title: const Text('تصحيح فاتورة البيع'), onTap: () { Navigator.pop(c); correctSaleDialog(context, id, data); }),
+    if (type != 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.playlist_add, color: gold), title: const Text('تعديل الفاتورة / إضافة بنود'), onTap: () { Navigator.pop(c); appendInvoiceDialog(context, type, id); }),
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
     if (type == 'sales' && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال للزبون على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
     if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
@@ -3353,23 +3390,25 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
   });
 }
 
-Future<void> appendInvoiceDialog(BuildContext context, String type, String id) async {
+Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {bool replaceSale = false}) async {
   final List<SaleLine> lines = [];
   final paid = TextEditingController(text: '0');
   final search = TextEditingController();
   try {
     final invoice = await db.collection(type).doc(id).get();
     final data = invoice.data();
-    final products = (await db.collection('products').where('active', isEqualTo: true).get()).docs;
+    final products = (await db.collection('products').get()).docs;
     if (!context.mounted) return;
     if (data == null || data['status'] != 'completed' || products.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الفاتورة أو الأصناف غير متاحة للتعديل')));
       return;
     }
+    if (replaceSale) await assertSaleEditable({...data, 'id': id});
+    if (!context.mounted) return;
     final purchase = type == 'purchases';
     final revision = (data['revision'] as num?)?.toInt() ?? 0;
     final requestId = db.collection('invoiceEdits').doc().id;
-    final originalItems = (data['items'] as List?) ?? const [];
+    final originalItems = replaceSale ? saleItems(data) : (data['items'] as List?) ?? const [];
     double priceFor(QueryDocumentSnapshot<Map<String, dynamic>> product) {
       for (final item in originalItems) {
         if (item is Map && item['productId'] == product.id) {
@@ -3378,20 +3417,28 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id) a
       }
       return (product.data()[purchase ? 'purchasePrice' : 'price'] as num?)?.toDouble() ?? 0;
     }
-    lines.add(SaleLine(productId: products.first.id, unitPrice: priceFor(products.first)));
-    bool saving = false, cash = true;
+    if (replaceSale) {
+      for (final item in originalItems) {
+        if (!products.any((p) => p.id == item['productId'])) throw Exception('صنف الفاتورة غير موجود');
+        lines.add(SaleLine(productId: '${item['productId']}', unitPrice: (item['unitPrice'] as num).toDouble())..quantity.text = '${item['quantity']}');
+      }
+      paid.text = '${data['paid']}';
+    } else {
+      lines.add(SaleLine(productId: products.first.id, unitPrice: priceFor(products.first)));
+    }
+    bool saving = false, cash = replaceSale ? data['paymentStatus'] == 'cash' : true;
     await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(
       builder: (c, update) {
         final addedTotal = lines.fold<double>(0, (sum, line) => sum +
           (int.tryParse(line.quantity.text) ?? 0) * (double.tryParse(line.price.text.replaceAll(',', '.')) ?? 0));
         final extraPaid = cash ? addedTotal : (double.tryParse(paid.text.replaceAll(',', '.')) ?? 0);
         return AlertDialog(
-          title: Text('إضافة بنود لنفس فاتورة ${purchase ? 'المشتريات' : 'المبيعات'}'),
+          title: Text(replaceSale ? 'تعديل فاتورة المبيعات' : 'إضافة بنود لنفس فاتورة ${purchase ? 'المشتريات' : 'المبيعات'}'),
           content: SizedBox(width: 620, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
             Text('رقم الفاتورة: ${data['invoiceNumber'] ?? id}'),
             Text('الإجمالي السابق: ${data['total'] ?? 0} • المدفوع: ${data['paid'] ?? 0} • الباقي: ${data['due'] ?? 0}'),
             const SizedBox(height: 10),
-            const Text('البنود السابقة محفوظة؛ أضف البنود أو الكميات الإضافية هنا.'),
+            Text(replaceSale ? 'عدّل الأصناف والكميات والأسعار والمدفوع. يحفظ سجل التعديل وتُحدّث فروق المخزون والحسابات.' : 'البنود السابقة محفوظة؛ أضف البنود أو الكميات الإضافية هنا.'),
             TextField(controller: search, decoration: const InputDecoration(labelText: 'بحث عن صنف', prefixIcon: Icon(Icons.search)), onChanged: (_) => update(() {})),
             for (var i = 0; i < lines.length; i++) Row(children: [
               Text('${i + 1}'),
@@ -3421,14 +3468,13 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id) a
             TextButton.icon(onPressed: saving || lines.length >= 50 ? null : () => update(() =>
               lines.add(SaleLine(productId: products.first.id, unitPrice: priceFor(products.first)))),
               icon: const Icon(Icons.add), label: const Text('إضافة بند')),
-            SwitchListTile(title: const Text('دفع قيمة البنود المضافة بالكامل'), value: cash,
+            SwitchListTile(title: Text(replaceSale ? 'مدفوع بالكامل' : 'دفع قيمة البنود المضافة بالكامل'), value: cash,
               onChanged: saving ? null : (value) => update(() => cash = value)),
             if (!cash) TextField(controller: paid, enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'المدفوع عن البنود المضافة'), onChanged: (_) => update(() {})),
-            Text('قيمة الإضافة: ${addedTotal.toStringAsFixed(2)} ج.م'),
-            Text('الإجمالي الجديد: ${(((data['total'] as num?)?.toDouble() ?? 0) + addedTotal).toStringAsFixed(2)} ج.م'),
-            Text('المدفوع الجديد: ${(((data['paid'] as num?)?.toDouble() ?? 0) + extraPaid).toStringAsFixed(2)} ج.م'),
-            Text('الباقي الجديد: ${(((data['due'] as num?)?.toDouble() ?? 0) + addedTotal - extraPaid).toStringAsFixed(2)} ج.م'),
+              decoration: InputDecoration(labelText: replaceSale ? 'إجمالي المدفوع في الفاتورة' : 'المدفوع عن البنود المضافة'), onChanged: (_) => update(() {})),
+            Text('الإجمالي الجديد: ${((replaceSale ? 0 : (data['total'] as num?)?.toDouble() ?? 0) + addedTotal).toStringAsFixed(2)} ج.م'),
+            Text('المدفوع الجديد: ${((replaceSale ? 0 : (data['paid'] as num?)?.toDouble() ?? 0) + extraPaid).toStringAsFixed(2)} ج.م'),
+            Text('الباقي الجديد: ${((replaceSale ? 0 : (data['due'] as num?)?.toDouble() ?? 0) + addedTotal - extraPaid).toStringAsFixed(2)} ج.م'),
           ]))),
           actions: [
             TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
@@ -3451,7 +3497,11 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id) a
               }
               update(() => saving = true);
               try {
-                await appendInvoiceLocally(type, id, revision, requestId, items, extraPaid);
+                if (replaceSale) {
+                  await replaceSaleLocally(id, revision, requestId, items, extraPaid);
+                } else {
+                  await appendInvoiceLocally(type, id, revision, requestId, items, extraPaid);
+                }
                 if (c.mounted) Navigator.pop(c);
                 if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('تمت إضافة البنود وتحديث نفس الفاتورة والمخزون والحسابات')));
@@ -3467,9 +3517,9 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id) a
         );
       },
     ));
-  } catch (_) {
+  } catch (e) {
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('تعذر تحميل الفاتورة للتعديل')));
+      SnackBar(content: Text('تعذر فتح الفاتورة: $e')));
   } finally {
     for (final line in lines) { line.dispose(); }
     paid.dispose(); search.dispose();
@@ -4410,4 +4460,141 @@ class _StaffChatPageState extends State<StaffChatPage> {
       ]))),
     ]),
   );
+}
+
+List<Map<String, dynamic>> saleItems(Map<String, dynamic> sale) =>
+  sale['items'] is List && (sale['items'] as List).isNotEmpty
+    ? (sale['items'] as List).map((x) => Map<String, dynamic>.from(x as Map)).toList()
+    : [{'productId': sale['productId'], 'productName': sale['productName'], 'quantity': sale['quantity'],
+        'unitPrice': sale['unitPrice'], 'lineTotal': sale['total'], 'purchasePriceAtSale': sale['purchasePriceAtSale'] ?? 0}];
+
+Future<void> editSaleByNumber(BuildContext context) async {
+  final number = TextEditingController();
+  final id = await showDialog<String>(context: context, builder: (c) => AlertDialog(
+    title: const Text('تعديل فاتورة'),
+    content: TextField(controller: number, autofocus: true, decoration: const InputDecoration(labelText: 'رقم فاتورة المبيعات'),
+      onSubmitted: (value) { if (value.trim().isNotEmpty) Navigator.pop(c, value.trim()); }),
+    actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')),
+      FilledButton(onPressed: () { if (number.text.trim().isNotEmpty) Navigator.pop(c, number.text.trim()); }, child: const Text('فتح الفاتورة'))]));
+  number.dispose();
+  if (id == null || !context.mounted) return;
+  if (id.contains('/')) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('رقم الفاتورة غير صحيح'))); return;
+  }
+  await appendInvoiceDialog(context, 'sales', id, replaceSale: true);
+}
+
+Future<void> assertSaleEditable(Map<String, dynamic> data) async {
+  if ('${data['receiptId'] ?? ''}'.isNotEmpty) throw Exception('الفاتورة مرتبطة بسند قبض ولا يمكن تعديلها');
+  final customerId = '${data['customerId'] ?? ''}';
+  if (customerId.isEmpty) return;
+  final receipts = await db.collection('receipts').where('customerId', isEqualTo: customerId).get();
+  final date = data['createdAt'] as Timestamp?;
+  for (final receipt in receipts.docs) {
+    final r = receipt.data(), receiptDate = receipt.data()['createdAt'] as Timestamp?;
+    if (r['invoiceId'] == data['id'] ||
+        ('${r['invoiceId'] ?? ''}'.isEmpty && (date == null || receiptDate == null || receiptDate.compareTo(date) >= 0))) {
+      throw Exception('الفاتورة مرتبطة بسند قبض؛ السندات القديمة غير المحددة لفاتورة تحتاج مراجعة المدير');
+    }
+  }
+}
+
+Future<void> replaceSaleLocally(String id, int revision, String requestId,
+    List<Map<String, dynamic>> replacements, double payment) async {
+  int cents(num value) => (value * 100).round();
+  final actor = FirebaseAuth.instance.currentUser!.uid;
+  final ref = db.collection('sales').doc(id), edit = db.collection('invoiceEdits').doc(requestId);
+  final key = jsonEncode({'id': id, 'revision': revision, 'items': replacements, 'paid': payment});
+  final preflight = (await ref.get()).data();
+  if (preflight == null) throw Exception('رقم الفاتورة غير موجود');
+  await assertSaleEditable({...preflight, 'id': id});
+  await db.runTransaction((tx) async {
+    final profile = (await tx.get(db.collection('users').doc(actor))).data();
+    if (profile?['role'] != 'owner' || profile?['active'] != true) throw Exception('تعديل الفاتورة متاح للمدير فقط');
+    final saved = (await tx.get(edit)).data();
+    if (saved != null) {
+      if (saved['requestKey'] != key || saved['actorId'] != actor) throw Exception('طلب تعديل مختلف');
+      return;
+    }
+    final old = (await tx.get(ref)).data();
+    if (old == null || old['status'] != 'completed' || (old['revision'] ?? 0) != revision) throw Exception('الفاتورة غير متاحة أو اتعدلت؛ افتحها من جديد');
+    if ('${old['receiptId'] ?? ''}'.isNotEmpty) throw Exception('الفاتورة مرتبطة بسند قبض');
+    if (old['paid'] is! num || old['due'] is! num || cents(old['total']) - cents(old['paid']) != cents(old['due'])) throw Exception('الفاتورة القديمة تحتاج مراجعة المدفوع والباقي');
+    final customerId = '${old['customerId'] ?? ''}';
+    final customerRef = customerId.isEmpty ? null : db.collection('customers').doc(customerId);
+    final customer = customerRef == null ? null : (await tx.get(customerRef)).data();
+    final latestReceiptId = '${customer?['lastReceiptId'] ?? ''}';
+    if (latestReceiptId.isNotEmpty) {
+      final receipt = (await tx.get(db.collection('receipts').doc(latestReceiptId))).data();
+      final at = receipt?['createdAt'] as Timestamp?, created = old['createdAt'] as Timestamp?;
+      if (receipt != null && (receipt['invoiceId'] == id || ('${receipt['invoiceId'] ?? ''}'.isEmpty &&
+          (at == null || created == null || at.compareTo(created) >= 0)))) throw Exception('يوجد سند قبض مرتبط بالفاتورة أو برصيد العميل قبل تحديد الفواتير');
+    }
+    final cashRef = db.collection('settings').doc('cash');
+    final cash = (await tx.get(cashRef)).data();
+    final original = saleItems(old), oldQuantities = <String, int>{};
+    for (final item in original) {
+      final p = '${item['productId']}'; oldQuantities[p] = (oldQuantities[p] ?? 0) + (item['quantity'] as num).toInt();
+    }
+    final ids = {...oldQuantities.keys, ...replacements.map((x) => '${x['productId']}')};
+    final stockBranch = '${old['stockBranchId'] ?? old['branchId']}';
+    final stocks = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+    final products = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+    for (final p in ids) {
+      stocks[p] = await tx.get(db.collection('stock').doc('${stockBranch}_$p'));
+      products[p] = await tx.get(db.collection('products').doc(p));
+    }
+    final items = <Map<String, dynamic>>[], newQuantities = <String, int>{};
+    var total = 0;
+    for (final line in replacements) {
+      final p = '${line['productId']}', product = products[p]!.data();
+      final q = line['quantity'] as int, price = cents(line['unitPrice']);
+      if (product == null || q <= 0 || q > 1000000 || price < 0 || newQuantities.containsKey(p)) throw Exception('راجع الأصناف والأسعار والكميات');
+      if (product['active'] != true && !oldQuantities.containsKey(p)) throw Exception('الصنف غير نشط');
+      if (price < cents((product['purchasePrice'] as num?) ?? 0)) throw Exception('سعر البيع أقل من التكلفة');
+      newQuantities[p] = q; total += q * price;
+      final prior = original.where((x) => x['productId'] == p).toList();
+      items.add({'productId': p, 'productName': product['name'], 'quantity': q, 'unitPrice': price / 100,
+        'lineTotal': q * price / 100, 'purchasePriceAtSale': prior.isEmpty ? product['purchasePrice'] ?? 0 : prior.first['purchasePriceAtSale'] ?? 0});
+    }
+    final paid = cents(payment), due = total - paid;
+    if (items.isEmpty || items.length > 50 || total > 1000000000000 || !payment.isFinite || paid < 0 || due < 0) throw Exception('راجع المدفوع وبنود الفاتورة');
+    if (due > 0 && (customer == null || customer['active'] == false)) throw Exception('الفاتورة الآجلة تحتاج عميلًا نشطًا');
+    final debtDelta = due - cents(old['due']), cashDelta = paid - cents(old['paid']);
+    final cashBefore = cents((cash?['balance'] as num?) ?? 0), balanceBefore = cents((customer?['balance'] as num?) ?? 0);
+    if (customer != null && balanceBefore + debtDelta < 0) throw Exception('التعديل يتعارض مع تحصيلات العميل');
+    for (final p in ids) {
+      final before = (stocks[p]!.data()?['quantity'] as num?)?.toInt() ?? 0;
+      final delta = (oldQuantities[p] ?? 0) - (newQuantities[p] ?? 0), after = before + delta;
+      if (after < 0) throw Exception('المخزون غير كافٍ للصنف ${products[p]!.data()?['name']}');
+      if (delta == 0) continue;
+      tx.set(stocks[p]!.reference, {'branchId': stockBranch, 'productId': p, 'quantity': after, 'lastSaleId': id}, SetOptions(merge: true));
+      tx.set(db.collection('stockMovements').doc('${requestId}_$p'), {'productId': p, 'productName': products[p]!.data()?['name'],
+        'branchId': stockBranch, 'kind': 'saleCorrection', 'quantity': delta, 'balanceAfter': after,
+        'referenceId': id, 'editId': requestId, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+    }
+    if (customerRef != null && debtDelta != 0) {
+      tx.update(customerRef, {'balance': (balanceBefore + debtDelta) / 100, 'updatedAt': FieldValue.serverTimestamp()});
+      tx.set(db.collection('accountMovements').doc('${requestId}_customer'), {'accountType': 'customers', 'accountId': customerId,
+        'accountName': customer?['name'] ?? '', 'kind': 'saleCorrection', 'amount': debtDelta / 100,
+        'balanceBefore': balanceBefore / 100, 'balanceAfter': (balanceBefore + debtDelta) / 100,
+        'referenceId': id, 'editId': requestId, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+    }
+    if (cashDelta != 0) {
+      tx.set(cashRef, {'balance': (cashBefore + cashDelta) / 100, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+      tx.set(db.collection('accountMovements').doc('${requestId}_cash'), {'accountType': 'cash', 'accountId': customerId,
+        'accountName': customer?['name'] ?? '', 'kind': 'saleCorrection', 'amount': cashDelta.abs() / 100, 'delta': cashDelta / 100,
+        'balanceBefore': cashBefore / 100, 'balanceAfter': (cashBefore + cashDelta) / 100,
+        'referenceId': id, 'editId': requestId, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+    }
+    tx.update(ref, {'items': items, 'itemCount': items.length, 'stockIndex': {for (var i = 0; i < items.length; i++) '${items[i]['productId']}': i},
+      'total': total / 100, 'paid': paid / 100, 'due': due / 100, 'paymentStatus': due > 0 ? 'credit' : 'cash',
+      'revision': revision + 1, 'updatedAt': FieldValue.serverTimestamp(), 'lastEditedBy': actor,
+      'customerBalanceAfter': customer == null ? 0 : (balanceBefore + debtDelta) / 100,
+      'productId': items.length == 1 ? items.first['productId'] : '', 'productName': items.length == 1 ? items.first['productName'] : '',
+      'quantity': items.length == 1 ? items.first['quantity'] : 0, 'unitPrice': items.length == 1 ? items.first['unitPrice'] : 0});
+    tx.set(edit, {'invoiceId': id, 'invoiceType': 'sales', 'beforeItems': original, 'afterItems': items,
+      'totalBefore': old['total'], 'totalAfter': total / 100, 'paidBefore': old['paid'], 'paidAfter': paid / 100,
+      'revision': revision + 1, 'requestKey': key, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+  });
 }

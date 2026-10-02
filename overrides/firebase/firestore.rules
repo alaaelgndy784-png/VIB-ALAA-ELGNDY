@@ -25,7 +25,8 @@ service cloud.firestore {
       let cm = getAfter(/databases/$(database)/documents/accountMovements/$(r.customerMovementId)).data;
       let km = getAfter(/databases/$(database)/documents/accountMovements/$(r.cashMovementId)).data;
       return r.keys().hasOnly(['customerId','customerName','customerPhone','amount','balanceBefore','balanceAfter',
-          'cashBefore','cashAfter','actorId','actorName','branchId','note','createdAt','customerMovementId','cashMovementId'])
+          'cashBefore','cashAfter','actorId','actorName','branchId','note','createdAt','customerMovementId','cashMovementId','invoiceId'])
+        && receiptInvoiceValid(r, id)
         && r.actorId == request.auth.uid && r.branchId == branch() && r.actorName == profile().name
         && r.createdAt == request.time && r.amount is number && r.amount > 0 && r.amount <= c.balance
         && c.get('active', true) == true && r.customerName == c.name && r.customerPhone == c.get('phone', '')
@@ -41,6 +42,33 @@ service cloud.firestore {
         && cm.accountType == 'customers' && cm.accountId == r.customerId
         && km.referenceId == id && km.actorId == request.auth.uid && km.amount == r.amount
         && km.accountType == 'cash' && km.delta == r.amount;
+    }
+    function receiptInvoiceValid(r, id) {
+      let invoiceId = r.get('invoiceId', '');
+      let old = invoiceId == '' ? {} : get(/databases/$(database)/documents/sales/$(invoiceId)).data;
+      let next = invoiceId == '' ? {} : getAfter(/databases/$(database)/documents/sales/$(invoiceId)).data;
+      return invoiceId == '' || (invoiceId is string && old.customerId == r.customerId && old.status == 'completed'
+        && r.amount <= old.due - old.get('receiptPaid', 0)
+        && next.receiptId == id && next.receiptPaid == old.get('receiptPaid', 0) + r.amount);
+    }
+    function linkedReceiptUpdate(id) {
+      let next = request.resource.data;
+      let r = receipt(next.receiptId);
+      return !exists(/databases/$(database)/documents/receipts/$(next.receiptId))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['receiptId','receiptPaid'])
+        && resource.data.status == 'completed' && r.get('invoiceId', '') == id
+        && r.customerId == resource.data.customerId && r.actorId == request.auth.uid
+        && next.receiptPaid == resource.data.get('receiptPaid', 0) + r.amount
+        && r.amount > 0 && next.receiptPaid <= resource.data.due;
+    }
+    function saleHasNoReceipt(s) {
+      let cid = s.get('customerId', '');
+      let customer = cid == '' ? {} : get(/databases/$(database)/documents/customers/$(cid)).data;
+      let rid = customer.get('lastReceiptId', '');
+      let r = rid == '' ? {} : get(/databases/$(database)/documents/receipts/$(rid)).data;
+      return s.get('receiptId', '') == '' && (rid == '' ||
+        (r.get('invoiceId', '') != '' && r.invoiceId != s.get('id', '')) ||
+        (r.get('createdAt', request.time) < s.get('createdAt', request.time)));
     }
     // Grouped staff sales are committed atomically without a billed backend.
     function sale(id) { return getAfter(/databases/$(database)/documents/sales/$(id)).data; }
@@ -230,7 +258,8 @@ service cloud.firestore {
       allow update: if employee() && staffStock(id);
     }
     match /receipts/{id} {
-      allow read, create: if owner();
+      allow read: if owner();
+      allow create: if owner() && receiptInvoiceValid(request.resource.data, id);
       allow get: if employee() && (!exists(/databases/$(database)/documents/receipts/$(id)) || resource.data.actorId == request.auth.uid);
       allow list: if employee() && resource.data.actorId == request.auth.uid;
       allow create: if employee() && validReceipt(id);
@@ -333,9 +362,10 @@ service cloud.firestore {
       allow create: if owner() || (employee() && validStaffSale(id));
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
-      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
+      allow update: if owner() && saleHasNoReceipt(resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['stockIndex','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
         && resource.data.status == 'completed' && request.resource.data.revision == resource.data.get('revision', 0) + 1
         && request.resource.data.lastEditedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
+      allow update: if (owner() || (employee() && resource.data.branchId == branch())) && linkedReceiptUpdate(id);
       allow update: if employee() && resource.data.branchId == branch()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy'])
         && request.resource.data.printedBy == request.auth.uid;
