@@ -27,6 +27,10 @@ jobs:
   build:
     needs: verify-rules
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [manager, staff]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -78,6 +82,7 @@ jobs:
           flutter pub get
 
       - name: Build manager APK
+        if: matrix.app == 'manager'
         working-directory: VIB-SALES-INDEPENDENT
         run: |
           flutter clean
@@ -87,6 +92,7 @@ jobs:
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk
 
       - name: Build staff APK separately
+        if: matrix.app == 'staff'
         working-directory: VIB-SALES-INDEPENDENT
         run: |
           sed -i 's/android:label="VIB MANAGER SCAN"/android:label="VIB STAFF SCAN"/' android/app/src/main/AndroidManifest.xml
@@ -97,6 +103,7 @@ jobs:
           flutter clean
           flutter pub get
           flutter build apk --release --split-per-abi
+          mkdir -p dist
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk
 
       - name: Export Android signing fingerprints
@@ -135,11 +142,13 @@ jobs:
       - name: Upload Android signing fingerprints
         uses: actions/upload-artifact@v4
         with:
-          name: VIB-SALES-SHA-FINGERPRINTS
+          name: VIB-SALES-SHA-FINGERPRINTS-${{ matrix.app }}
+          # Both builds use the same restored signing key.
           path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-SHA.txt
           if-no-files-found: error
 
       - name: Upload manager APK
+        if: matrix.app == 'manager'
         uses: actions/upload-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
@@ -147,6 +156,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload staff APK
+        if: matrix.app == 'staff'
         uses: actions/upload-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK

@@ -439,7 +439,7 @@ class _HomeState extends State<Home> {
           title: const Text('VIB', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 28)),
           actions: [
             const ChatShortcut(owner: true),
-            IconButton(tooltip: 'الضبط والصلاحيات', onPressed: () => openPage('الضبط والصلاحيات', const Management()), icon: const Icon(Icons.settings)),
+            IconButton(tooltip: 'الضبط', onPressed: () => openPage('الضبط', const Management()), icon: const Icon(Icons.settings)),
             IconButton(tooltip: 'خروج', onPressed: () => FirebaseAuth.instance.signOut(), icon: const Icon(Icons.logout)),
           ],
         ),
@@ -534,48 +534,21 @@ class OwnerDashboard extends StatelessWidget {
         ),
         const SizedBox(height: 16),
         Row(children: [
-          Expanded(child: tile('موظفون', Icons.groups_rounded, () => openPage('الموظفون', const Staff()))),
-          const SizedBox(width: gap),
           Expanded(child: tile('المنتجات', Icons.inventory_2_rounded, () => openPage('المنتجات', Products(owner: true, uid: uid, branchId: branchId)))),
-        ]),
-        const SizedBox(height: gap),
-        Row(children: [
-          Expanded(child: tile('المشتريات', Icons.shopping_cart_rounded, () => openPage('المشتريات', const Purchases()))),
           const SizedBox(width: gap),
           Expanded(child: tile('المبيعات', Icons.trending_up_rounded, () => openPage('المبيعات', const Sales(owner: true, branchId: 'main')))),
         ]),
         const SizedBox(height: gap),
         Row(children: [
-          Expanded(child: tile('الموردين', Icons.local_shipping_rounded, () => openPage('الموردين', const Accounts(startWithSuppliers: true)))),
+          Expanded(child: tile('المشتريات', Icons.shopping_cart_rounded, () => openPage('المشتريات', const Purchases()))),
           const SizedBox(width: gap),
           Expanded(child: tile('العملاء', Icons.groups_2_rounded, () => openPage('العملاء', const Accounts()))),
         ]),
         const SizedBox(height: gap),
-        tile('سندات القبض', Icons.payments_outlined, () => openPage('سندات القبض', ReceiptVouchers(owner: true, branchId: branchId))),
-        const SizedBox(height: gap),
         Row(children: [
-          Expanded(child: tile('المخزون', Icons.warehouse_rounded, () => openPage('المخزون', const InventoryAudit()))),
+          Expanded(child: tile('الموردين', Icons.local_shipping_rounded, () => openPage('الموردين', const Accounts(startWithSuppliers: true)))),
           const SizedBox(width: gap),
-          Expanded(child: tile('المصروفات', Icons.payments_rounded, () => openPage('المصروفات', const Expenses()))),
-          const SizedBox(width: gap),
-          Expanded(child: tile('الصندوق', Icons.account_balance_wallet_rounded, () => openPage('الصندوق', const CashBox()))),
-        ]),
-        const SizedBox(height: gap),
-        Row(children: [
-          Expanded(child: tile('تقرير حركة منتج', Icons.manage_search_rounded, () => openPage('تقرير حركة منتج', const ItemMovementReport()))),
-          const SizedBox(width: gap),
-          Expanded(child: tile('التقارير / الأرباح', Icons.analytics_rounded, () => openPage('التقارير / الأرباح', const ProfitReport()))),
-        ]),
-        const SizedBox(height: gap),
-        Row(children: [
-          Expanded(child: tile('الضبط والصلاحيات', Icons.settings_rounded, () => openPage('الضبط والصلاحيات', const Management()))),
-          const SizedBox(width: gap),
-          Expanded(child: tile(
-            'تصفير البرنامج',
-            Icons.restart_alt_rounded,
-            () => resetProgram(context),
-            iconColor: Colors.redAccent,
-          )),
+          Expanded(child: tile('سندات القبض', Icons.payments_outlined, () => openPage('سندات القبض', ReceiptVouchers(owner: true, branchId: branchId)))),
         ]),
       ],
     );
@@ -1439,15 +1412,17 @@ class Management extends StatelessWidget {
   const Management({super.key});
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
-    Card(child: ListTile(leading: const Icon(Icons.inventory_2, color: gold), title: const Text('جرد المخزون حسب الفئة'), subtitle: const Text('المتاح وسعر الشراء وسعر البيع لكل صنف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('جرد المخزون')), body: const InventoryAudit()))))),
-    Card(child: ListTile(leading: const Icon(Icons.trending_up, color: gold), title: const Text('تقرير الأرباح'), subtitle: const Text('يومي وأسبوعي وشهري حسب تكلفة شراء الأصناف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير الأرباح')), body: const ProfitReport()))))),
-    Card(child: ListTile(leading: const Icon(Icons.payments, color: gold), title: const Text('الصندوق'), subtitle: const Text('إضافة وخصم ومراجعة الحركات'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الصندوق')), body: const CashBox()))))),
-    Card(child: ListTile(leading: const Icon(Icons.receipt, color: gold), title: const Text('المصروفات'), subtitle: const Text('مصروفات المحل والرواتب وخصمها من الصندوق'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('المصروفات')), body: const Expenses()))))),
-    Card(child: ListTile(leading: const Icon(Icons.store, color: gold), title: const Text('الفروع والمخزون'), subtitle: const Text('إضافة الفروع ونقل البضاعة إليها'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الفروع')), body: const Branches()))))),
-    Card(child: ListTile(leading: const Icon(Icons.people, color: gold), title: const Text('الموظفون والصلاحيات'), subtitle: const Text('تفعيل الموظف وتحديد فرعه'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الموظفون')), body: const Staff()))))),
-    Card(child: ListTile(leading: const Icon(Icons.history, color: gold), title: const Text('سجل حركات الحسابات'), subtitle: const Text('التحصيلات والمدفوعات محفوظة بالتاريخ'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('حركات الحسابات')), body: const AccountMovements()))))),
-    Card(child: ListTile(leading: const Icon(Icons.swap_vert, color: gold), title: const Text('تقرير حركة صنف'), subtitle: const Text('مبيعات ومشتريات ومرتجعات ورصيد كل حركة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير حركة صنف')), body: const ItemMovementReport()))))),
-    Card(child: ListTile(leading: const Icon(Icons.settings, color: gold), title: const Text('الإعدادات والطباعة'), subtitle: const Text('بيانات الشركة وتجهيز الفواتير للطباعة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الإعدادات')), body: const AppSettings()))))),
+    const Padding(padding: EdgeInsets.only(bottom: 12), child: Text('الضبط والإدارة', style: TextStyle(color: gold, fontSize: 20, fontWeight: FontWeight.bold))),
+    Card(child: ListTile(title: const Text('جرد المخزون حسب الفئة'), subtitle: const Text('المتاح وسعر الشراء وسعر البيع لكل صنف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('جرد المخزون')), body: const InventoryAudit()))))),
+    Card(child: ListTile(title: const Text('تقرير الأرباح'), subtitle: const Text('يومي وأسبوعي وشهري حسب تكلفة شراء الأصناف'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير الأرباح')), body: const ProfitReport()))))),
+    Card(child: ListTile(title: const Text('الصندوق'), subtitle: const Text('إضافة وخصم ومراجعة الحركات'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الصندوق')), body: const CashBox()))))),
+    Card(child: ListTile(title: const Text('المصروفات'), subtitle: const Text('مصروفات المحل والرواتب وخصمها من الصندوق'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('المصروفات')), body: const Expenses()))))),
+    Card(child: ListTile(title: const Text('الفروع والمخزون'), subtitle: const Text('إضافة الفروع ونقل البضاعة إليها'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الفروع')), body: const Branches()))))),
+    Card(child: ListTile(title: const Text('الموظفون والصلاحيات'), subtitle: const Text('تفعيل الموظف وتحديد فرعه'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الموظفون')), body: const Staff()))))),
+    Card(child: ListTile(title: const Text('سجل حركات الحسابات'), subtitle: const Text('التحصيلات والمدفوعات محفوظة بالتاريخ'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('حركات الحسابات')), body: const AccountMovements()))))),
+    Card(child: ListTile(title: const Text('تقرير حركة صنف'), subtitle: const Text('مبيعات ومشتريات ومرتجعات ورصيد كل حركة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('تقرير حركة صنف')), body: const ItemMovementReport()))))),
+    Card(child: ListTile(title: const Text('الإعدادات والطباعة'), subtitle: const Text('بيانات الشركة وتجهيز الفواتير للطباعة'), onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Scaffold(appBar: AppBar(title: const Text('الإعدادات')), body: const AppSettings()))))),
+    Card(child: ListTile(title: const Text('تصفير البرنامج', style: TextStyle(color: Colors.redAccent)), subtitle: const Text('بدء دورة جديدة — يتطلب تأكيدًا قبل التنفيذ'), onTap: () => resetProgram(context))),
   ]);
 }
 
