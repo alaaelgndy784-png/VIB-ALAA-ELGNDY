@@ -46,7 +46,8 @@ void main() {
     try {
       final service=ChatAlerts();await service.test();
       final shown=Map<String,dynamic>.from(calls.singleWhere((c)=>c.method=='show').arguments as Map);
-      expect(shown['channelId'],'vib_chat_v1');expect(shown['playSound'],true);expect(shown['enableVibration'],true);
+      final native=Map<String,dynamic>.from(shown['platformSpecifics'] as Map);
+      expect(native['channelId'],'vib_chat_v1');expect(native['playSound'],true);expect(native['enableVibration'],true);
       calls.clear();allowed=false;await service.notify('employee',message('two'),false);
       expect(calls.where((c)=>c.method=='show'),isEmpty);expect(service.warning.value,isNotNull);
       await expectLater(service.test(),throwsStateError);
