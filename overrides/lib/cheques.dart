@@ -205,7 +205,7 @@ Future<void> editChequeDialog(BuildContext context,String uid,{Map<String,dynami
   DateTime remind=existing?['reminderAt'] is Timestamp ? tz.TZDateTime.from((existing!['reminderAt'] as Timestamp).toDate(),chequeZone) : chequeReminderBefore(due,1,9,0);
   String type=existing?['type'] ?? 'issued';
   bool enabled=existing?['reminderEnabled'] ?? true,saving=false;
-  int? days=existing == null ? 1 : null;
+  int? days=existing == null ? 1 : existing['leadDays'] as int?;
   Future<void> pickReminder(BuildContext dialog,StateSetter update) async {
     final date=await showDatePicker(context:dialog,initialDate:DateTime(remind.year,remind.month,remind.day),firstDate:DateTime(2000),lastDate:DateTime(2100));
     if(date == null || !dialog.mounted) return;
@@ -223,19 +223,19 @@ Future<void> editChequeDialog(BuildContext context,String uid,{Map<String,dynami
       OutlinedButton.icon(onPressed:saving ? null : () async { final date=await showDatePicker(context:dialog,initialDate:due,firstDate:DateTime(2000),lastDate:DateTime(2100));if(date != null && dialog.mounted) update(() {due=date;if(days != null) remind=chequeReminderBefore(due,days!,remind.hour,remind.minute);}); },icon:const Icon(Icons.calendar_month),label:Text('تاريخ الاستحقاق: ${chequeDate(due)}')),
       SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('تذكير على الموبايل'),value:enabled,onChanged:saving ? null : (v) => update(() => enabled=v)),
       if(enabled) ...[
-        DropdownButtonFormField<int>(key:ValueKey(days),isExpanded:true,initialValue:days ?? -1,decoration:const InputDecoration(labelText:'وقت التذكير'),items:const [DropdownMenuItem(value:0,child:Text('يوم الاستحقاق')),DropdownMenuItem(value:1,child:Text('قبلها بيوم')),DropdownMenuItem(value:3,child:Text('قبلها بثلاثة أيام')),DropdownMenuItem(value:7,child:Text('قبلها بأسبوع')),DropdownMenuItem(value:-1,child:Text('تاريخ وساعة أحددهم'))],onChanged:saving ? null : (v) { if(v == -1) {pickReminder(dialog,update);} else if(v != null) update(() {days=v;remind=chequeReminderBefore(due,v,remind.hour,remind.minute);}); }),
+        DropdownButtonFormField<int>(key:ValueKey(days),isExpanded:true,initialValue:days ?? -1,decoration:const InputDecoration(labelText:'وقت التذكير'),items:const [DropdownMenuItem(value:0,child:Text('يوم الاستحقاق')),DropdownMenuItem(value:1,child:Text('قبلها بيوم')),DropdownMenuItem(value:3,child:Text('قبلها بثلاثة أيام')),DropdownMenuItem(value:7,child:Text('قبلها بأسبوع')),DropdownMenuItem(value:-1,child:Text('تاريخ وساعة أحددهم'))],onChanged:saving ? null : (v) { if(v == -1) {update(() => days=null);pickReminder(dialog,update);} else if(v != null) update(() {days=v;remind=chequeReminderBefore(due,v,remind.hour,remind.minute);}); }),
         OutlinedButton.icon(onPressed:saving ? null : () => pickReminder(dialog,update),icon:const Icon(Icons.alarm),label:Text('التذكير: ${DateFormat('yyyy/MM/dd • HH:mm').format(remind)}')),
         const Text('بتوقيت القاهرة. الإشعار يحتاج السماح بإشعارات التطبيق والمنبهات.',style:TextStyle(fontSize:12)),
       ],
       TextField(controller:note,enabled:!saving,maxLength:300,maxLines:2,decoration:const InputDecoration(labelText:'ملاحظات')),
     ])),
     actions:[TextButton(onPressed:saving ? null : () => Navigator.pop(dialog),child:const Text('إلغاء')),FilledButton(onPressed:saving ? null : () async {
-      final value=double.tryParse(amount.text.trim().replaceAll(',', '.'));
+      final value=double.tryParse(_ocrNumber(amount.text.trim().replaceAll(',', '.')));
       if(number.text.trim().isEmpty || party.text.trim().isEmpty || value == null || !value.isFinite || value <= 0 || (value*100).round() <= 0 || value>1000000000000) { await showInvoiceSaveProblem(dialog,'اكتب رقم الشيك والاسم وقيمة صحيحة أكبر من صفر.',title:'موعد الشيك',button:'رجوع');return; }
       if(enabled && existing?['status'] != 'done' && (!remind.isAfter(DateTime.now()) || !remind.isBefore(tz.TZDateTime(chequeZone,due.year,due.month,due.day+1)))) { await showInvoiceSaveProblem(dialog,'اختر تذكيرًا في المستقبل ويكون قبل نهاية يوم استحقاق الشيك.',title:'وقت التذكير',button:'رجوع');return; }
       update(() => saving=true);
       try {
-        await saveChequeRecord(uid,{'id':id,'number':number.text.trim(),'party':party.text.trim(),'bank':bank.text.trim(),'amount':(value*100).round()/100,'type':type,'dueDate':chequeDate(due),'reminderEnabled':enabled,'reminderAt':Timestamp.fromDate(remind),'status':existing?['status'] ?? 'open','note':note.text.trim()},expectedRevision:existing?['revision'] as int?);
+        await saveChequeRecord(uid,{'id':id,'number':number.text.trim(),'party':party.text.trim(),'bank':bank.text.trim(),'amount':(value*100).round()/100,'type':type,'dueDate':chequeDate(due),'reminderEnabled':enabled,'leadDays':days,'reminderAt':Timestamp.fromDate(remind),'status':existing?['status'] ?? 'open','note':note.text.trim()},expectedRevision:existing?['revision'] as int?);
         if(enabled && existing?['status'] != 'done') {
           try { await ChequeReminders.instance.requestPermissions(); } catch(e) {ChequeReminders.instance.warning.value='تم حفظ الشيك، لكن تعذر تفعيل تذكيره: $e';}
         }
