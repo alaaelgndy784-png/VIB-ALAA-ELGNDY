@@ -55,12 +55,13 @@ void main() {
       expect(saves, 1);
       expect(tester.takeException(), isNull);
       Directory('dist').createSync(recursive: true);
-      final boundary = boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
-      final image = await boundary.toImage(pixelRatio: 2);
-      final data = await image.toByteData(format: ui.ImageByteFormat.png);
-      File('dist/VIB-PURCHASE-FORM-${width.toInt()}.png').writeAsBytesSync(data!.buffer.asUint8List());
-      image.dispose();
-      // The keyboard reduces available height; controls remain in the dialog.
+      await tester.runAsync(() async {
+        final boundary = boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+        final image = await boundary.toImage(pixelRatio: 2);
+        final data = await image.toByteData(format: ui.ImageByteFormat.png);
+        File('dist/VIB-PURCHASE-FORM-${width.toInt()}.png').writeAsBytesSync(data!.buffer.asUint8List());
+        image.dispose();
+      });
       await tester.pumpWidget(const SizedBox());
       for (final controller in [...costs, ...quantities, paid]) { controller.dispose(); }
     });
