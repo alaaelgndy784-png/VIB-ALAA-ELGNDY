@@ -42,6 +42,7 @@ part 'online_payments.dart';
 part 'invoice_history.dart';
 part 'invoice_serials.dart';
 part 'invoice_a4.dart';
+part 'invoice_parties.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -835,6 +836,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
   if(owner)await prepareInvoiceSerials('sales');
   final productsSnap = await db.collection('products').where('active', isEqualTo: true).get();
   var customersSnap = await db.collection('customers').get();
+  final addedCustomers = <String, Map<String,dynamic>>{};
   if (!context.mounted) return;
 
   final products = productsSnap.docs.toList()
@@ -870,9 +872,9 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         final p = double.tryParse(row.price.text.trim().replaceAll(',', '.')) ?? 0;
         previewTotal += q * p;
       }
-      final selectedCustomer = customerId.isEmpty ? null : customersSnap.docs.firstWhere((d) => d.id == customerId);
+      final selectedCustomer = customerId.isEmpty ? null : addedCustomers[customerId] ?? customersSnap.docs.firstWhere((d) => d.id == customerId).data();
 
-      final previousBalance = (selectedCustomer?.data()['balance'] as num?)?.toDouble() ?? 0;
+      final previousBalance = (selectedCustomer?['balance'] as num?)?.toDouble() ?? 0;
       void addSelected(String id) {
         if (saving || lines.length >= (owner ? 50 : 4) || lines.any((row) => row.productId == id)) return;
         final product=productDoc(id).data();
@@ -893,12 +895,19 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         ),
         body:checkout ? ListView(children:[
           OutlinedButton.icon(icon:const Icon(Icons.person_search),
-            label:Text(customerId.isEmpty ? 'اسم العميل — اختيار عميل' : '${selectedCustomer?.data()['name'] ?? ''}',softWrap:true),
+            label:Text(customerId.isEmpty ? 'اسم العميل — اختيار عميل' : '${selectedCustomer?['name'] ?? ''}',softWrap:true),
             onPressed:saving ? null : () async {
               final id=await selectRegisteredCustomer(c);
               if(id == null || !c.mounted) return;
               final refreshed=await db.collection('customers').get();
               if(c.mounted) update(() {customersSnap=refreshed;customerId=id;});
+            }),
+          if(owner) FilledButton.icon(icon:const Icon(Icons.person_add_alt_1),
+            label:const Text('إضافة عميل'),onPressed:saving ? null : () async {
+              final result=await createInvoiceParty(c,'customers',false);
+              if(result != null && c.mounted) update(() {
+                addedCustomers[result.id]=result.data;customerId=result.id;
+              });
             }),
           const SizedBox(height:10),
           PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
@@ -923,6 +932,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           ),
         ]),
         actions: [
+          if(owner) TextButton.icon(icon:const Icon(Icons.edit_note),label:const Text('تعديل فاتورة مبيعات'),
+            onPressed:saving ? null : () => editSaleByNumber(c)),
           TextButton(onPressed:saving ? null : () {if(checkout) {update(()=>checkout=false);} else {Navigator.pop(c);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
             FocusScope.of(c).unfocus();
@@ -1210,7 +1221,7 @@ class _SalesState extends State<Sales> {
           if (date != null && mounted) setState(() => selectedDate = date);
         }),
         TextButton(onPressed: () => setState(() => selectedDate = DateTime.now()), child: const Text('فواتير اليوم')),
-        if (owner) OutlinedButton.icon(icon: const Icon(Icons.edit_note), label: const Text('تعديل فاتورة'), onPressed: () => editSaleByNumber(context)),
+        if (owner) OutlinedButton.icon(icon: const Icon(Icons.edit_note), label: const Text('تعديل فاتورة مبيعات'), onPressed: () => editSaleByNumber(context)),
       ])),
       Padding(padding: const EdgeInsets.all(8), child: Text('فواتير ${selectedDate.day}/${selectedDate.month}/${selectedDate.year} • العدد: ${rows.length}')),
       Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد فواتير في هذا التاريخ')) : ListView(children: rows.map((d) {
@@ -1665,8 +1676,8 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
   final products = await db.collection('products').where('active', isEqualTo: true).get();
   final suppliers = await db.collection('suppliers').get();
   if (!context.mounted) return;
-  if (products.docs.isEmpty || suppliers.docs.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف الأصناف والمورد أولًا'))); return;
+  if (products.docs.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف الأصناف أولًا'))); return;
   }
   final source = await showModalBottomSheet<ImageSource>(context: context, builder: (c) => SafeArea(child: Column(mainAxisSize: MainAxisSize.min, children: [
     ListTile(leading: const Icon(Icons.camera_alt), title: const Text('التقاط صورة'), onTap: () => Navigator.pop(c, ImageSource.camera)),
@@ -1684,6 +1695,7 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
   notice.close();
   if (!context.mounted) return;
   String? supplierId;
+  final addedSuppliers=<String,Map<String,dynamic>>{};
   final whole = _ocrKey(text);
   for (final s in suppliers.docs) {
     final name = _ocrKey('${s.data()['name'] ?? ''}');
@@ -1710,7 +1722,15 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
       Image.file(File(photo!.path), height: 140),
       const Text('راجع المورد والكمية وسعر الشراء لكل صنف؛ القراءة من الصورة قد تخطئ.', style: TextStyle(color: gold)),
       ExpansionTile(title: const Text('النص المستخرج من الصورة'), children: [SelectableText(text.isEmpty ? 'لم يتم التعرف على النص' : text)]),
-      DropdownButtonFormField<String>(initialValue: supplierId, isExpanded: true, decoration: const InputDecoration(labelText: 'المورد *'), items: suppliers.docs.where((d) => d.data()['active'] != false).map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(), onChanged: saving ? null : (v) => update(() => supplierId = v)),
+      DropdownButtonFormField<String>(key:ValueKey(supplierId),initialValue: supplierId, isExpanded: true, decoration: const InputDecoration(labelText: 'المورد *'), items: [
+        for(final d in suppliers.docs.where((d)=>d.data()['active'] != false)) DropdownMenuItem(value:d.id,child:Text('${d.data()['name']}',overflow:TextOverflow.ellipsis)),
+        for(final entry in addedSuppliers.entries) DropdownMenuItem(value:entry.key,child:Text('${entry.value['name']}',overflow:TextOverflow.ellipsis)),
+      ], onChanged: saving ? null : (v) => update(() => supplierId = v)),
+      FilledButton.icon(icon:const Icon(Icons.person_add_alt_1),label:const Text('إضافة مورد'),
+        onPressed:saving ? null : () async {
+          final result=await createInvoiceParty(c,'suppliers',true);
+          if(result != null && c.mounted) update(() {addedSuppliers[result.id]=result.data;supplierId=result.id;});
+        }),
       TextField(controller: invoice, decoration: const InputDecoration(labelText: 'رقم فاتورة المورد')),
       for (var i = 0; i < lines.length; i++) Card(key: ObjectKey(lines[i]), child: Padding(padding: const EdgeInsets.all(8), child: Column(children: [
         Row(children: [Expanded(child: Text('الصنف ${i + 1}')), IconButton(icon: const Icon(Icons.delete, color: Colors.redAccent), onPressed: saving ? null : () => update(() => lines.removeAt(i).dispose()))]),
@@ -1748,7 +1768,7 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
       }
       update(() => saving = true);
       try {
-        final supplier = suppliers.docs.firstWhere((e) => e.id == supplierId).data();
+        final supplier = addedSuppliers[supplierId] ?? suppliers.docs.firstWhere((e) => e.id == supplierId).data();
         await prepareInvoiceSerials('purchases');
         final purchaseRef = db.collection('purchases').doc();
         await db.runTransaction((tx) async {
@@ -2103,13 +2123,13 @@ Future<void> purchaseDialog(BuildContext context) async {
   final products = await db.collection('products').where('active', isEqualTo: true).get();
   final suppliers = await db.collection('suppliers').get();
   if (!context.mounted) return;
-  if (products.docs.isEmpty || suppliers.docs.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف منتجًا وموردًا أولًا')));
+  if (products.docs.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف منتجًا أولًا')));
     return;
   }
 
   final activeSuppliers=suppliers.docs.where((d)=>d.data()['active'] != false).toList();
-  if(activeSuppliers.isEmpty) {ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('أضف موردًا مفعلًا أولًا')));return;}
+  final addedSuppliers = <String,Map<String,dynamic>>{};
   String supplierId = '';
   final lines = <ScannedLine>[];
   final paid = TextEditingController(text: '0');
@@ -2127,8 +2147,8 @@ Future<void> purchaseDialog(BuildContext context) async {
         final cost = double.tryParse(row.cost.text.trim().replaceAll(',', '.')) ?? 0;
         previewTotal += q * cost;
       }
-      final selectedSupplier = supplierId.isEmpty ? null : activeSuppliers.firstWhere((d) => d.id == supplierId);
-      final previousSupplierBalance = (selectedSupplier?.data()['balance'] as num?)?.toDouble() ?? 0;
+      final selectedSupplier = supplierId.isEmpty ? null : addedSuppliers[supplierId] ?? activeSuppliers.firstWhere((d) => d.id == supplierId).data();
+      final previousSupplierBalance = (selectedSupplier?['balance'] as num?)?.toDouble() ?? 0;
       void addSelected(String id) {
         if(saving || lines.length >= 50 || lines.any((row)=>row.productId == id)) return;
         final product=products.docs.firstWhere((d)=>d.id == id);
@@ -2150,10 +2170,18 @@ Future<void> purchaseDialog(BuildContext context) async {
           },
         ),
         body:checkout ? ListView(children:[
-          DropdownButtonFormField<String>(initialValue:supplierId.isEmpty ? null : supplierId,isExpanded:true,
+          DropdownButtonFormField<String>(key:ValueKey(supplierId),initialValue:supplierId.isEmpty ? null : supplierId,isExpanded:true,
             decoration:_vibInvoiceInput('اسم المورد'),
-            items:activeSuppliers.map((d)=>DropdownMenuItem(value:d.id,child:Text('${d.data()['name'] ?? ''}',maxLines:2,overflow:TextOverflow.ellipsis))).toList(),
+            items:[
+              for(final d in activeSuppliers) DropdownMenuItem(value:d.id,child:Text('${d.data()['name'] ?? ''}',maxLines:2,overflow:TextOverflow.ellipsis)),
+              for(final entry in addedSuppliers.entries) DropdownMenuItem(value:entry.key,child:Text('${entry.value['name'] ?? ''}',maxLines:2,overflow:TextOverflow.ellipsis)),
+            ],
             onChanged:saving ? null : (id) {if(id != null) setLocal(()=>supplierId=id);}),
+          FilledButton.icon(icon:const Icon(Icons.person_add_alt_1),label:const Text('إضافة مورد'),
+            onPressed:saving ? null : () async {
+              final result=await createInvoiceParty(c,'suppliers',true);
+              if(result != null && c.mounted) setLocal(() {addedSuppliers[result.id]=result.data;supplierId=result.id;});
+            }),
           const SizedBox(height:10),
           PurchaseSettlementPanel(total:previewTotal,previousBalance:previousSupplierBalance,credit:credit,
             paid:paid,enabled:!saving,onModeChanged:(value)=>setLocal(()=>credit=value),onChanged:()=>setLocal(() {})),
@@ -2213,7 +2241,7 @@ Future<void> purchaseDialog(BuildContext context) async {
             await prepareInvoiceSerials('purchases');
         final purchaseRef = db.collection('purchases').doc();
             try {
-              final supplier = suppliers.docs.firstWhere((d) => d.id == supplierId).data();
+              final supplier = addedSuppliers[supplierId] ?? suppliers.docs.firstWhere((d) => d.id == supplierId).data();
               final savedInvoice = await db.runTransaction<Map<String, dynamic>>((tx) async {
                 final supplierRef = db.collection('suppliers').doc(supplierId);
                 final supplierSnap = await tx.get(supplierRef);
@@ -2879,28 +2907,9 @@ class _AccountsState extends State<Accounts> {
   }
 }
 
-Future<void> createAccountDialog(BuildContext context, String collection, bool supplier) async {
-  final name = TextEditingController(), phone = TextEditingController(), opening = TextEditingController(text: '0');
-  await showDialog<void>(context: context, builder: (c) => AlertDialog(
-    title: Text(supplier ? 'إضافة مورد' : 'إضافة عميل'),
-    content: Column(mainAxisSize: MainAxisSize.min, children: [
-      TextField(controller: name, decoration: const InputDecoration(labelText: 'الاسم')),
-      TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم الهاتف')),
-      TextField(controller: opening, keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true), decoration: const InputDecoration(labelText: 'الرصيد الافتتاحي')),
-    ]),
-    actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')), FilledButton(onPressed: () async {
-      final balance = double.tryParse(opening.text.trim());
-      if (name.text.trim().isEmpty || balance == null || !balance.isFinite) return;
-      try {
-        final ref = db.collection(collection).doc();
-        await db.runTransaction((tx) async {
-          tx.set(ref, {'name': name.text.trim(), 'phone': phone.text.trim(), 'openingBalance': balance, 'balance': balance, 'active': true, 'createdAt': FieldValue.serverTimestamp(), 'updatedAt': FieldValue.serverTimestamp()});
-          if (balance != 0) tx.set(db.collection('accountMovements').doc(), {'accountType': collection, 'accountId': ref.id, 'accountName': name.text.trim(), 'kind': 'opening', 'amount': balance.abs(), 'balanceBefore': 0, 'balanceAfter': balance, 'createdAt': FieldValue.serverTimestamp(), 'actorId': FirebaseAuth.instance.currentUser!.uid});
-        });
-        if (c.mounted) Navigator.pop(c);
-      } catch (e) { if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر الحفظ: $e'))); }
-    }, child: const Text('حفظ'))],
-  ));
+Future<String?> createAccountDialog(BuildContext context, String collection, bool supplier) async {
+  final result=await createInvoiceParty(context,collection,supplier,allowOpeningBalance:true);
+  return result?.id;
 }
 
 Future<void> accountDialog(BuildContext context, String collection, String id, Map<String, dynamic> account) async {
@@ -3557,6 +3566,9 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
     ListTile(leading: const Icon(Icons.picture_as_pdf, color: gold), title: const Text('حفظ أو مشاركة الفاتورة PDF'), onTap: () { Navigator.pop(c); exportInvoicePdf(context, type, id, data); }),
     if (type == 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.credit_card, color: gold), title: const Text('رابط دفع بالكارت — جيديا'), onTap: () { Navigator.pop(c); openGeideaPayments(context, invoiceId:id); }),
+    if (type == 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.edit_note, color: gold),
+      title: const Text('تعديل فاتورة مبيعات — إضافة أو تعديل أصناف'),
+      onTap: () { Navigator.pop(c); appendInvoiceDialog(context, type, id, replaceSale:true); }),
     if (type != 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.playlist_add, color: gold), title: const Text('إضافة بند جديد لنفس الفاتورة'), onTap: () { Navigator.pop(c); appendInvoiceDialog(context, type, id); }),
     if(canPrint && data['internalNumber'] is int)ListTile(leading:const Icon(Icons.qr_code,color:gold),title:const Text('طباعة باركود الفاتورة'),onTap:(){Navigator.pop(c);printInvoiceBarcode(context,type,id,data);}),
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
@@ -3756,7 +3768,7 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
             Text('الإجمالي السابق: ${data['total'] ?? 0} • المدفوع: ${data['paid'] ?? 0} • الباقي: ${data['due'] ?? 0}'),
             const SizedBox(height: 10),
             Text(replaceSale ? 'عدّل الأصناف والكميات والأسعار والمدفوع. يحفظ سجل التعديل وتُحدّث فروق المخزون والحسابات.' : 'البنود السابقة محفوظة؛ أضف البنود أو الكميات الإضافية هنا.'),
-            TextField(controller: search, decoration: const InputDecoration(labelText: 'بحث عن صنف', prefixIcon: Icon(Icons.search)), onChanged: (_) => update(() {})),
+            const Text('لتغيير الصنف اضغط على اسمه، ولزيادة الفاتورة اضغط إضافة بند.'),
             for (var i = 0; i < lines.length; i++)
               if (purchase) PurchaseInvoiceLine(
                 key: ObjectKey(lines[i]), number: i + 1, name: '${products.firstWhere((p) => p.id == lines[i].productId).data()['name']}',
@@ -3772,36 +3784,21 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
                     lines[i].price.text = priceFor(products.firstWhere((p) => p.id == selected)).toStringAsFixed(2);
                   });
                 },
-              ) else Row(children: [
-              Text('${i + 1}'),
-              const SizedBox(width: 5),
-              Expanded(flex: 4, child: DropdownButtonFormField<String>(
-                initialValue: lines[i].productId, isExpanded: true,
-                items: products.where((p) => p.id == lines[i].productId || '${p.data()['name']}'.toLowerCase().contains(search.text.trim().toLowerCase()))
-                  .map((p) => DropdownMenuItem(value: p.id, child: Text('${p.data()['name']}', overflow: TextOverflow.ellipsis))).toList(),
-                onChanged: saving ? null : (value) {
-                  if (value == null) return;
-                  update(() {
-                    lines[i].productId = value;
-                    lines[i].price.text = priceFor(products.firstWhere((p) => p.id == value)).toStringAsFixed(2);
+              ) else PurchaseInvoiceLine(
+                key:ObjectKey(lines[i]),number:i+1,
+                name:'${products.firstWhere((p)=>p.id==lines[i].productId).data()['name'] ?? ''}',
+                cost:lines[i].price,quantity:lines[i].quantity,enabled:!saving,
+                onChanged:()=>update(() {}),onDelete:()=>update(() {lines.removeAt(i).dispose();}),
+                onChoose:() async {
+                  final row=lines[i];
+                  final selected=await selectSaleProduct(c,products.where((p)=>p.data()['active']==true).toList(),
+                    lines.where((other)=>other != row).map((line)=>line.productId!).toSet());
+                  if(selected != null && c.mounted) update(() {
+                    row.productId=selected;row.price.text=priceFor(products.firstWhere((p)=>p.id==selected)).toStringAsFixed(2);
                   });
                 },
-              )),
-              const SizedBox(width: 5),
-              Expanded(flex: 2, child: TextField(controller: lines[i].price, enabled: !saving,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: InputDecoration(labelText: purchase ? 'الشراء' : 'البيع'), onChanged: (_) => update(() {}))),
-              const SizedBox(width: 5),
-              Expanded(child: TextField(controller: lines[i].quantity, enabled: !saving,
-                keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'العدد'), onChanged: (_) => update(() {}))),
-              IconButton(onPressed: saving ? null : () => update(() { lines.removeAt(i).dispose(); }),
-                icon: const Icon(Icons.delete_outline, color: Colors.redAccent)),
-            ]),
+              ),
             TextButton.icon(onPressed: saving || lines.length >= 50 ? null : () async {
-              if (!purchase) {
-                update(() => lines.add(SaleLine(productId: products.first.id, unitPrice: priceFor(products.first))));
-                return;
-              }
               final selected = await pickPurchaseProduct(c, products.where((p) => p.data()['active'] == true).toList(),
                 lines.where((line) => line.productId != null).map((line) => line.productId!).toSet());
               if (selected == null || !c.mounted) return;
