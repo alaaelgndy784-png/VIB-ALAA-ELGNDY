@@ -28,12 +28,14 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzdata;
 
 import 'product_import_data.dart';
+import 'inventory_price_data.dart';
 
 part 'cheques.dart';
 part 'chat_alerts.dart';
 
 part 'invoice_editor.dart';
 part 'product_import.dart';
+part 'inventory_tools.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -584,6 +586,7 @@ class _ProductsState extends State<Products> {
       return Column(children: [
         Padding(padding: const EdgeInsets.all(12), child: TextField(decoration: const InputDecoration(labelText: 'بحث عن منتج — اكتب أي حرف', prefixIcon: Icon(Icons.search)), onChanged: (value) => setState(() => query = value.trim().toLowerCase()))),
         if (owner) Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, runSpacing: 8, children: [FilledButton.icon(onPressed: () => productDialog(context), icon: const Icon(Icons.add), label: const Text('إضافة منتج')), OutlinedButton.icon(onPressed: () => openProductImport(context), icon: const Icon(Icons.upload_file), label: const Text('إضافة الأصناف من ملف'))])),
+        if (owner) Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: OutlinedButton.icon(onPressed: () => openInventoryPrices(context), icon: const Icon(Icons.price_change), label: const Text('زيادة / تخفيض أسعار الأصناف'))),
         if (!owner) Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () => newSaleDialog(context, false, branchId), icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة')))),
         Expanded(child: docs.isEmpty ? const Center(child: Text('لا توجد منتجات بعد')) : ListView.builder(itemCount: docs.length, itemBuilder: (context, i) {
           final d = docs[i], p = d.data();
@@ -1289,6 +1292,8 @@ class Management extends StatelessWidget {
     option(context, 'الموظفون والصلاحيات', Icons.groups_outlined, const Staff(), highlight: true),
     option(context, 'الفروع والمخزون', Icons.storefront_outlined, const Branches()),
     option(context, 'جرد المخزون', Icons.inventory_2_outlined, const InventoryAudit()),
+    option(context, 'إرجاع فاتورة مبيعات', Icons.assignment_return, const InvoiceReturnPage(type: 'sales')),
+    option(context, 'إرجاع فاتورة مشتريات', Icons.assignment_return_outlined, const InvoiceReturnPage(type: 'purchases')),
     option(context, 'الصندوق', Icons.account_balance_wallet_outlined, const CashBox()),
     option(context, 'المصروفات', Icons.receipt_long_outlined, const Expenses()),
     option(context, 'تقرير الأرباح', Icons.bar_chart_outlined, const ProfitReport()),
@@ -1415,6 +1420,7 @@ class _InventoryAuditState extends State<InventoryAudit> {
                 Text('إجمالي المخزون بسعر البيع: ${totalSale.toStringAsFixed(2)} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
                 const SizedBox(height: 8),
                 Wrap(spacing: 8, children: [
+                  OutlinedButton.icon(onPressed: () => openInventoryPrices(context), icon: const Icon(Icons.price_change), label: const Text('زيادة / تخفيض الأسعار')),
                   OutlinedButton.icon(onPressed: auditRows.isEmpty ? null : () => printInventoryAudit(context, selected, auditRows, 'a4'), icon: const Icon(Icons.picture_as_pdf), label: const Text('PDF A4')),
                   OutlinedButton.icon(onPressed: auditRows.isEmpty ? null : () => printInventoryAudit(context, selected, auditRows, '80'), icon: const Icon(Icons.print), label: const Text('طباعة 80 مم')),
                 ]),
@@ -2830,7 +2836,7 @@ class _AccountsState extends State<Accounts> {
               subtitle: Text('هاتف: ${account['phone'] ?? 'غير مسجل'}'),
               trailing: Column(mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
                 Text('${account['balance'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
-                const Text('الرصيد الحالي'),
+                Text(accountBalanceLabel((account['balance'] as num?) ?? 0, supplier: suppliers)),
               ]),
               onTap: () => accountDialog(context, collection, d.id, account),
             );
@@ -4127,15 +4133,39 @@ Future<void> printInvoice(BuildContext context, String type, String id, Map<Stri
 }
 
 Future<void> confirmReturn(BuildContext context, String type, String id, Map<String, dynamic> data) async {
-  final yes = await showDialog<bool>(context: context, builder: (c) => AlertDialog(title: const Text('تأكيد المرتجع'), content: const Text('سيتم عكس حركة المخزون والحساب، وستظل الفاتورة الأصلية محفوظة.'), actions: [TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('إلغاء')), FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('تأكيد المرتجع'))])) ?? false;
-  if (!yes || !context.mounted) return;
   try {
-    await returnInvoice(type, id);
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تسجيل المرتجع وحفظ الفاتورة الأصلية')));
-  } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر المرتجع: $e'))); }
+    final current = (await db.collection(type).doc(id).get(const GetOptions(source: Source.server))).data();
+    if (current == null || current['status'] == 'returned' || !visibleAfterReset(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    final sales = type == 'sales', settlement = returnSettlement(current, sales: type == 'sales');
+    final partyId = '${current[sales ? 'customerId' : 'supplierId'] ?? ''}';
+    final party = partyId.isEmpty ? null : (await db.collection(sales ? 'customers' : 'suppliers').doc(partyId).get(const GetOptions(source: Source.server))).data();
+    final balance = (party?['balance'] as num?)?.toDouble() ?? 0;
+    final after = ((balance * 100).round() - (settlement.debt * 100).round()) / 100;
+    if (!context.mounted) return;
+    final yes = await showDialog<bool>(context: context, builder: (c) => AlertDialog(title: const Text('مراجعة وتأكيد المرتجع'), content: SingleChildScrollView(child: Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+      Text('الفاتورة: $id\n${sales ? 'العميل' : 'المورد'}: ${current[sales ? 'customerName' : 'supplierName'] ?? ''}'),
+      Text(sales ? 'ستُضاف كميات الفاتورة إلى المخزون.' : 'ستُخصم كميات الفاتورة من المخزون الرئيسي.'),
+      Text('تخفيض الذمة: ${settlement.debt.toStringAsFixed(2)} ج.م'),
+      if(party != null) Text('الرصيد الحالي: ${balance.toStringAsFixed(2)}\nالرصيد بعد المرتجع: ${after.toStringAsFixed(2)} • ${accountBalanceLabel(after,supplier:!sales)}'),
+      Text('${sales ? 'رد من الصندوق' : 'استرداد إلى الصندوق'}: ${settlement.cash.toStringAsFixed(2)} ج.م'),
+      if(!sales) const Text('سندات الصرف العامة للمورد تظل مسجلة. أي رصيد سالب بعد المرتجع يُحسب مبلغًا لك عند المورد، ولا يُرد من الصندوق مرة أخرى.'),
+      const Text('الفاتورة الأصلية تظل محفوظة، ولا يمكن إرجاعها مرتين. الأرصدة تُراجع مجددًا عند التنفيذ.'),
+    ])), actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('إلغاء')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('تأكيد المرتجع'))])) ?? false;
+    if (!yes || !context.mounted) return;
+    await returnInvoice(type, id, expectedSignature: invoiceReturnSignature(current));
+    if (context.mounted) await showInvoiceSaveProblem(context,'تم تسجيل المرتجع وتحديث المخزون والذمة والصندوق وحفظ الفاتورة الأصلية.',title:'تم تسجيل المرتجع',button:'تمام',success:true);
+  } catch (e) { if (context.mounted) await showInvoiceSaveProblem(context,'تعذر المرتجع: $e',title:'لم يتم تسجيل المرتجع',button:'رجوع'); }
 }
 
-Future<void> returnInvoice(String type, String id) async {
+String accountBalanceLabel(num balance, {required bool supplier}) => balance < 0
+  ? (supplier ? 'رصيد لك عند المورد' : 'رصيد للعميل عندك')
+  : balance == 0 ? 'الحساب متعادل' : supplier ? 'المتبقي عليك للمورد' : 'المتبقي على العميل';
+
+String invoiceReturnSignature(Map<String,dynamic> data) => jsonEncode({for(final key in
+  ['status','revision','items','productId','quantity','branchId','stockBranchId','customerId','supplierId','total','due','paid','receiptPaid','cashPosted','cashPaidPosted']) key:data[key]});
+
+Future<void> returnInvoice(String type, String id, {String? expectedSignature}) async {
+  if (!['sales', 'purchases'].contains(type)) throw StateError('نوع الفاتورة غير صحيح');
   final preflight = (await db.collection(type).doc(id).get()).data();
   if (preflight == null) throw Exception('الفاتورة غير موجودة');
   if (type == 'sales') await assertNoUnallocatedReceipt(preflight);
@@ -4144,10 +4174,15 @@ Future<void> returnInvoice(String type, String id) async {
     final invoiceSnap = await tx.get(invoiceRef);
     final d = invoiceSnap.data();
     if (d == null) throw Exception('الفاتورة غير موجودة');
+    final actor = FirebaseAuth.instance.currentUser!.uid;
+    final profile = await tx.get(db.collection('users').doc(actor));
+    if (profile.data()?['active'] != true || profile.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
+    if (!visibleAfterReset(d)) throw StateError('الفاتورة تخص دورة قديمة');
+    if (expectedSignature != null && invoiceReturnSignature(d) != expectedSignature) throw StateError('الفاتورة تغيّرت؛ افتح مراجعة المرتجع من جديد');
     if (d['status'] == 'returned') throw Exception('الفاتورة مرتجعة بالفعل');
 
     final now = FieldValue.serverTimestamp();
-    final items = <Map<String, dynamic>>[];
+    var items = <Map<String, dynamic>>[];
     final rawItems = d['items'];
     if (rawItems is List && rawItems.isNotEmpty) {
       for (final raw in rawItems) {
@@ -4165,8 +4200,10 @@ Future<void> returnInvoice(String type, String id) async {
       });
     }
 
+    items = groupedReturnItems(items);
     if (type == 'sales') {
       final branchId = '${d['stockBranchId'] ?? d['branchId']}';
+      if (branchId.isEmpty || branchId == 'null') throw StateError('مخزون الفاتورة غير مسجل');
       final stockSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
       for (final item in items) {
         final productId = '${item['productId']}';
@@ -4176,7 +4213,8 @@ Future<void> returnInvoice(String type, String id) async {
       DocumentSnapshot<Map<String, dynamic>>? customerSnap;
       final customerId = '${d['customerId'] ?? ''}';
       final due = returnSettlement(d, sales: true).debt;
-      if (customerId.isNotEmpty && due > 0) {
+      if (due > 0 && customerId.isEmpty) throw StateError('الفاتورة الآجلة بدون حساب عميل؛ راجع الفاتورة');
+      if (customerId.isNotEmpty) {
         customerSnap = await tx.get(db.collection('customers').doc(customerId));
       }
 
@@ -4216,7 +4254,7 @@ Future<void> returnInvoice(String type, String id) async {
 
       if (customerSnap != null && customerSnap.exists && due > 0) {
         final beforeCustomer = (customerSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
-        final afterCustomer = beforeCustomer - due;
+        final afterCustomer = ((beforeCustomer * 100).round() - (due * 100).round()) / 100;
         tx.update(db.collection('customers').doc(customerId), {'balance': afterCustomer, 'updatedAt': now});
         tx.set(db.collection('accountMovements').doc(), {
           'accountType': 'customers',
@@ -4234,7 +4272,7 @@ Future<void> returnInvoice(String type, String id) async {
 
       if (cashSnap != null && paid > 0) {
         final beforeCash = (cashSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
-        final afterCash = beforeCash - paid;
+        final afterCash = ((beforeCash * 100).round() - (paid * 100).round()) / 100;
         tx.set(db.collection('settings').doc('cash'), {'balance': afterCash, 'updatedAt': now}, SetOptions(merge: true));
         tx.set(db.collection('accountMovements').doc(), {
           'accountType': 'cash',
@@ -4263,7 +4301,9 @@ Future<void> returnInvoice(String type, String id) async {
       final cashRef = db.collection('settings').doc('cash');
       final cash = await tx.get(cashRef);
       final cashBefore = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
-      final due = (d['due'] as num?)?.toDouble() ?? 0;
+      final due = returnSettlement(d, sales: false).debt;
+      final supplierAfter = ((oldBalance * 100).round() - (due * 100).round()) / 100;
+      final cashAfter = ((cashBefore * 100).round() + (refund * 100).round()) / 100;
 
       final stockSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
       for (final item in items) {
@@ -4298,10 +4338,10 @@ Future<void> returnInvoice(String type, String id) async {
       }
 
       if (refund > 0) {
-        tx.set(cashRef, {'balance': cashBefore + refund, 'updatedAt': now}, SetOptions(merge: true));
-        tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'purchase_return', 'amount': refund, 'delta': refund, 'balanceBefore': cashBefore, 'balanceAfter': cashBefore + refund, 'accountId': d['supplierId'], 'accountName': d['supplierName'], 'referenceId': ret.id, 'reason': 'استرداد نقدية مرتجع مشتريات', 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+        tx.set(cashRef, {'balance': cashAfter, 'updatedAt': now}, SetOptions(merge: true));
+        tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'purchase_return', 'amount': refund, 'delta': refund, 'balanceBefore': cashBefore, 'balanceAfter': cashAfter, 'accountId': d['supplierId'], 'accountName': d['supplierName'], 'referenceId': ret.id, 'reason': 'استرداد نقدية مرتجع مشتريات', 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
       }
-      tx.update(supplierRef, {'balance': oldBalance - due, 'updatedAt': now});
+      tx.update(supplierRef, {'balance': supplierAfter, 'updatedAt': now});
       tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
       tx.set(db.collection('accountMovements').doc(), {
         'accountType': 'suppliers',
@@ -4310,7 +4350,7 @@ Future<void> returnInvoice(String type, String id) async {
         'kind': 'purchase_return',
         'amount': due,
         'balanceBefore': oldBalance,
-        'balanceAfter': oldBalance - due,
+        'balanceAfter': supplierAfter,
         'referenceId': ret.id,
         'createdAt': now,
         'actorId': FirebaseAuth.instance.currentUser!.uid,
@@ -5125,6 +5165,8 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
   }
   final due = cents('due'), paid = cents('paid'), receipts = sales ? cents('receiptPaid') : 0;
   if (receipts > due) throw StateError('سندات القبض تتجاوز باقي الفاتورة؛ راجع الحساب');
+  if (invoice['total'] is num && cents('total') != due + paid) throw StateError('إجمالي الفاتورة لا يطابق المدفوع والآجل؛ راجع الحساب');
+  if (!sales && cents('cashPaidPosted') > paid) throw StateError('المبلغ المصروف يتجاوز المدفوع بالفاتورة؛ راجع الحساب');
   return (debt: (due - receipts) / 100, cash: sales ? (paid + receipts) / 100 : (invoice['cashPosted'] == true ? paid / 100 : cents('cashPaidPosted') / 100));
 }
 
@@ -5142,4 +5184,3 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
 }
-
