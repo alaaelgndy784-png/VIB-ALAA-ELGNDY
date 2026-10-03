@@ -1,4 +1,4 @@
-name: Publish VIB compact inventory downloads
+name: Publish VIB Geidea payment preparation downloads
 on:
   workflow_dispatch:
   push:
@@ -15,29 +15,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37109892031 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
-          test "$(cat source-run.txt)" = "341ca3452c9f2a00de0df68c3a8ebe16f832e549 success"
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37117133273 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "8018a82a610f3e1bb1818b5ea994a504a618e897 success"
       - name: Download tested staff APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37109892031
+          run-id: 37117133273
           github-token: ${{ github.token }}
           path: download
       - name: Download tested manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37109892031
+          run-id: 37117133273
           github-token: ${{ github.token }}
           path: download
-      - name: Verify and publish inventory APKs
+      - name: Verify and publish Geidea APKs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mv download/VIB-SALES-MANAGER.apk download/VIB-SALES-MANAGER-COMPACT-STOCK.apk
-          echo '9d3f7ecfa3695b94ab1e3292915034e4b64cf2bba98c744e7a8de38f7171c605  download/VIB-SALES-MANAGER-COMPACT-STOCK.apk' | sha256sum --check
-          mv download/VIB-SALES-STAFF.apk download/VIB-SALES-STAFF-COMPACT-STOCK.apk
-          echo 'a237bec5a5fa320a9b5c2b27de89711712906499648f1532cbfab895f1be5ed4  download/VIB-SALES-STAFF-COMPACT-STOCK.apk' | sha256sum --check
-          gh release view vib-compact-stock-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-compact-stock-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB compact inventory — 3 October 2026' --notes 'Tested manager and staff Android updates with compact inventory and colored quantity, sale price, and total fields. Install over the corresponding existing app without deleting it.'
-          gh release upload vib-compact-stock-20261003 download/VIB-SALES-STAFF-COMPACT-STOCK.apk download/VIB-SALES-MANAGER-COMPACT-STOCK.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+          mv download/VIB-SALES-MANAGER.apk download/VIB-SALES-MANAGER-GEIDEA.apk
+          echo 'e6eca7003ff69b4d4cea0b1bee9e0bceef07f8f743af12990c23044d48804de1  download/VIB-SALES-MANAGER-GEIDEA.apk' | sha256sum --check
+          mv download/VIB-SALES-STAFF.apk download/VIB-SALES-STAFF-GEIDEA.apk
+          echo '338b4471b788e1d7cc85b526640c6c8ef46b8d699fc8a244807057ca0fc181be  download/VIB-SALES-STAFF-GEIDEA.apk' | sha256sum --check
+          gh release view vib-geidea-ready-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-geidea-ready-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB Geidea setup — 3 October 2026' --notes 'Tested manager and staff updates. Adds Geidea invoice payment links and refund accounting safeguards. Live payment processing remains disabled until merchant activation, server deployment, and acceptance testing. Install over the corresponding existing app without deleting it.'
+          gh release upload vib-geidea-ready-20261003 download/VIB-SALES-STAFF-GEIDEA.apk download/VIB-SALES-MANAGER-GEIDEA.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+
