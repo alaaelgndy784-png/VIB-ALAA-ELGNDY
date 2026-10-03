@@ -37,14 +37,28 @@ void main() {
     expect(p.first.validateLive(null, products['original'], stock['main_original']), isTrue);
     expect(products['original']!['category'], 'النحاسات');
   });
-  test('Reject conflicting code/name mappings, archived items and duplicate names', () {
+  test('Reject conflicting code/name mappings and duplicate names', () {
     final f = ProductImportFile.parse(payload([row('a', 'صنف', '0')]));
     for (final products in [
-      {'old': <String, dynamic>{'name': 'صنف', 'active': false}},
       {'old': <String, dynamic>{'name': 'صنف', 'externalCode': 'b'}},
       {'one': <String, dynamic>{'name': 'صنف'}, 'two': <String, dynamic>{'name': 'صنف'}},
       {'one': <String, dynamic>{'name': 'اسم مختلف', 'externalCode': 'a'}},
     ]) { expect(() => planProductImport(f, products, {}, {}), throwsStateError); }
+  });
+  test('Archived exact match reuses its identity and flags reviewed reactivation; replay skips it', () {
+    final f = ProductImportFile.parse(payload([row('a', 'صنف', '0')]));
+    final product = <String, dynamic>{'name': 'صنف', 'active': false, 'category': 'نحاس'};
+    final stock = <String, dynamic>{'branchId': 'main', 'productId': 'old', 'quantity': -3, 'lastSaleId': 'prior'};
+    final t = planProductImport(f, {'old': product}, {'main_old': stock}, {}).single;
+    expect(t.productId, 'old');
+    expect(t.requiresReactivation, true);
+    expect(t.beforeQuantity, -3);
+    expect(t.validateLive(null, product, stock), true);
+    expect(() => t.validateLive(null, {...product, 'active': true}, stock), throwsStateError);
+    final marker = <String, dynamic>{'productId': 'old', 'requestKey': t.requestKey};
+    final replay = planProductImport(f, {'old': product}, {'main_old': stock}, {t.markerId: marker}).single;
+    expect(replay.requiresReactivation, false);
+    expect(replay.validateLive(marker, product, stock), false);
   });
   test('Concurrent sales or price edits after preview block stock replacement', () {
     final f = ProductImportFile.parse(payload([row('a', 'صنف', '12')]));

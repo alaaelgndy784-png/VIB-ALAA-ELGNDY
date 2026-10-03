@@ -1,7 +1,7 @@
 part of 'main.dart';
 
 Future<void> openProductImport(BuildContext context) async {
-  await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const ProductImportScreen()));
+  await Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => const Directionality(textDirection: TextDirection.rtl, child: ProductImportScreen())));
 }
 
 Future<int> applyProductImportChunk(List<ProductImportTarget> targets, String source, String actor) => db.runTransaction<int>((tx) async {
@@ -95,6 +95,22 @@ class _ProductImportScreenState extends State<ProductImportScreen> {
 
   Future<void> addProducts() async {
     if (busy || finished || file == null || actor == null || targets.isEmpty) return;
+    final archived = targets.where((t) => t.requiresReactivation).toList();
+    if (archived.isNotEmpty) {
+      final confirmed = await showDialog<bool>(context: context, builder: (c) => AlertDialog(
+        title: const Text('إعادة تفعيل الأصناف المؤرشفة'),
+        content: SizedBox(width: double.maxFinite, height: 300, child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text('يوجد ${archived.length} صنف مؤرشف في الملف. سيتم تفعيله بنفس كوده وسجله القديم، وتحديث الأسعار والرصيد طبقًا للمراجعة.'),
+          const SizedBox(height: 12),
+          Flexible(child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: archived.map((t) => ListTile(dense: true, title: Text(t.row.name))).toList()))),
+        ])),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('رجوع للمراجعة')),
+          FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('تفعيل الأصناف واستكمال الإضافة')),
+        ],
+      ));
+      if (confirmed != true || !mounted) return;
+    }
     setState(() { busy = true; processed = 0; message = ''; });
     try {
       for (var start = 0; start < targets.length; start += 20) {
@@ -120,6 +136,7 @@ class _ProductImportScreenState extends State<ProductImportScreen> {
           if (targets.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text('${targets.length} صنف • جديد: ${remaining.where((t) => t.productBefore == null).length} • موجود: ${remaining.where((t) => t.productBefore != null).length} • سبق إضافته: ${targets.length - remaining.length}', style: const TextStyle(color: gold)),
+            if (remaining.any((t) => t.requiresReactivation)) Text('أصناف مؤرشفة سيعاد تفعيلها: ${remaining.where((t) => t.requiresReactivation).length}', style: const TextStyle(color: Colors.orangeAccent)),
             Text('كمية صفر: ${targets.where((t) => t.row.quantity == 0).length} • كمية سالبة: ${targets.where((t) => t.row.quantity < 0).length}'),
             const Text('سعر البيع = سعر الشراء + 10%. يظهر الرصيد الحالي ثم رصيد التقرير؛ الإضافة تسجل فرق الرصيد وتحدث الأسعار.'),
           ],
@@ -129,7 +146,7 @@ class _ProductImportScreenState extends State<ProductImportScreen> {
         Expanded(child: targets.isEmpty ? const Center(child: Text('اختر ملف الأصناف المجهّز لإضافته إلى البرنامج')) : ListView.builder(
           itemCount: targets.length, itemBuilder: (context, index) {
             final t = targets[index], r = t.row;
-            return ListTile(title: Text('${index + 1}. ${r.name}'), subtitle: Text('شراء ${(r.purchaseCents / 100).toStringAsFixed(2)} • بيع ${(r.saleCents / 100).toStringAsFixed(2)} ج.م\n${t.alreadyApplied ? 'سبق إضافته؛ الرصيد الحالي محفوظ' : 'الرصيد: ${t.beforeQuantity} ← ${r.quantity}'}'),
+            return ListTile(title: Text('${index + 1}. ${r.name}'), subtitle: Text('شراء ${(r.purchaseCents / 100).toStringAsFixed(2)} • بيع ${(r.saleCents / 100).toStringAsFixed(2)} ج.م\n${t.alreadyApplied ? 'سبق إضافته؛ الرصيد الحالي محفوظ' : 'الرصيد: ${t.beforeQuantity} ← ${r.quantity}${t.requiresReactivation ? '\nصنف مؤرشف — سيعاد تفعيله بنفس السجل' : ''}'}'),
               trailing: t.alreadyApplied ? const Icon(Icons.check_circle, color: Colors.green) : null);
           })),
         Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity, child: FilledButton.icon(

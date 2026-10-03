@@ -66,6 +66,7 @@ class ProductImportTarget {
   final bool alreadyApplied;
   const ProductImportTarget({required this.row, required this.productId, required this.markerId, required this.requestKey,
     required this.productBefore, required this.stockBefore, required this.alreadyApplied});
+  bool get requiresReactivation => !alreadyApplied && productBefore?['active'] == false;
   int get beforeQuantity => (stockBefore?['quantity'] as num?)?.toInt() ?? 0;
   // Replay succeeds before checking stock: later sales must never be overwritten.
   bool validateLive(Map<String, dynamic>? marker, Map<String, dynamic>? product, Map<String, dynamic>? stock) {
@@ -109,7 +110,6 @@ List<ProductImportTarget> planProductImport(ProductImportFile file, Map<String, 
         if (importName('${existing['name'] ?? ''}') != row.name) throw StateError('الكود مرتبط باسم مختلف: ${row.name}');
         final oldCodes = ['code', 'barcode', 'externalCode'].map((k) => '${existing[k] ?? ''}'.trim()).where((v) => v.isNotEmpty);
         if (oldCodes.any((v) => v != row.code)) throw StateError('الاسم مرتبط بكود مختلف: ${row.name}');
-        if (existing['active'] == false) throw StateError('الصنف مؤرشف ويحتاج مراجعة: ${row.name}');
       }
     }
     if (!used.add(id)) throw StateError('بندان مرتبطان بنفس الصنف: ${row.name}');
