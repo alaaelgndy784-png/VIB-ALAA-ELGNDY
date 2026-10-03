@@ -1,0 +1,34 @@
+name: Publish VIB staff download
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/publish-vib-staff-download.yml'
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify tested source run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37103844002 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "e44e8f12a15b89ca942b753e2dec46bc8d9d08ea success"
+      - name: Download tested staff APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-STAFF-APK
+          run-id: 37103844002
+          github-token: ${{ github.token }}
+          path: download
+      - name: Verify and publish staff APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mv download/VIB-SALES-STAFF.apk download/VIB-SALES-STAFF-PRICES-RETURNS.apk
+          echo '07d0ed35f57be2a40125a591bd2ea66817d3865f6f24d76867bbf8a7e357d58a  download/VIB-SALES-STAFF-PRICES-RETURNS.apk' | sha256sum --check
+          gh release view vib-staff-prices-returns-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-staff-prices-returns-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target e44e8f12a15b89ca942b753e2dec46bc8d9d08ea --title 'VIB Staff Android — 3 October 2026' --notes 'Tested Android staff update. Install over the existing VIB Staff app without deleting it.'
+          gh release upload vib-staff-prices-returns-20261003 download/VIB-SALES-STAFF-PRICES-RETURNS.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
