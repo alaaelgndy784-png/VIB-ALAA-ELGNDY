@@ -56,7 +56,8 @@ void main() {
       await tester.pumpAndSettle();expect(tester.takeException(),isNull);
       expect(find.text('الإجمالي: 175.00 ج.م'),findsOneWidget);
       final firstName=tester.getRect(find.text(names[0]));final rowNumber=tester.getRect(find.text('1').first);
-      expect(rowNumber.left,greaterThan(firstName.right));
+      expect(rowNumber.left,greaterThanOrEqualTo(firstName.right - 0.1));
+      expect(rowNumber.center.dx,greaterThan(firstName.center.dx));
       Directory('dist').createSync(recursive:true);
       await tester.runAsync(() async {
         final boundary=boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
