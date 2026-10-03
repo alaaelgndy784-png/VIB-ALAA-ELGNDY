@@ -8,11 +8,13 @@ class InvoiceHistoryPage extends StatefulWidget {
 
 class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> {
   late DateTime day;
+  bool numbering=true;String numberError='';
   late Stream<QuerySnapshot<Map<String, dynamic>>> invoices;
   bool get sales => widget.type == 'sales';
   @override void initState() {
     super.initState();
     selectDay(DateTime.now());
+    prepareInvoiceSerials(widget.type).then((_){if(mounted)setState(()=>numbering=false);}).catchError((Object e){if(mounted)setState((){numbering=false;numberError='تعذر تجهيز أرقام الفواتير: $e';});});
   }
   void selectDay(DateTime date) {
     day = DateTime(date.year, date.month, date.day);
@@ -36,7 +38,10 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> {
     Text('فواتير ${sales ? 'المبيعات' : 'المشتريات'} • ${DateFormat('dd/MM/yyyy').format(day)}',
       style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
     const SizedBox(height: 8),
+    if(numbering)const Padding(padding:EdgeInsets.all(8),child:Text('جاري تجهيز الأرقام الثابتة للفواتير القديمة...')),
+    if(numberError.isNotEmpty)Text(numberError,style:const TextStyle(color:Colors.redAccent)),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: invoices, builder: (context, snapshot) {
+      if(numbering)return const Center(child:CircularProgressIndicator());
       if (snapshot.hasError) return const Center(child: Text('تعذر تحميل الفواتير؛ راجع اتصال الإنترنت وحاول مرة أخرى'));
       if (!snapshot.hasData || snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
       final rows = snapshot.data!.docs.where((row) => visibleAfterReset(row.data())).toList();
@@ -45,13 +50,13 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> {
         Padding(padding: const EdgeInsets.only(bottom: 8), child: Text('عدد الفواتير: ${rows.length}')),
         Expanded(child: ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
           final row = rows[index], data = row.data();
-          final number = '${data['invoiceNumber'] ?? ''}'.trim();
+          final number=invoiceDisplayNumber(widget.type,row.id,data);
           final party = '${data[sales ? 'customerName' : 'supplierName'] ?? ''}'.trim();
           final total = ((data['total'] as num?) ?? 0).toStringAsFixed(2);
           final returned = data['status'] == 'returned';
           return Card(margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), child: ListTile(
-            leading: CircleAvatar(radius: 15, child: Text('${index + 1}', style: const TextStyle(fontSize: 12))),
-            title: Text('فاتورة ${number.isEmpty ? row.id : number}${party.isEmpty ? '' : '\n$party'}'),
+            leading: const Icon(Icons.receipt_long_outlined,color:gold),
+            title: FutureBuilder<Map<String,dynamic>>(future: data['internalNumber'] is int || invoiceSerialCache.containsKey(serialKey(widget.type,row.id)) ? null : ensureInvoiceSerial(widget.type,row.id),builder:(context,serial)=>Text('فاتورة ${invoiceDisplayNumber(widget.type,row.id,data)}${party.isEmpty ? '' : '\n$party'}')),
             subtitle: Text('${formatDate(data['createdAt'])}${sales ? ' • فرع: ${data['branchId'] ?? ''}' : ''}${returned ? '\nفاتورة مرتجعة' : ''}'),
             trailing: Text('$total ج.م', style: TextStyle(color: returned ? Colors.redAccent : gold, fontWeight: FontWeight.bold)),
             onTap: () => invoiceActions(context, widget.type, row.id, data),

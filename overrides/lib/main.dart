@@ -1,3 +1,4 @@
+import 'invoice_serial_core.dart';
 import 'dart:typed_data';
 import 'dart:async';
 import 'package:record/record.dart';
@@ -39,6 +40,7 @@ part 'product_import.dart';
 part 'inventory_tools.dart';
 part 'online_payments.dart';
 part 'invoice_history.dart';
+part 'invoice_serials.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -829,6 +831,7 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
 }
 
 Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, required String branchId, String? initialProductId}) async {
+  if(owner)await prepareInvoiceSerials('sales');
   final productsSnap = await db.collection('products').where('active', isEqualTo: true).get();
   var customersSnap = await db.collection('customers').get();
   if (!context.mounted) return;
@@ -1012,6 +1015,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 DocumentSnapshot<Map<String, dynamic>>? cashSnap;
                 if (payment > 0) cashSnap = await tx.get(db.collection('settings').doc('cash'));
 
+                final invoiceSerial=owner ? await readInvoiceSerial(tx,'sales',saleRef.id) : null;
+                if(invoiceSerial!=null)writeInvoiceSerial(tx,invoiceSerial);
                 final items = <Map<String, dynamic>>[];
                 for (final e in entries) {
                   final current = (stockSnaps[e.id]?.data()?['quantity'] as num?)?.toInt() ?? 0;
@@ -1108,6 +1113,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
                 final invoiceData = <String, dynamic>{
                   'id': saleRef.id,
+                  if(invoiceSerial!=null)'internalNumber':invoiceSerial.data['internalNumber'],
+                  if(invoiceSerial!=null)'invoiceBarcode':invoiceSerial.data['invoiceBarcode'],
                   'branchId': actualBranch,
                   'stockBranchId': 'main',
                   'requestKey': requestKey,
@@ -1176,6 +1183,7 @@ class Sales extends StatefulWidget {
   State<Sales> createState() => _SalesState();
 }
 class _SalesState extends State<Sales> {
+  @override void initState(){super.initState();if(widget.owner)prepareInvoiceSerials('sales').then((_){if(mounted)setState((){});}).catchError((Object e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر تجهيز أرقام المبيعات: $e')));});}
   DateTime selectedDate = DateTime.now();
   bool get owner => widget.owner;
   String get branchId => widget.branchId;
@@ -1213,7 +1221,7 @@ class _SalesState extends State<Sales> {
             : '${sale['productName'] ?? ''} × ${sale['quantity'] ?? 0}';
         final paymentText = sale.containsKey('paid') ? ' • مدفوع ${sale['paid'] ?? 0} • باقي ${sale['due'] ?? 0}' : '';
         return Card(child: ListTile(
-          title: Text('رقم الفاتورة: ${d.id}\n$itemText${itemCount > 3 ? ' • +${itemCount - 3} أصناف' : ''}'),
+          title: Text('رقم الفاتورة: ${invoiceDisplayNumber('sales',d.id,sale)}\n$itemText${itemCount > 3 ? ' • +${itemCount - 3} أصناف' : ''}'),
           subtitle: Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجع' : ''}'),
           trailing: Text('${sale['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
           onTap: () => invoiceActions(context, 'sales', d.id, sale, canReturn: owner),
@@ -1597,9 +1605,14 @@ class _ProfitReportState extends State<ProfitReport> {
   }
 }
 
-class Purchases extends StatelessWidget {
+class Purchases extends StatefulWidget {
   final bool owner;
   const Purchases({super.key, this.owner = true});
+  @override State<Purchases> createState()=>_PurchasesState();
+}
+class _PurchasesState extends State<Purchases>{
+  bool get owner=>widget.owner;
+  @override void initState(){super.initState();if(owner)prepareInvoiceSerials('purchases').then((_){if(mounted)setState((){});}).catchError((Object e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر تجهيز أرقام المشتريات: $e')));});}
   @override
   Widget build(BuildContext context) => Column(children: [
     if (owner) Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, children: [
@@ -1621,7 +1634,7 @@ class Purchases extends StatelessWidget {
               ? rawItems.take(3).map((e) => '${(e as Map)['productName'] ?? ''} × ${e['quantity'] ?? 0}').join(' • ')
               : '${p['productName'] ?? ''} × ${p['quantity'] ?? 0}';
           return Card(child: ListTile(
-            title: Text('فاتورة ${p['invoiceNumber']?.toString().trim().isNotEmpty == true ? p['invoiceNumber'] : d.id.substring(0, 6)} • ${p['supplierName'] ?? ''}'),
+            title: Text('فاتورة ${invoiceDisplayNumber('purchases',d.id,p)} • ${p['supplierName'] ?? ''}'),
             subtitle: Text('$itemText${itemCount > 3 ? ' • +${itemCount - 3} أصناف' : ''}\n${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),
             isThreeLine: true,
             trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
@@ -1735,6 +1748,7 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
       update(() => saving = true);
       try {
         final supplier = suppliers.docs.firstWhere((e) => e.id == supplierId).data();
+        await prepareInvoiceSerials('purchases');
         final purchaseRef = db.collection('purchases').doc();
         await db.runTransaction((tx) async {
           final supplierRef = db.collection('suppliers').doc(supplierId);
@@ -1749,8 +1763,10 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
           final before = (supplierSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
           final cashRef = db.collection('settings').doc('cash');
           final cashSnapshot = await tx.get(cashRef);
+          final invoiceSerial=await readInvoiceSerial(tx,'purchases',purchaseRef.id);
           final cashBefore = (cashSnapshot.data()?['balance'] as num?)?.toDouble() ?? 0;
           if (cashBefore < payment) throw Exception('رصيد الصندوق لا يكفي لسداد المشتريات');
+          writeInvoiceSerial(tx,invoiceSerial);
           final due = total - payment;
           final actor = FirebaseAuth.instance.currentUser!.uid;
           final items = <Map<String, dynamic>>[];
@@ -1801,6 +1817,8 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
 
           tx.set(purchaseRef, {
             'invoiceNumber': invoice.text.trim(),
+                  'internalNumber': invoiceSerial.data['internalNumber'],
+                  'invoiceBarcode': invoiceSerial.data['invoiceBarcode'],
             'source': 'camera',
             'supplierPreviousBalance': before,
             'supplierBalanceAfter': before + due,
@@ -2191,7 +2209,8 @@ Future<void> purchaseDialog(BuildContext context) async {
             }
 
             setLocal(() => saving = true);
-            final purchaseRef = db.collection('purchases').doc();
+            await prepareInvoiceSerials('purchases');
+        final purchaseRef = db.collection('purchases').doc();
             try {
               final supplier = suppliers.docs.firstWhere((d) => d.id == supplierId).data();
               final savedInvoice = await db.runTransaction<Map<String, dynamic>>((tx) async {
@@ -2207,8 +2226,10 @@ Future<void> purchaseDialog(BuildContext context) async {
                 final beforeBalance = (supplierSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
                 final cashRef = db.collection('settings').doc('cash');
           final cashSnapshot = await tx.get(cashRef);
+          final invoiceSerial=await readInvoiceSerial(tx,'purchases',purchaseRef.id);
           final cashBefore = (cashSnapshot.data()?['balance'] as num?)?.toDouble() ?? 0;
           if (cashBefore < payment) throw Exception('رصيد الصندوق لا يكفي لسداد المشتريات');
+          writeInvoiceSerial(tx,invoiceSerial);
           final due = total - payment;
                 final actor = FirebaseAuth.instance.currentUser!.uid;
                 final items = <Map<String, dynamic>>[];
@@ -2259,6 +2280,8 @@ Future<void> purchaseDialog(BuildContext context) async {
 
                 final invoiceData = <String, dynamic>{
                   'invoiceNumber': invoice.text.trim(),
+                  'internalNumber': invoiceSerial.data['internalNumber'],
+                  'invoiceBarcode': invoiceSerial.data['invoiceBarcode'],
                   'supplierId': supplierId,
                   'supplierName': supplier['name'],
                   'items': items,
@@ -2715,6 +2738,7 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
           try {
             final actor = FirebaseAuth.instance.currentUser!.uid;
             final profile = (await db.collection('users').doc(actor).get()).data();
+            final linkedInvoiceId=await resolveInvoiceNumber('sales',invoiceNumber.text.trim());
             await db.runTransaction((tx) async {
               final existing = await tx.get(receiptRef);
               if (existing.exists) return;
@@ -2726,7 +2750,7 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
               final balance = (customer.data()?['balance'] as num?)?.toDouble() ?? 0;
               if (paid > balance) throw Exception('المبلغ أكبر من المديونية الحالية للعميل');
               final beforeCash = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
-              final invoiceId = invoiceNumber.text.trim();
+              final invoiceId = linkedInvoiceId;
               final invoiceRef = invoiceId.isEmpty ? null : db.collection('sales').doc(invoiceId);
               final invoice = invoiceRef == null ? null : (await tx.get(invoiceRef)).data();
               if (invoiceRef != null && (invoice == null || invoice['customerId'] != id || invoice['status'] != 'completed')) {
@@ -2743,7 +2767,7 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
               tx.set(cashRef, {'balance': beforeCash + paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now}, SetOptions(merge: true));
               tx.set(receiptRef, {
                 'customerId': id, 'customerName': customerName, 'customerPhone': '${customer.data()?['phone'] ?? ''}',
-                if (invoiceNumber.text.trim().isNotEmpty) 'invoiceId': invoiceNumber.text.trim(),
+                if (invoiceNumber.text.trim().isNotEmpty) 'invoiceId': linkedInvoiceId,
                 'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
                 'cashBefore': beforeCash, 'cashAfter': beforeCash + paid,
                 'actorId': actor, 'actorName': '${profile?['name'] ?? ''}', 'branchId': branchId,
@@ -3524,6 +3548,7 @@ Future<void> printTestPage(BuildContext context, String paper) async {
 }
 
 Future<void> invoiceActions(BuildContext context, String type, String id, Map<String, dynamic> data, {bool canReturn = true}) async {
+  try{data=await numberedInvoiceData(type,id,data);}catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر تخصيص رقم الفاتورة: $e');return;}
   final returned = data['status'] == 'returned';
   final profile = (await db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid).get()).data();
   if (!context.mounted) return;
@@ -3532,6 +3557,7 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
     ListTile(leading: const Icon(Icons.picture_as_pdf, color: gold), title: const Text('حفظ أو مشاركة الفاتورة PDF'), onTap: () { Navigator.pop(c); exportInvoicePdf(context, type, id, data); }),
     if (type == 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.credit_card, color: gold), title: const Text('رابط دفع بالكارت — جيديا'), onTap: () { Navigator.pop(c); openGeideaPayments(context, invoiceId:id); }),
     if (type != 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.playlist_add, color: gold), title: const Text('إضافة بند جديد لنفس الفاتورة'), onTap: () { Navigator.pop(c); appendInvoiceDialog(context, type, id); }),
+    if(canPrint && data['internalNumber'] is int)ListTile(leading:const Icon(Icons.qr_code,color:gold),title:const Text('طباعة باركود الفاتورة'),onTap:(){Navigator.pop(c);printInvoiceBarcode(context,type,id,data);}),
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
     if (type == 'sales' && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال للزبون على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
     if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
@@ -3725,7 +3751,7 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
         return AlertDialog(
           title: Text(replaceSale ? 'تعديل فاتورة المبيعات' : 'إضافة بنود لنفس فاتورة ${purchase ? 'المشتريات' : 'المبيعات'}'),
           content: SizedBox(width: 620, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text('رقم الفاتورة: ${data['invoiceNumber'] ?? id}'),
+            Text('رقم الفاتورة: ${invoiceDisplayNumber(type,id,data)}'),
             Text('الإجمالي السابق: ${data['total'] ?? 0} • المدفوع: ${data['paid'] ?? 0} • الباقي: ${data['due'] ?? 0}'),
             const SizedBox(height: 10),
             Text(replaceSale ? 'عدّل الأصناف والكميات والأسعار والمدفوع. يحفظ سجل التعديل وتُحدّث فروق المخزون والحسابات.' : 'البنود السابقة محفوظة؛ أضف البنود أو الكميات الإضافية هنا.'),
@@ -3941,7 +3967,7 @@ Future<void> showInvoiceSavedActions(BuildContext context, String type, String i
   if (!context.mounted) return;
   try {
     final action = await showDialog<String>(context: context, barrierDismissible: false,
-      builder: (_) => Directionality(textDirection: TextDirection.rtl, child: InvoiceSavedDialog(invoiceId: id)));
+      builder: (_) => Directionality(textDirection: TextDirection.rtl, child: InvoiceSavedDialog(invoiceId: invoiceDisplayNumber(type,id,data))));
     if (!context.mounted) return;
     if (action == 'print') await selectInvoicePaper(context, type, id, data);
     if (action == 'share') await exportInvoicePdf(context, type, id, data);
@@ -3961,6 +3987,7 @@ Future<void> selectInvoicePaper(BuildContext context, String type, String id, Ma
 
 Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> data,
     {String? paperChoice, Map<String, dynamic>? settingsOverride}) async {
+  if(settingsOverride==null)data=await numberedInvoiceData(type,id,data);
   Map<String, dynamic> settings = settingsOverride ?? {};
   if (settingsOverride == null) {
     try {
@@ -3993,7 +4020,8 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   final taxNumber = configured('taxNumber', ''), commercialRegister = configured('commercialRegister', '');
   final phones = ['phone', 'phone2', 'whatsapp'].map((key) => configured(key, '')).where((x) => x.isNotEmpty).toSet().toList();
   final footer = configured('invoiceFooter', 'شكراً لتعاملكم معنا');
-  final number = '${data['invoiceNumber'] ?? ''}'.trim().isEmpty ? id : '${data['invoiceNumber']}';
+  final number=invoiceDisplayNumber(type,id,data);
+  final barcode='${data['invoiceBarcode']??''}';
   final items = <Map<String, dynamic>>[];
   if (data['items'] is List) {
     for (final raw in data['items'] as List) { if (raw is Map) items.add(Map<String, dynamic>.from(raw)); }
@@ -4063,7 +4091,10 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
       pw.Container(padding: pw.EdgeInsets.all(thermal ? 6 : 12), decoration: pw.BoxDecoration(color: pale,
         border: pw.Border.all(color: thermal ? PdfColors.grey500 : accent, width: .7), borderRadius: pw.BorderRadius.circular(thermal ? 3 : 8)),
         child: text(isSale ? 'فاتورة مبيعات' : 'فاتورة مشتريات', fontSize: thermal ? 13 : 20, bold: true, color: navy, align: pw.TextAlign.center)),
-      pw.SizedBox(height: 10), detail('رقم الفاتورة', number), detail('التاريخ', formatDate(data['createdAt'])),
+      pw.SizedBox(height: 10), detail('رقم الفاتورة', number),
+      if(!isSale && '${data['invoiceNumber']??''}'.trim().isNotEmpty)detail('رقم فاتورة المورد','${data['invoiceNumber']}'),
+      if(barcode.isNotEmpty)pw.Padding(padding:const pw.EdgeInsets.symmetric(vertical:8),child:pw.BarcodeWidget(barcode:pw.Barcode.code128(),data:barcode,width:thermal?130:220,height:thermal?38:50,drawText:true,textStyle:const pw.TextStyle(fontSize:8))),
+      detail('التاريخ', formatDate(data['createdAt'])),
       if (isSale) detail('العميل', '${data['customerName'] ?? ''}'.trim().isEmpty ? 'بيع نقدي' : '${data['customerName']}'),
       if (isSale && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) detail('هاتف العميل', '${data['customerPhone']}'),
       if (!isSale) detail('المورد', '${data['supplierName'] ?? ''}'),
@@ -5051,7 +5082,7 @@ Future<void> editSaleByNumber(BuildContext context) async {
   if (id.contains('/')) {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('رقم الفاتورة غير صحيح'))); return;
   }
-  await appendInvoiceDialog(context, 'sales', id, replaceSale: true);
+  try{final resolved=await resolveInvoiceNumber('sales',id);if(context.mounted)await appendInvoiceDialog(context,'sales',resolved,replaceSale:true);}catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر فتح الفاتورة: $e');}
 }
 
 Future<void> assertSaleEditable(Map<String, dynamic> data) async {

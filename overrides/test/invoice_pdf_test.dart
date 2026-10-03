@@ -237,9 +237,10 @@ void main() {
   }
   final brand = <String, dynamic>{'companyName': 'VIB للتجارة والتوزيع', 'address': 'عنوان الشركة - مثال توضيحي',
     'taxNumber': '123-456-789', 'commercialRegister': '54321', 'phone': '01000000000', 'phone2': '01100000000', 'invoiceFooter': 'شكراً لتعاملكم معنا - نموذج توضيحي للطباعة'};
-  for (final paper in ['a4', '80']) {
+  for (final paper in ['a4', '80','58']) {
     test('purchase $paper prints supplier outstanding balance after instalment', () async {
       final bytes = await createInvoicePdf('purchases', 'PURCHASE-DEMO', {
+        'internalNumber':1,'invoiceBarcode':'VIB-P-000001','invoiceNumber':'SUPPLIER-555',
         'items': [{'productName': 'حنفية غسالة تركي نحاس', 'quantity': 24, 'unitCost': 145, 'lineTotal': 3480}],
         'total': 3480, 'paid': 1000, 'due': 2480, 'supplierName': 'مورد تجريبي',
         'supplierPreviousBalance': 30000, 'supplierBalanceAfter': 32480, 'status': 'completed',
@@ -303,7 +304,7 @@ void main() {
       test('$paper ${long ? 'long invoice pagination' : 'brand and totals'}', () async {
         final items = long ? List.generate(50, (i) => {...rows[i % 3], 'productName': '${rows[i % 3]['productName']} - صنف إضافي رقم ${i + 1}'}) : rows;
         final total = items.fold<double>(0, (sum, row) => sum + (row['lineTotal'] as num).toDouble());
-        final bytes = await createInvoicePdf('sales', 'VIB-DEMO-2026', {'items': items, 'total': total, 'paid': 500,
+        final bytes = await createInvoicePdf('sales', 'VIB-DEMO-2026', {'internalNumber':2,'invoiceBarcode':'VIB-S-000002','items': items, 'total': total, 'paid': 500,
           'due': total - 500, 'customerName': 'عميل تجريبي', 'customerPhone': '01200000000',
           'customerPreviousBalance': 200, 'customerBalanceAfter': total - 300,
           'status': 'completed', 'createdAt': Timestamp.fromDate(DateTime(2026, 10, 2, 15, 30))}, paperChoice: paper, settingsOverride: brand);
@@ -315,3 +316,4 @@ void main() {
     }
   }
 }
+

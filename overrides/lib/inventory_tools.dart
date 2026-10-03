@@ -183,6 +183,7 @@ class _InvoiceReturnPageState extends State<InvoiceReturnPage> {
       final result=key.isEmpty?await query.orderBy('createdAt',descending:true).limit(100).get(const GetOptions(source:Source.server)):
         await query.where('invoiceNumber',isEqualTo:key).get(const GetOptions(source:Source.server));
       final rows=result.docs.where((d)=>visibleAfterReset(d.data())).toList();
+      if(key.isNotEmpty){final resolved=await resolveInvoiceNumber(widget.type,key);if(resolved!=key){final match=await query.where(FieldPath.documentId,isEqualTo:resolved).get(const GetOptions(source:Source.server));for(final d in match.docs){if(visibleAfterReset(d.data())&&!rows.any((r)=>r.id==d.id))rows.add(d);}}}
       if(key.isNotEmpty&&!key.contains('/')){
         final direct=await query.doc(key).get(const GetOptions(source:Source.server));
         if(direct.exists&&visibleAfterReset(direct.data()!)&&!rows.any((r)=>r.id==direct.id)){
@@ -204,9 +205,10 @@ class _InvoiceReturnPageState extends State<InvoiceReturnPage> {
     if(error.isNotEmpty)Text(error,style:const TextStyle(color:Colors.redAccent)),
     if(loading)const CircularProgressIndicator(),
     Expanded(child:ListView(children:invoices.map((d){final data=d.data();return Card(child:ListTile(
-      title:Text('فاتورة ${data['invoiceNumber']?.toString().isNotEmpty==true?data['invoiceNumber']:d.id}'),
+      title:Text('فاتورة ${invoiceDisplayNumber(widget.type,d.id,data)}'),
       subtitle:Text('${data[sales?'customerName':'supplierName'] ?? ''}\n${formatDate(data['createdAt'])} • الإجمالي: ${data['total']}\n${data['status']=='returned'?'تم إرجاعها بالفعل':'اضغط لمراجعة الفاتورة وإرجاعها'}'),
       onTap:()=>invoiceActions(context,widget.type,d.id,data),
     ));}).toList())),
   ]);
 }
+
