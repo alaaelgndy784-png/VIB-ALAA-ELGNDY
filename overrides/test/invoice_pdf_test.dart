@@ -30,13 +30,15 @@ void main() {
                   (id:'c',name:'حنفية غسالة كوبشة الحياة اسم طويل كامل'),(id:'added',name:'صنف مضاف')],
                 excluded:{'added'},unitCosts:const {'a':22,'b':68,'c':145},stockStreamFor:(_)=>Stream<int?>.value(100));
             },child:const Text('فتح البحث')),
-          )),builder:(context,child)=>MediaQuery(data:MediaQuery.of(context).copyWith(textScaler:const TextScaler.linear(1.3)),child:child!),
+          )),builder:(context,child)=>MediaQuery(data:MediaQuery.of(context).copyWith(textScaler:const TextScaler.linear(1.3),
+            viewInsets:EdgeInsets.only(bottom:keyboard ? 280 : 0)),child:child!),
         )));
         await tester.tap(find.text('فتح البحث'));await tester.pumpAndSettle();
-        if(keyboard) {tester.view.viewInsets=const FakeViewPadding(bottom:280);await tester.pumpAndSettle();}
+        expect(MediaQuery.viewInsetsOf(tester.element(find.byType(InvoiceProductSearchList))).bottom,keyboard ? 280 : 0);
         expect(find.byType(AlertDialog),findsNothing);
         expect(tester.getSize(find.byType(InvoiceProductSearchList)).width,greaterThanOrEqualTo(width-1));
         expect(tester.getSize(find.byKey(const ValueKey('product-choice-a'))).width,greaterThanOrEqualTo(width-24));
+        expect(tester.getRect(find.byKey(const ValueKey('product-choice-a'))).bottom,lessThan(760-(keyboard ? 280 : 0)));
         expect(find.text('صنف مضاف'),findsNothing);expect(find.text('المتاح: 100'),findsWidgets);
         expect(find.text('تكلفة الوحدة: 145.00 ج.م'),findsOneWidget);
         expect(tester.takeException(),isNull);
