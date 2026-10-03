@@ -4761,7 +4761,6 @@ Future<String?> selectRegisteredCustomer(BuildContext context) async {
             return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
               final row = rows[index];
               return ListTile(title: Text('${row.data()['name'] ?? ''}'),
-                subtitle: Text('${row.data()['phone'] ?? ''} • الرصيد: ${row.data()['balance'] ?? 0} ج.م'),
                 onTap: () => Navigator.pop(dialog, row.id));
             });
           },
