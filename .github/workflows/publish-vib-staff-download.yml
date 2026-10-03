@@ -1,4 +1,4 @@
-name: Publish VIB Geidea payment preparation downloads
+name: Publish VIB dated invoice history downloads
 on:
   workflow_dispatch:
   push:
@@ -15,30 +15,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37117133273 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
-          test "$(cat source-run.txt)" = "8018a82a610f3e1bb1818b5ea994a504a618e897 success"
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37123380513 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "bdb26987a51319ecaeae774f9da3edb9c9a6117f success"
       - name: Download tested staff APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37117133273
+          run-id: 37123380513
           github-token: ${{ github.token }}
           path: download
       - name: Download tested manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37117133273
+          run-id: 37123380513
           github-token: ${{ github.token }}
           path: download
-      - name: Verify and publish Geidea APKs
+      - name: Verify and publish invoice history APKs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mv download/VIB-SALES-MANAGER.apk download/VIB-SALES-MANAGER-GEIDEA.apk
-          echo 'e6eca7003ff69b4d4cea0b1bee9e0bceef07f8f743af12990c23044d48804de1  download/VIB-SALES-MANAGER-GEIDEA.apk' | sha256sum --check
-          mv download/VIB-SALES-STAFF.apk download/VIB-SALES-STAFF-GEIDEA.apk
-          echo '338b4471b788e1d7cc85b526640c6c8ef46b8d699fc8a244807057ca0fc181be  download/VIB-SALES-STAFF-GEIDEA.apk' | sha256sum --check
-          gh release view vib-geidea-ready-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-geidea-ready-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB Geidea setup — 3 October 2026' --notes 'Tested manager and staff updates. Adds Geidea invoice payment links and refund accounting safeguards. Live payment processing remains disabled until merchant activation, server deployment, and acceptance testing. Install over the corresponding existing app without deleting it.'
-          gh release upload vib-geidea-ready-20261003 download/VIB-SALES-STAFF-GEIDEA.apk download/VIB-SALES-MANAGER-GEIDEA.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+          mv download/VIB-SALES-MANAGER.apk download/VIB-SALES-MANAGER-INVOICE-HISTORY.apk
+          echo 'e8020802f34c60b5c19e5542d5c5575ae321bf14a5af0d2e70e951e1abfed2d2  download/VIB-SALES-MANAGER-INVOICE-HISTORY.apk' | sha256sum --check
+          mv download/VIB-SALES-STAFF.apk download/VIB-SALES-STAFF-INVOICE-HISTORY.apk
+          echo '6090ad91b519b3f541d301b089ce87e15710f9ba3bcd8adcc935de4ec9996bdb  download/VIB-SALES-STAFF-INVOICE-HISTORY.apk' | sha256sum --check
+          gh release view vib-invoice-history-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-invoice-history-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB dated invoice history — 3 October 2026' --notes 'Tested manager and staff updates. Manager settings now opens sales and purchase invoice history for today or a selected calendar date. Existing inventory, returns and Geidea preparation are preserved. Install over the corresponding existing app without deleting it.'
+          gh release upload vib-invoice-history-20261003 download/VIB-SALES-STAFF-INVOICE-HISTORY.apk download/VIB-SALES-MANAGER-INVOICE-HISTORY.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
 
