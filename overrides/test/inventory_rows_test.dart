@@ -33,8 +33,14 @@ void main() {
       expect(tester.widget<Text>(find.text('306.00')).style!.color,InventoryProductCard.totalColor);
       expect(tester.takeException(),isNull);
       final boundary=key.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-      final image=await boundary.toImage(pixelRatio:1.5);final png=await image.toByteData(format:ui.ImageByteFormat.png);
-      await tester.runAsync(() async {await Directory('dist').create(recursive:true);await File('dist/VIB-INVENTORY-ROWS-${width.toInt()}.png').writeAsBytes(png!.buffer.asUint8List());});image.dispose();
+      await tester.runAsync(() async {
+        final image=await boundary.toImage(pixelRatio:1.5);
+        try {
+          final png=await image.toByteData(format:ui.ImageByteFormat.png);
+          await Directory('dist').create(recursive:true);
+          await File('dist/VIB-INVENTORY-ROWS-${width.toInt()}.png').writeAsBytes(png!.buffer.asUint8List());
+        } finally {image.dispose();}
+      });
       quantity=10;await tester.pumpWidget(screen());await tester.pumpAndSettle();expect(find.text('255.00'),findsOneWidget);expect(find.text('306.00'),findsNothing);
     });
   }
