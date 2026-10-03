@@ -93,7 +93,7 @@ jobs:
       - name: Verify invoice PDF rendering
         if: matrix.app == 'manager'
         working-directory: VIB-SALES-INDEPENDENT
-        run: flutter test test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart test/chat_alerts_test.dart
+        run: flutter test test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart test/chat_alerts_test.dart test/product_import_test.dart
 
       - name: Upload invoice PDF previews
         if: matrix.app == 'manager'
@@ -189,4 +189,5 @@ jobs:
           name: VIB-SALES-STAFF-APK
           path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-STAFF.apk
           if-no-files-found: error
+
 

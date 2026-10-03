@@ -27,9 +27,13 @@ import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tzdata;
 
+import 'product_import_data.dart';
+
 part 'cheques.dart';
 part 'chat_alerts.dart';
+
 part 'invoice_editor.dart';
+part 'product_import.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -579,7 +583,7 @@ class _ProductsState extends State<Products> {
       final docs = snap.data!.docs.where((d) => d.data()['active'] == true && '${d.data()['name'] ?? ''}'.toLowerCase().contains(query)).toList();
       return Column(children: [
         Padding(padding: const EdgeInsets.all(12), child: TextField(decoration: const InputDecoration(labelText: 'بحث عن منتج — اكتب أي حرف', prefixIcon: Icon(Icons.search)), onChanged: (value) => setState(() => query = value.trim().toLowerCase()))),
-        if (owner) Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(onPressed: () => productDialog(context), icon: const Icon(Icons.add), label: const Text('إضافة منتج'))),
+        if (owner) Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, runSpacing: 8, children: [FilledButton.icon(onPressed: () => productDialog(context), icon: const Icon(Icons.add), label: const Text('إضافة منتج')), OutlinedButton.icon(onPressed: () => openProductImport(context), icon: const Icon(Icons.upload_file), label: const Text('إضافة الأصناف من ملف'))])),
         if (!owner) Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () => newSaleDialog(context, false, branchId), icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة')))),
         Expanded(child: docs.isEmpty ? const Center(child: Text('لا توجد منتجات بعد')) : ListView.builder(itemCount: docs.length, itemBuilder: (context, i) {
           final d = docs[i], p = d.data();
@@ -3164,6 +3168,7 @@ class _AppSettingsState extends State<AppSettings> {
       subtitle: const Text('يتم إنشاء ملف نسخة احتياطية ثم اختيار Google Drive من شاشة المشاركة.'),
       onTap: () => backupToDrive(context),
     )),
+    Card(child: ListTile(leading: const Icon(Icons.upload_file, color: gold), title: const Text('إضافة الأصناف من ملف'), subtitle: const Text('إضافة أسماء الأصناف وأسعار الشراء والبيع والكميات من ملف الأصناف المجهّز.'), onTap: () => openProductImport(context))),
     Card(child: ListTile(
       leading: const Icon(Icons.cloud_download, color: gold),
       title: const Text('سحب نسخة احتياطية من Google Drive'),
@@ -5137,3 +5142,4 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
 }
+

@@ -234,3 +234,38 @@ test('voice messages retain participant permissions and require bounded audio fi
  await assertFails(chatBatch(staff,{messageId:'partial',audio:{audioSeconds:5}}));
  await assertFails(chatBatch(staff,{messageId:'badtext',audio}));
 });
+
+
+function productImportBatch(db, quantities) {
+ const batch=writeBatch(db),ts=serverTimestamp();
+ quantities.forEach((quantity,i)=>{
+  const id='import_test_'+i,marker='productImport_test_'+i;
+  batch.set(doc(db,'products/'+id),{name:'Import product '+i,externalCode:'test_'+i,purchasePrice:10.05,price:11.06,active:true,category:'غير مصنف',updatedAt:ts});
+  batch.set(doc(db,'stock/main_'+id),{branchId:'main',productId:id,quantity});
+  if(quantity!==0){
+   batch.set(doc(db,'stockAdjustments/'+marker),{productId:id,productName:'Import product '+i,branchId:'main',before:0,after:quantity,delta:quantity,reason:'Product import',actorId:'owner',createdAt:ts});
+   batch.set(doc(db,'stockMovements/'+marker),{productId:id,productName:'Import product '+i,branchId:'main',kind:'adjustment',quantity,balanceAfter:quantity,reason:'Product import',referenceId:marker,actorId:'owner',createdAt:ts});
+  }
+  batch.set(doc(db,'settings/'+marker),{kind:'productImport',requestKey:'test',productId:id,actorId:'owner',quantityBefore:0,quantityAfter:quantity,productBefore:null,stockBefore:null,createdAt:ts});
+ });
+ return batch.commit();
+}
+test('owner imports a full 20-row chunk including zero and negative stocks without changing cash or accounts',async()=>{
+ const db=env.authenticatedContext('owner').firestore();
+ await assertSucceeds(productImportBatch(db,Array.from({length:20},(_,i)=>i===0?0:i===1?-3:i)));
+ assert.equal((await getDoc(doc(db,'stock/main_import_test_0'))).data().quantity,0);
+ assert.equal((await getDoc(doc(db,'stock/main_import_test_1'))).data().quantity,-3);
+ assert.equal((await getDoc(doc(db,'settings/cash'))).data().balance,500);
+ assert.equal((await getDoc(doc(db,'customers/customer'))).data().balance,100);
+ assert.equal((await getDoc(doc(db,'suppliers/supplier'))).data().balance,100);
+ assert.equal((await getDoc(doc(db,'settings/productImport_test_19'))).data().quantityAfter,19);
+});
+test('fractional import stock rejects the entire chunk including products and replay markers',async()=>{
+ const db=env.authenticatedContext('owner').firestore();
+ await assertFails(productImportBatch(db,[0,11.92]));
+ assert.equal((await getDoc(doc(db,'products/import_test_0'))).exists(),false);
+ assert.equal((await getDoc(doc(db,'settings/productImport_test_0'))).exists(),false);
+});
+test('staff and inactive accounts cannot bulk import products and opening stock',async()=>{
+ for(const uid of ['staff','inactive']) await assertFails(productImportBatch(env.authenticatedContext(uid).firestore(),[0,-3,12]));
+});
