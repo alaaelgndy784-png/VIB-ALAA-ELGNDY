@@ -17,6 +17,44 @@ void main() {
     await (FontLoader('MaterialIcons')..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
   });
   for(final width in [360.0,564.0]) {
+    for(final keyboard in [false,true]) {
+      testWidgets('actual full-width search route at $width with keyboard $keyboard keeps readable stock and cost', (tester) async {
+        tester.view.physicalSize=Size(width,760);tester.view.devicePixelRatio=1;
+        addTearDown(() {tester.view.resetPhysicalSize();tester.view.resetDevicePixelRatio();tester.view.resetViewInsets();});
+        final boundaryKey=GlobalKey();String? selected;
+        await tester.pumpWidget(RepaintBoundary(key:boundaryKey,child:MaterialApp(
+          theme:ThemeData(brightness:Brightness.dark,fontFamily:'VibPreview'),home:Scaffold(body:Builder(
+            builder:(context)=>TextButton(onPressed:() async {
+              selected=await showInvoiceProductChoices(context,
+                products:const [(id:'a',name:'بوش الحياة نحاس 1.5×1'),(id:'b',name:'جلبة نيكل الحياة 3 سم'),
+                  (id:'c',name:'حنفية غسالة كوبشة الحياة اسم طويل كامل'),(id:'added',name:'صنف مضاف')],
+                excluded:{'added'},unitCosts:const {'a':22,'b':68,'c':145},stockStreamFor:(_)=>Stream<int?>.value(100));
+            },child:const Text('فتح البحث')),
+          )),builder:(context,child)=>MediaQuery(data:MediaQuery.of(context).copyWith(textScaler:const TextScaler.linear(1.3)),child:child!),
+        )));
+        await tester.tap(find.text('فتح البحث'));await tester.pumpAndSettle();
+        if(keyboard) {tester.view.viewInsets=const FakeViewPadding(bottom:280);await tester.pumpAndSettle();}
+        expect(find.byType(AlertDialog),findsNothing);
+        expect(tester.getSize(find.byType(InvoiceProductSearchList)).width,greaterThanOrEqualTo(width-1));
+        expect(tester.getSize(find.byKey(const ValueKey('product-choice-a'))).width,greaterThanOrEqualTo(width-24));
+        expect(find.text('صنف مضاف'),findsNothing);expect(find.text('المتاح: 100'),findsWidgets);
+        expect(find.text('تكلفة الوحدة: 145.00 ج.م'),findsOneWidget);
+        expect(tester.takeException(),isNull);
+        Directory('dist').createSync(recursive:true);
+        await tester.runAsync(() async {
+          final boundary=boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+          final image=await boundary.toImage(pixelRatio:2);final data=await image.toByteData(format:ui.ImageByteFormat.png);
+          File('dist/VIB-WIDE-SEARCH-${width.toInt()}-${keyboard ? 'KEYBOARD' : 'LIST'}.png').writeAsBytesSync(data!.buffer.asUint8List());image.dispose();
+        });
+        await tester.enterText(find.byType(TextField),'حنفية');await tester.pumpAndSettle();
+        expect(find.text('بوش الحياة نحاس 1.5×1'),findsNothing);
+        await tester.tap(find.byKey(const ValueKey('product-choice-c')));await tester.pumpAndSettle();
+        expect(selected,'c');expect(find.byType(InvoiceProductSearchList),findsNothing);expect(tester.takeException(),isNull);
+      });
+    }
+  }
+
+  for(final width in [360.0,564.0]) {
     testWidgets('invoice product dropdown shows complete name, live stock and unit cost at $width', (tester) async {
       tester.view.physicalSize=Size(width,760);tester.view.devicePixelRatio=1;
       addTearDown(() {tester.view.resetPhysicalSize();tester.view.resetDevicePixelRatio();});

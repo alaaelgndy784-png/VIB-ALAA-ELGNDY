@@ -78,3 +78,57 @@ class InvoiceProductOptionRow extends StatelessWidget {
     ])),
   ]);
 }
+
+
+Future<String?> showInvoiceProductChoices(BuildContext context, {
+  required List<({String id,String name})> products,
+  required Set<String> excluded,
+  Map<String,num?> unitCosts = const {},
+  Stream<int?> Function(String)? stockStreamFor,
+}) => showModalBottomSheet<String>(
+  context:context,isScrollControlled:true,useSafeArea:true,
+  constraints:const BoxConstraints(maxWidth:650),backgroundColor:const Color(0xFF111015),
+  shape:const RoundedRectangleBorder(borderRadius:BorderRadius.vertical(top:Radius.circular(16))),
+  builder:(sheet)=>Directionality(textDirection:TextDirection.rtl,child:InvoiceProductSearchList(
+    products:products,excluded:excluded,unitCosts:unitCosts,stockStreamFor:stockStreamFor,
+    onSelect:(id)=>Navigator.pop(sheet,id),onClose:()=>Navigator.pop(sheet),
+  )),
+);
+
+class InvoiceProductSearchList extends StatefulWidget {
+  final List<({String id,String name})> products;
+  final Set<String> excluded;
+  final Map<String,num?> unitCosts;
+  final Stream<int?> Function(String)? stockStreamFor;
+  final ValueChanged<String> onSelect;
+  final VoidCallback onClose;
+  const InvoiceProductSearchList({super.key,required this.products,required this.excluded,
+    required this.onSelect,required this.onClose,this.unitCosts=const {},this.stockStreamFor});
+  @override State<InvoiceProductSearchList> createState()=>_InvoiceProductSearchListState();
+}
+
+class _InvoiceProductSearchListState extends State<InvoiceProductSearchList> {
+  String _query='';
+  @override Widget build(BuildContext context) {
+    final rows=widget.products.where((p)=>!widget.excluded.contains(p.id) && p.name.toLowerCase().contains(_query)).toList()
+      ..sort((a,b)=>a.name.compareTo(b.name));
+    return SizedBox(width:double.infinity,height:MediaQuery.sizeOf(context).height*.90,
+      child:Padding(padding:EdgeInsets.fromLTRB(10,8,10,MediaQuery.viewInsetsOf(context).bottom+8),child:Column(children:[
+        Row(children:[const Expanded(child:Text('اختيار الصنف',style:TextStyle(fontSize:18,color:gold))),
+          IconButton(tooltip:'إغلاق البحث',onPressed:widget.onClose,icon:const Icon(Icons.close,color:gold))]),
+        TextField(autofocus:false,decoration:_vibInvoiceInput('بحث باسم الصنف',icon:Icons.search),
+          onChanged:(value)=>setState(()=>_query=value.trim().toLowerCase())),
+        const SizedBox(height:8),
+        Expanded(child:rows.isEmpty ? const Center(child:Text('لا توجد أصناف مطابقة')) : ListView.separated(
+          itemCount:rows.length,separatorBuilder:(_,__)=>const Divider(height:1,color:Color(0xFF363239)),
+          itemBuilder:(context,index) {
+            final product=rows[index];
+            return InkWell(key:ValueKey('product-choice-${product.id}'),onTap:()=>widget.onSelect(product.id),
+              child:Padding(padding:const EdgeInsets.symmetric(vertical:14,horizontal:4),child:InvoiceProductOptionRow(
+                name:product.name,unitCost:widget.unitCosts[product.id],quantityStream:widget.stockStreamFor?.call(product.id),
+              )));
+          },
+        )),
+      ])));
+  }
+}

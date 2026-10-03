@@ -1833,55 +1833,11 @@ Future<String?> pickPurchaseProduct(
   BuildContext context,
   List<QueryDocumentSnapshot<Map<String, dynamic>>> products,
   Set<String> excluded,
-) async {
-  String query = '';
-  return showModalBottomSheet<String>(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: const Color(0xFF090909),
-    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-    builder: (sheet) => StatefulBuilder(builder: (context, update) {
-      final filtered = products.where((p) {
-        if (excluded.contains(p.id)) return false;
-        final name = '${p.data()['name'] ?? ''}'.toLowerCase();
-        return query.trim().isEmpty || name.contains(query.trim().toLowerCase());
-      }).toList()..sort((a, b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
-      return FractionallySizedBox(
-        heightFactor: .78,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(12, 14, 12, MediaQuery.of(context).viewInsets.bottom + 10),
-          child: Column(children: [
-            const Text('اختيار منتج', style: TextStyle(color: gold, fontSize: 20, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 10),
-            TextField(
-              decoration: _vibInvoiceInput('اكتب اسم المنتج للبحث', icon: Icons.search),
-              onChanged: (v) => update(() => query = v),
-            ),
-            const SizedBox(height: 8),
-            Expanded(
-              child: filtered.isEmpty
-                  ? const Center(child: Text('لا توجد منتجات مطابقة'))
-                  : ListView.separated(
-                      itemCount: filtered.length,
-                      separatorBuilder: (_, __) => const Divider(height: 1),
-                      itemBuilder: (context, i) {
-                        final p = filtered[i];
-                        final d = p.data();
-                        return ListTile(
-                          leading: Text('${i + 1}', style: const TextStyle(color: gold)),
-                          title: InvoiceProductOptionRow(name:'${d['name'] ?? ''}',unitCost:d['purchasePrice'] as num?,quantityStream:invoiceMainStock(p.id)),
-                          trailing: const Icon(Icons.chevron_left, color: gold),
-                          onTap: () => Navigator.pop(sheet, p.id),
-                        );
-                      },
-                    ),
-            ),
-          ]),
-        ),
-      );
-    }),
-  );
-}
+) => showInvoiceProductChoices(context,
+  products:[for(final p in products) (id:p.id,name:'${p.data()['name'] ?? ''}')],
+  excluded:excluded,unitCosts:{for(final p in products) p.id:p.data()['purchasePrice'] as num?},
+  stockStreamFor:invoiceMainStock,
+);
 double purchaseInvoicePayment(double total, bool credit, String paid) => credit
     ? double.tryParse(paid.trim().replaceAll(',', '.')) ?? -1 : total;
 
@@ -4725,25 +4681,12 @@ Future<String?> selectRegisteredCustomer(BuildContext context) async {
   ));
 }
 
-Future<String?> selectSaleProduct(BuildContext context, List<QueryDocumentSnapshot<Map<String, dynamic>>> products, Set<String> added) async {
-  String query = '';
-  return showDialog<String>(context: context, builder: (dialog) => StatefulBuilder(builder: (dialog, update) {
-    final rows = products.where((p) => '${p.data()['name'] ?? ''}'.toLowerCase().contains(query)).toList()
-      ..sort((a, b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
-    return AlertDialog(title: const Text('اختيار منتج'),
-      content: SizedBox(width: 500, height: 360, child: Column(children: [
-        TextField(autofocus: true, decoration: const InputDecoration(labelText: 'اكتب أي حرف من اسم المنتج', prefixIcon: Icon(Icons.search)),
-          onChanged: (value) => update(() => query = value.trim().toLowerCase())),
-        Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد أصناف مطابقة')) : ListView.separated(separatorBuilder: (_, __) => const Divider(height: 1), itemCount: rows.length, itemBuilder: (context, index) {
-          final row = rows[index];
-          return ListTile(leading: Text('${index + 1}', style: const TextStyle(color: gold)),
-            title: InvoiceProductOptionRow(name:'${row.data()['name'] ?? ''}',unitCost:row.data()['purchasePrice'] as num?,quantityStream:invoiceMainStock(row.id)),
-            trailing: Icon(added.contains(row.id) ? Icons.check : Icons.add, color: gold),
-            onTap: added.contains(row.id) ? null : () => Navigator.pop(dialog, row.id));
-        })),
-      ])), actions: [TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء'))]);
-  }));
-}
+Future<String?> selectSaleProduct(BuildContext context, List<QueryDocumentSnapshot<Map<String, dynamic>>> products, Set<String> added) =>
+  showInvoiceProductChoices(context,
+    products:[for(final p in products) (id:p.id,name:'${p.data()['name'] ?? ''}')],
+    excluded:added,unitCosts:{for(final p in products) p.id:p.data()['purchasePrice'] as num?},
+    stockStreamFor:invoiceMainStock,
+  );
 
 class StaffCustomers extends StatefulWidget {
   const StaffCustomers({super.key});
