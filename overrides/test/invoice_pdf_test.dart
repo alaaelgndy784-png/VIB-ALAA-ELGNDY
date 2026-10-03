@@ -16,6 +16,77 @@ void main() {
     await (FontLoader('VibPreview')..addFont(rootBundle.load('assets/fonts/DejaVuSans.ttf'))).load();
     await (FontLoader('MaterialIcons')..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'))).load();
   });
+  for(final sale in [false,true]) {
+    testWidgets('video-style ${sale ? 'sales' : 'purchase'} table search edits and settlement preserve draft', (tester) async {
+      tester.view.physicalSize=const Size(360,760);tester.view.devicePixelRatio=1;
+      addTearDown(() {tester.view.resetPhysicalSize();tester.view.resetDevicePixelRatio();});
+      final prices=[TextEditingController(text:'110'),TextEditingController(text:'65')];
+      final quantities=[TextEditingController(text:'1'),TextEditingController(text:'1')];
+      final discounts=[PurchaseDiscountDraft(),PurchaseDiscountDraft()];
+      final paid=TextEditingController(text:'0');final ids=[0,1];var checkout=false,credit=true;
+      final boundaryKey=GlobalKey();
+      const names=['حنفية غسالة هوائي بس','جلبة موتور الحياة'];
+      await tester.pumpWidget(RepaintBoundary(key:boundaryKey,child:MaterialApp(
+        theme:ThemeData(brightness:Brightness.dark,fontFamily:'VibPreview'),
+        builder:(context,child)=>Directionality(textDirection:TextDirection.rtl,child:child!),
+        home:Scaffold(body:StatefulBuilder(builder:(context,update) {
+          final total=ids.fold<double>(0,(sum,id)=>sum+double.parse(prices[id].text)*int.parse(quantities[id].text));
+          return InvoiceEditorFrame(tableMode:true,title:checkout ? 'حفظ الفاتورة' : sale ? 'فاتورة مبيعات' : 'فاتورة مشتريات',
+            checkout:checkout,total:total,invoiceNumber:'001216 (مبدئي)',itemCount:ids.length,
+            quantityCount:ids.fold<int>(0,(sum,id)=>sum+int.parse(quantities[id].text)),
+            toolbar:InvoiceProductsBar(inlineSearch:true,products:const [(id:'x',name:'صنف إضافي')],
+              enabled:true,unitCosts:const {'x':88},stockStreamFor:(_)=>Stream<int?>.value(36),onSearch:() {},onSelect:(_) {}),
+            body:checkout ? ListView(children:[const Text('اختيار العميل أو المورد'),
+              PurchaseSettlementPanel(total:total,previousBalance:250,credit:credit,paid:paid,enabled:true,
+                partyLabel:sale ? 'العميل' : 'المورد',onModeChanged:(v)=>update(()=>credit=v),onChanged:()=>update(() {})),
+            ]) : ListView(children:[for(var i=0;i<ids.length;i++) InvoiceCompactTableLine(
+              key:ValueKey('table-line-${ids[i]}'),number:i+1,name:names[ids[i]],price:prices[ids[i]],quantity:quantities[ids[i]],
+              onEdit:() async {
+                final id=ids[i];
+                final result=await showInvoiceLineEditor(context,name:names[id],price:prices[id],quantity:quantities[id],
+                  discount:discounts[id],unitCost:88,stockStream:Stream<int?>.value(36),allowDelete:true);
+                if(result==InvoiceLineEditAction.delete) update(()=>ids.remove(id));else update(() {});
+              },
+            )]),
+            actions:[TextButton(onPressed:()=>update(()=>checkout=false),child:const Text('رجوع للبنود')),
+              FilledButton(onPressed:()=>update(()=>checkout=true),child:const Text('حفظ الفاتورة'))],
+          );
+        })),
+      )));
+      await tester.pumpAndSettle();expect(tester.takeException(),isNull);
+      expect(find.text('الإجمالي: 175.00 ج.م'),findsOneWidget);
+      final firstName=tester.getRect(find.text(names[0]));final rowNumber=tester.getRect(find.text('1').first);
+      expect(rowNumber.left,greaterThan(firstName.right));
+      Directory('dist').createSync(recursive:true);
+      await tester.runAsync(() async {
+        final boundary=boundaryKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+        final image=await boundary.toImage(pixelRatio:2);final data=await image.toByteData(format:ui.ImageByteFormat.png);
+        File('dist/VIB-VIDEO-${sale ? 'SALES' : 'PURCHASE'}.png').writeAsBytesSync(data!.buffer.asUint8List());image.dispose();
+      });
+      await tester.enterText(find.byKey(const ValueKey('invoice-inline-search')),'إضافي');await tester.pumpAndSettle();
+      expect(find.text('المتاح: 36'),findsOneWidget);
+      await tester.enterText(find.byKey(const ValueKey('invoice-inline-search')),'');await tester.pumpAndSettle();
+      await tester.tap(find.text(names[0]));await tester.pumpAndSettle();
+      Finder field(String label)=>find.byWidgetPredicate((w)=>w is TextField && w.decoration?.labelText==label);
+      await tester.enterText(field('العدد'),'3');await tester.enterText(field('السعر'),'100');
+      await tester.tap(find.text('تراجع'));await tester.pumpAndSettle();
+      expect(prices[0].text,'110');expect(quantities[0].text,'1');
+      await tester.tap(find.text(names[0]));await tester.pumpAndSettle();
+      await tester.enterText(field('العدد'),'3');await tester.enterText(field('السعر'),'100');
+      await tester.enterText(field('خصم %'),'10');await tester.pump();
+      await tester.tap(find.text('متابعة'));await tester.pumpAndSettle();
+      expect(double.parse(prices[0].text),90);expect(quantities[0].text,'3');
+      expect(find.text('الإجمالي: 335.00 ج.م'),findsOneWidget);
+      await tester.tap(find.text('حفظ الفاتورة'));await tester.pumpAndSettle();
+      await tester.tap(find.text('رجوع للبنود'));await tester.pumpAndSettle();
+      expect(double.parse(prices[0].text),90);expect(ids.length,2);
+      await tester.tap(find.text(names[0]));await tester.pumpAndSettle();
+      await tester.tap(find.text('حذف الصنف'));await tester.pumpAndSettle();
+      expect(ids,[1]);expect(find.text('الإجمالي: 65.00 ج.م'),findsOneWidget);
+      expect(tester.takeException(),isNull);
+      await tester.pumpWidget(const SizedBox());for(final c in [...prices,...quantities,paid]) {c.dispose();}
+    });
+  }
   for(final width in [360.0,564.0]) {
     for(final keyboard in [false,true]) {
       testWidgets('actual full-width search route at $width with keyboard $keyboard keeps readable stock and cost', (tester) async {

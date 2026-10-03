@@ -860,6 +860,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
   bool saving = false, checkout = false;
   final paid = TextEditingController(text: '0');
   final reason = TextEditingController();
+  final note = TextEditingController();
+  final draftNumber = owner ? await invoiceDraftNumberPreview('sales') : 'يُخصص لدى المدير';
   final saleRef = db.collection('sales').doc();
 
   await showDialog<void>(
@@ -875,15 +877,27 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
       final selectedCustomer = customerId.isEmpty ? null : addedCustomers[customerId] ?? customersSnap.docs.firstWhere((d) => d.id == customerId).data();
 
       final previousBalance = (selectedCustomer?['balance'] as num?)?.toDouble() ?? 0;
-      void addSelected(String id) {
+      Future<void> editSelected(SaleLine row, {bool adding=false}) async {
+        final product=productDoc(row.productId!).data();
+        final result=await showInvoiceLineEditor(c,name:'${product['name'] ?? ''}',price:row.price,quantity:row.quantity,
+          discount:row.discount,priceEditable:owner,allowDelete:!adding,
+          unitCost:product['purchasePrice'] as num?,stockStream:invoiceMainStock(row.productId!));
+        if(!c.mounted) {if(adding) row.dispose();return;}
+        if(result==InvoiceLineEditAction.apply) update(() {if(adding) lines.add(row);});
+        else if(result==InvoiceLineEditAction.delete) {update(()=>lines.remove(row));row.dispose();}
+        else if(adding) row.dispose();
+      }
+      void addSelected(String id) async {
         if (saving || lines.length >= (owner ? 50 : 4) || lines.any((row) => row.productId == id)) return;
         final product=productDoc(id).data();
-        update(() => lines.add(SaleLine(productId:id,unitPrice:(product['price'] as num?)?.toDouble() ?? 0)));
+        await editSelected(SaleLine(productId:id,unitPrice:(product['price'] as num?)?.toDouble() ?? 0),adding:true);
       }
       return InvoiceEditorFrame(
         title: checkout ? 'حفظ فاتورة المبيعات' : 'فاتورة مبيعات',checkout:checkout,total:previewTotal,
+        tableMode:true,invoiceNumber:draftNumber,itemCount:lines.length,
+        quantityCount:lines.fold<int>(0,(sum,row)=>sum+(int.tryParse(row.quantity.text) ?? 0)),
         headerAction:IgnorePointer(ignoring:saving,child:ChatShortcut(owner:owner)),
-        toolbar:InvoiceProductsBar(
+        toolbar:InvoiceProductsBar(inlineSearch:true,
           unitCosts:{for(final product in products) product.id:product.data()['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
           products:[for(final product in products) if(!lines.any((row)=>row.productId == product.id))
             (id:product.id,name:'${product.data()['name'] ?? ''}')],
@@ -894,6 +908,9 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           },
         ),
         body:checkout ? ListView(children:[
+          PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
+            paid:paid,enabled:!saving,partyLabel:'العميل',
+            onModeChanged:(value)=>update(() => credit=value),onChanged:()=>update(() {})),
           OutlinedButton.icon(icon:const Icon(Icons.person_search),
             label:Text(customerId.isEmpty ? 'اسم العميل — اختيار عميل' : '${selectedCustomer?['name'] ?? ''}',softWrap:true),
             onPressed:saving ? null : () async {
@@ -910,29 +927,21 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               });
             }),
           const SizedBox(height:10),
-          PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
-            paid:paid,enabled:!saving,partyLabel:'العميل',
-            onModeChanged:(value)=>update(() => credit=value),onChanged:()=>update(() {})),
+
+          if(owner) TextField(controller:note,enabled:!saving,maxLength:1000,decoration:_vibInvoiceInput('ملاحظة الفاتورة')),
           if(owner) ExpansionTile(title:const Text('صلاحيات المدير',style:TextStyle(fontSize:13)),children:[
             SwitchListTile(dense:true,title:const Text('السماح بالبيع رغم نقص الكمية'),value:allowShortage,onChanged:saving ? null : (v)=>update(()=>allowShortage=v)),
             SwitchListTile(dense:true,title:const Text('السماح بسعر أقل من التكلفة'),value:allowBelowCost,onChanged:saving ? null : (v)=>update(()=>allowBelowCost=v)),
             if(allowShortage || allowBelowCost) TextField(controller:reason,enabled:!saving,decoration:_vibInvoiceInput('سبب الاستثناء (إلزامي)')),
           ]),
         ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
-          for(var i=0;i<lines.length;i++) PurchaseInvoiceLine(
+          for(var i=0;i<lines.length;i++) InvoiceCompactTableLine(
             key:ObjectKey(lines[i]),number:i+1,name:'${productDoc(lines[i].productId!).data()['name'] ?? ''}',
-            cost:lines[i].price,quantity:lines[i].quantity,enabled:!saving,priceEditable:owner,
-            onChanged:()=>update(() {}),onDelete:() {final row=lines.removeAt(i);row.dispose();update(() {});},
-            onChoose:() async {
-              final row=lines[i];
-              final id=await selectSaleProduct(c,products,lines.where((other)=>other != row).map((other)=>other.productId).whereType<String>().toSet());
-              if(id == null || !c.mounted) return;
-              update(() {row.productId=id;row.price.text=((productDoc(id).data()['price'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);});
-            },
+            price:lines[i].price,quantity:lines[i].quantity,onEdit:saving ? null : ()=>editSelected(lines[i]),
           ),
         ]),
         actions: [
-          if(owner) TextButton.icon(icon:const Icon(Icons.edit_note),label:const Text('تعديل فاتورة مبيعات'),
+          if(owner && MediaQuery.viewInsetsOf(c).bottom==0) TextButton.icon(icon:const Icon(Icons.edit_note),label:const Text('تعديل فاتورة مبيعات'),
             onPressed:saving ? null : () => editSaleByNumber(c)),
           TextButton(onPressed:saving ? null : () {if(checkout) {update(()=>checkout=false);} else {Navigator.pop(c);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
@@ -995,6 +1004,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                   throw Exception('فاتورة الموظف تقبل حتى 4 أصناف مختلفة');
                 }
                 final requestKey = jsonEncode({'customerId': customerId, 'credit': credit, 'paid': payment,
+                  if(owner) 'note':note.text.trim(),
                   'items': entries.map((e) => {'id': e.id, 'qty': e.qty, 'price': e.price}).toList()});
                 final priorSale = (await tx.get(saleRef)).data();
                 if (priorSale != null) {
@@ -1137,6 +1147,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                   'customerId': customerId,
                   'customerName': customerName,
                   'customerPhone': customerPhone,
+                  if(owner && note.text.trim().isNotEmpty) 'note':note.text.trim(),
                   'customerPreviousBalance': previousCustomerBalance,
                   'customerBalanceAfter': customerBalanceAfter,
                   'items': items,
@@ -1171,7 +1182,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 await showInvoiceSaveProblem(c, message);
               }
             }
-          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? 'تأكيد الحفظ' : 'إضافة')),
+          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? 'تأكيد الحفظ' : 'حفظ الفاتورة')),
         ],
       );
     }),
@@ -1179,7 +1190,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
   for (final row in lines) { row.dispose(); }
   paid.dispose();
-  reason.dispose();
+  reason.dispose(); note.dispose();
 }
 
 Future<void> saleDialog(BuildContext context, String productId, Map<String, dynamic> product, String uid, String branchId, {bool owner = false}) async {
@@ -1904,10 +1915,11 @@ class PurchaseInvoiceLine extends StatefulWidget {
   final bool enabled;
   final bool priceEditable;
   final bool totalEditable;
+  final bool showProductActions;
   final PurchaseDiscountDraft? discountDraft;
   final VoidCallback onChoose, onDelete, onChanged;
   const PurchaseInvoiceLine({super.key, required this.number, required this.name, required this.cost,
-    required this.quantity, required this.enabled, required this.onChoose, required this.onDelete, required this.onChanged,this.priceEditable = true,this.totalEditable = false,this.discountDraft});
+    required this.quantity, required this.enabled, required this.onChoose, required this.onDelete, required this.onChanged,this.priceEditable = true,this.totalEditable = false,this.discountDraft,this.showProductActions=true});
   @override
   State<PurchaseInvoiceLine> createState() => _PurchaseInvoiceLineState();
 }
@@ -2032,13 +2044,13 @@ class _PurchaseInvoiceLineState extends State<PurchaseInvoiceLine> {
         Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Padding(padding: const EdgeInsets.only(top: 5), child: Text('$number.', style: const TextStyle(fontSize: 12, color: gold))),
           const SizedBox(width: 5),
-          Expanded(child: InkWell(onTap: enabled ? onChoose : null,
+          Expanded(child: InkWell(onTap: enabled && widget.showProductActions ? onChoose : null,
             child: Padding(padding: const EdgeInsets.symmetric(vertical: 5),
               child: Text(name, softWrap: true, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))))),
-          IconButton(tooltip: 'تغيير الصنف', onPressed: enabled ? onChoose : null,
+          if(widget.showProductActions) IconButton(tooltip: 'تغيير الصنف', onPressed: enabled ? onChoose : null,
             padding: EdgeInsets.zero, constraints: const BoxConstraints.tightFor(width: 30, height: 30),
             icon: const Icon(Icons.search, size: 18, color: gold)),
-          IconButton(tooltip: 'حذف البند', onPressed: enabled ? onDelete : null,
+          if(widget.showProductActions) IconButton(tooltip: 'حذف البند', onPressed: enabled ? onDelete : null,
             padding: EdgeInsets.zero, constraints: const BoxConstraints.tightFor(width: 30, height: 30),
             icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent)),
         ]),
@@ -2135,6 +2147,8 @@ Future<void> purchaseDialog(BuildContext context) async {
   final paid = TextEditingController(text: '0');
   final invoice = TextEditingController();
   final markup = TextEditingController();
+  final note = TextEditingController();
+  final draftNumber = await invoiceDraftNumberPreview('purchases');
   bool saving = false, credit = true, checkout = false;
 
   await showDialog<void>(
@@ -2149,17 +2163,28 @@ Future<void> purchaseDialog(BuildContext context) async {
       }
       final selectedSupplier = supplierId.isEmpty ? null : addedSuppliers[supplierId] ?? activeSuppliers.firstWhere((d) => d.id == supplierId).data();
       final previousSupplierBalance = (selectedSupplier?['balance'] as num?)?.toDouble() ?? 0;
-      void addSelected(String id) {
+      Future<void> editSelected(ScannedLine row, {bool adding=false}) async {
+        final product=products.docs.firstWhere((d)=>d.id==row.productId).data();
+        final result=await showInvoiceLineEditor(c,name:'${product['name'] ?? ''}',price:row.cost,quantity:row.quantity,
+          discount:row.discount,allowDelete:!adding,unitCost:product['purchasePrice'] as num?,stockStream:invoiceMainStock(row.productId!));
+        if(!c.mounted) {if(adding) row.dispose();return;}
+        if(result==InvoiceLineEditAction.apply) setLocal(() {if(adding) lines.add(row);});
+        else if(result==InvoiceLineEditAction.delete) {setLocal(()=>lines.remove(row));row.dispose();}
+        else if(adding) row.dispose();
+      }
+      void addSelected(String id) async {
         if(saving || lines.length >= 50 || lines.any((row)=>row.productId == id)) return;
         final product=products.docs.firstWhere((d)=>d.id == id);
         final row=ScannedLine(productId:id);
         row.cost.text=((product.data()['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
-        setLocal(()=>lines.add(row));
+        await editSelected(row,adding:true);
       }
       return InvoiceEditorFrame(
         title:checkout ? 'حفظ فاتورة المشتريات' : 'فاتورة مشتريات',checkout:checkout,total:previewTotal,
+        tableMode:true,invoiceNumber:draftNumber,itemCount:lines.length,
+        quantityCount:lines.fold<int>(0,(sum,row)=>sum+(int.tryParse(row.quantity.text) ?? 0)),
         headerAction:IgnorePointer(ignoring:saving,child:const ChatShortcut(owner:true)),
-        toolbar:InvoiceProductsBar(
+        toolbar:InvoiceProductsBar(inlineSearch:true,
           unitCosts:{for(final product in products.docs) product.id:product.data()['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
           products:[for(final product in products.docs) if(!lines.any((row)=>row.productId == product.id))
             (id:product.id,name:'${product.data()['name'] ?? ''}')],
@@ -2170,6 +2195,8 @@ Future<void> purchaseDialog(BuildContext context) async {
           },
         ),
         body:checkout ? ListView(children:[
+          PurchaseSettlementPanel(total:previewTotal,previousBalance:previousSupplierBalance,credit:credit,
+            paid:paid,enabled:!saving,onModeChanged:(value)=>setLocal(()=>credit=value),onChanged:()=>setLocal(() {})),
           DropdownButtonFormField<String>(key:ValueKey(supplierId),initialValue:supplierId.isEmpty ? null : supplierId,isExpanded:true,
             decoration:_vibInvoiceInput('اسم المورد'),
             items:[
@@ -2183,8 +2210,8 @@ Future<void> purchaseDialog(BuildContext context) async {
               if(result != null && c.mounted) setLocal(() {addedSuppliers[result.id]=result.data;supplierId=result.id;});
             }),
           const SizedBox(height:10),
-          PurchaseSettlementPanel(total:previewTotal,previousBalance:previousSupplierBalance,credit:credit,
-            paid:paid,enabled:!saving,onModeChanged:(value)=>setLocal(()=>credit=value),onChanged:()=>setLocal(() {})),
+
+          TextField(controller:note,enabled:!saving,maxLength:1000,decoration:_vibInvoiceInput('ملاحظة الفاتورة')),
           ExpansionTile(title:const Text('تفاصيل إضافية (اختياري)',style:TextStyle(fontSize:13)),children:[
             TextField(controller:invoice,enabled:!saving,decoration:_vibInvoiceInput('رقم فاتورة المورد')),
             const SizedBox(height:8),
@@ -2192,16 +2219,9 @@ Future<void> purchaseDialog(BuildContext context) async {
               decoration:_vibInvoiceInput('زيادة سعر البيع %')),
           ]),
         ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
-          for(var i=0;i<lines.length;i++) PurchaseInvoiceLine(
-            key:ObjectKey(lines[i]),number:i+1,name:'${products.docs.firstWhere((d)=>d.id == lines[i].productId).data()['name'] ?? ''}',
-            cost:lines[i].cost,quantity:lines[i].quantity,enabled:!saving,totalEditable:true,discountDraft:lines[i].discount,onChanged:()=>setLocal(() {}),
-            onDelete:() {final row=lines.removeAt(i);row.dispose();setLocal(() {});},
-            onChoose:() async {
-              final row=lines[i];
-              final id=await pickPurchaseProduct(c,products.docs,lines.where((other)=>other != row).map((other)=>other.productId).whereType<String>().toSet());
-              if(id == null || !c.mounted) return;
-              setLocal(() {row.productId=id;row.cost.text=((products.docs.firstWhere((d)=>d.id == id).data()['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);});
-            },
+          for(var i=0;i<lines.length;i++) InvoiceCompactTableLine(
+            key:ObjectKey(lines[i]),number:i+1,name:'${products.docs.firstWhere((d)=>d.id==lines[i].productId).data()['name'] ?? ''}',
+            price:lines[i].cost,quantity:lines[i].quantity,onEdit:saving ? null : ()=>editSelected(lines[i]),
           ),
         ]),
         actions: [
@@ -2309,6 +2329,7 @@ Future<void> purchaseDialog(BuildContext context) async {
 
                 final invoiceData = <String, dynamic>{
                   'invoiceNumber': invoice.text.trim(),
+                  if(note.text.trim().isNotEmpty) 'note':note.text.trim(),
                   'internalNumber': invoiceSerial.data['internalNumber'],
                   'invoiceBarcode': invoiceSerial.data['invoiceBarcode'],
                   'supplierId': supplierId,
@@ -2357,7 +2378,7 @@ Future<void> purchaseDialog(BuildContext context) async {
                 await showInvoiceSaveProblem(c, invoiceSaveFailureMessage(e));
               }
             }
-          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? 'تأكيد الحفظ' : 'إضافة')),
+          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? 'تأكيد الحفظ' : 'حفظ الفاتورة')),
         ],
       );
     }),
@@ -2366,7 +2387,7 @@ Future<void> purchaseDialog(BuildContext context) async {
   for (final row in lines) { row.dispose(); }
   paid.dispose();
   invoice.dispose();
-  markup.dispose();
+  markup.dispose(); note.dispose();
 }
 
 
@@ -4135,6 +4156,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
           if (!isSale && supplierBalance == null)
             text('إجمالي الباقي للمورد: الرصيد غير متاح', bold: true),
         ])),
+      if ('${data['note'] ?? ''}'.trim().isNotEmpty) ...[pw.SizedBox(height: 8), text('ملاحظات: ${data['note']}')],
       if (data['status'] == 'returned') ...[pw.SizedBox(height: 10), text('فاتورة مرتجعة', bold: true, color: PdfColors.red)],
       pw.SizedBox(height: 14),
     ];

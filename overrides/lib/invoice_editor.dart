@@ -4,13 +4,17 @@ class InvoiceEditorFrame extends StatelessWidget {
   final String title;
   final bool checkout;
   final double total;
+  final bool tableMode;
+  final int itemCount, quantityCount;
+  final String invoiceNumber;
   final Widget body;
   final Widget? toolbar;
   final Widget? headerAction;
   final List<Widget> actions;
   const InvoiceEditorFrame({super.key,required this.title,required this.checkout,required this.total,
-    required this.body,required this.actions,this.toolbar,this.headerAction});
-  @override Widget build(BuildContext context) => Dialog(
+    required this.body,required this.actions,this.toolbar,this.headerAction,this.tableMode=false,
+    this.itemCount=0,this.quantityCount=0,this.invoiceNumber='يُخصص عند الحفظ'});
+  @override Widget build(BuildContext context) => tableMode ? _tableFrame(context) : Dialog(
     backgroundColor:const Color(0xFF080808),insetPadding:const EdgeInsets.symmetric(horizontal:6,vertical:10),
     shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(16),side:const BorderSide(color:gold)),
     child:SizedBox(width:650,height:double.infinity,child:Padding(padding:const EdgeInsets.all(10),child:Column(children:[
@@ -30,17 +34,77 @@ class InvoiceEditorFrame extends StatelessWidget {
       Wrap(alignment:WrapAlignment.end,spacing:8,runSpacing:4,children:actions),
     ]))),
   );
+  Widget _tableFrame(BuildContext context) => Dialog(
+    backgroundColor: const Color(0xFF080808),
+    insetPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+    child: SizedBox(width: 650,
+      height: checkout ? (MediaQuery.sizeOf(context).height - MediaQuery.viewInsetsOf(context).bottom - 48).clamp(180.0, 640.0).toDouble() : double.infinity,
+      child: Padding(padding: const EdgeInsets.all(8), child: Column(children: [
+        Row(children: [if(headerAction != null) headerAction!,
+          Expanded(child: Text(title, textAlign: TextAlign.center, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: gold))),
+        ]),
+        if(!checkout) ...[
+          if(MediaQuery.viewInsetsOf(context).bottom==0) Container(padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8), color: const Color(0xFF282215),
+            child: Row(children: [Expanded(child: Text('رقم الفاتورة: $invoiceNumber', style: const TextStyle(fontSize: 11, color: gold))),
+              Text(DateFormat('yyyy-MM-dd').format(DateTime.now()), textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 12)),
+            ])),
+          if(toolbar != null) Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: toolbar!),
+          const InvoiceCompactTableHeader(),
+        ],
+        Expanded(child: checkout ? body : Container(color: Colors.white,
+          child: DefaultTextStyle.merge(style: const TextStyle(color: Colors.black), child: body))),
+        if(!checkout) Container(color: const Color(0xFF282215), padding: const EdgeInsets.all(8),
+          child: Row(children: [Text('الأصناف: $itemCount • العدد: $quantityCount', style: const TextStyle(fontSize: 11, color: Colors.white)),
+            const SizedBox(width: 8), Expanded(child: Align(alignment: Alignment.centerLeft, child: FittedBox(fit: BoxFit.scaleDown,
+              child: Text('الإجمالي: ${total.toStringAsFixed(2)} ج.م', style: const TextStyle(color: Colors.greenAccent, fontSize: 18, fontWeight: FontWeight.bold))))),
+          ])),
+        const SizedBox(height: 6),
+        Wrap(alignment: WrapAlignment.end, spacing: 6, runSpacing: 4, children: actions),
+      ])),
+    ),
+  );
+
 }
 
-class InvoiceProductsBar extends StatelessWidget {
+class InvoiceProductsBar extends StatefulWidget {
   final List<({String id,String name})> products;
   final bool enabled;
+  final bool inlineSearch;
   final Map<String,num?> unitCosts;
   final Stream<int?> Function(String)? stockStreamFor;
   final VoidCallback onSearch;
   final ValueChanged<String> onSelect;
-  const InvoiceProductsBar({super.key,required this.products,required this.enabled,required this.onSearch,required this.onSelect,this.unitCosts=const {},this.stockStreamFor});
-  @override Widget build(BuildContext context) => Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+  const InvoiceProductsBar({super.key,required this.products,required this.enabled,required this.onSearch,required this.onSelect,this.unitCosts=const {},this.stockStreamFor,this.inlineSearch=false});
+  @override State<InvoiceProductsBar> createState() => _InvoiceProductsBarState();
+}
+
+class _InvoiceProductsBarState extends State<InvoiceProductsBar> {
+  final search = TextEditingController();
+  @override void dispose() { search.dispose(); super.dispose(); }
+  @override Widget build(BuildContext context) {
+    final products=widget.products, enabled=widget.enabled, onSearch=widget.onSearch;
+    final onSelect=widget.onSelect, unitCosts=widget.unitCosts, stockStreamFor=widget.stockStreamFor;
+    if(widget.inlineSearch) {
+      final query=search.text.trim().toLowerCase();
+      final rows=products.where((p)=>p.name.toLowerCase().contains(query)).toList()
+        ..sort((a,b)=>a.name.compareTo(b.name));
+      return Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+        TextField(key:const ValueKey('invoice-inline-search'),controller:search,enabled:enabled,
+          decoration:_vibInvoiceInput('بحث عن صنف',icon:Icons.search).copyWith(suffixIcon:IconButton(
+            tooltip:'عرض كل الأصناف',onPressed:enabled ? onSearch : null,icon:const Icon(Icons.list_alt,color:gold))),
+          onChanged:(_)=>setState(() {})),
+        if(query.isNotEmpty) SizedBox(height:(MediaQuery.sizeOf(context).height - MediaQuery.viewInsetsOf(context).bottom - 330).clamp(60.0,160.0).toDouble(),
+          child: rows.isEmpty ? const Center(child:Text('لا توجد أصناف مطابقة')) : ListView.separated(
+            itemCount:rows.length,separatorBuilder:(_,__)=>const Divider(height:1),itemBuilder:(context,index) {
+              final product=rows[index];
+              return InkWell(key:ValueKey('inline-product-${product.id}'),onTap:enabled ? () {
+                FocusScope.of(context).unfocus(); search.clear();setState(() {});onSelect(product.id);
+              } : null,child:Padding(padding:const EdgeInsets.symmetric(vertical:8,horizontal:4),
+                child:InvoiceProductOptionRow(name:product.name,unitCost:unitCosts[product.id],quantityStream:stockStreamFor?.call(product.id))));
+            })),
+      ]);
+    }
+    return Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
     OutlinedButton.icon(onPressed:enabled ? onSearch : null,icon:const Icon(Icons.search,color:gold),label:const Text('بحث')),
     const SizedBox(height:6),
     DropdownButtonFormField<String>(
@@ -54,6 +118,7 @@ class InvoiceProductsBar extends StatelessWidget {
       onChanged:enabled ? (id) {if(id != null) onSelect(id);} : null,
     ),
   ]);
+  }
 }
 
 
@@ -131,4 +196,89 @@ class _InvoiceProductSearchListState extends State<InvoiceProductSearchList> {
         )),
       ])));
   }
+}
+
+
+class InvoiceCompactTableHeader extends StatelessWidget {
+  const InvoiceCompactTableHeader({super.key});
+  @override Widget build(BuildContext context) => Container(color: gold, padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+    child: const Row(textDirection: TextDirection.rtl, children: [
+      SizedBox(width: 22, child: Text('م', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 11))),
+      Expanded(flex: 5, child: Text('المنتج', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold))),
+      Expanded(flex: 3, child: Text('السعر', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold))),
+      Expanded(flex: 2, child: Text('العدد', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold))),
+      Expanded(flex: 3, child: Text('الإجمالي', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold))),
+    ]));
+}
+
+class InvoiceCompactTableLine extends StatelessWidget {
+  final int number;
+  final String name;
+  final TextEditingController price, quantity;
+  final VoidCallback? onEdit;
+  const InvoiceCompactTableLine({super.key,required this.number,required this.name,required this.price,required this.quantity,this.onEdit});
+  @override Widget build(BuildContext context) {
+    final p=double.tryParse(price.text.trim().replaceAll(',', '.')) ?? 0;
+    final q=int.tryParse(quantity.text.trim()) ?? 0;
+    Widget value(String text)=>Container(margin:const EdgeInsets.all(2),padding:const EdgeInsets.symmetric(vertical:7,horizontal:2),
+      decoration:BoxDecoration(border:Border.all(color:const Color(0xFFD4D4D4))),
+      child:FittedBox(fit:BoxFit.scaleDown,child:Text(text,style:const TextStyle(color:Colors.black,fontSize:12,fontWeight:FontWeight.w600))));
+    return Material(color:number.isOdd ? Colors.white : const Color(0xFFF5F4F0),child:InkWell(onTap:onEdit,
+      child:Container(padding:const EdgeInsets.symmetric(vertical:8,horizontal:4),
+        decoration:const BoxDecoration(border:Border(bottom:BorderSide(color:Color(0xFFDDDDDD)))),
+        child:Row(textDirection:TextDirection.rtl,children:[
+          SizedBox(width:22,child:Text('$number',textAlign:TextAlign.center,style:const TextStyle(color:Colors.black54,fontSize:11))),
+          Expanded(flex:5,child:Text(name,textDirection:TextDirection.rtl,style:const TextStyle(color:Colors.black,fontSize:12))),
+          Expanded(flex:3,child:value(p.toStringAsFixed(2))),
+          Expanded(flex:2,child:value('$q')),
+          Expanded(flex:3,child:value((p*q).toStringAsFixed(2))),
+        ]))));
+  }
+}
+
+enum InvoiceLineEditAction { apply, delete }
+Future<InvoiceLineEditAction?> showInvoiceLineEditor(BuildContext context, {
+  required String name,required TextEditingController price,required TextEditingController quantity,
+  required PurchaseDiscountDraft discount, bool priceEditable=true,bool allowDelete=false,
+  num? unitCost,Stream<int?>? stockStream,
+}) async {
+  final draftPrice=TextEditingController(text:price.text),draftQuantity=TextEditingController(text:quantity.text);
+  final draftDiscount=PurchaseDiscountDraft()..baseCost=discount.baseCost..percent=discount.percent;
+  final action=await showDialog<InvoiceLineEditAction>(context:context,barrierDismissible:false,
+    builder:(dialog)=>StatefulBuilder(builder:(dialog,update)=>AlertDialog(
+      insetPadding:const EdgeInsets.symmetric(horizontal:12,vertical:16),
+      contentPadding:const EdgeInsets.all(10),title:const Text('بيانات الصنف'),
+      content:SizedBox(width:450,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
+        PurchaseInvoiceLine(number:1,name:name,cost:draftPrice,quantity:draftQuantity,enabled:true,
+          priceEditable:priceEditable,totalEditable:priceEditable,discountDraft:draftDiscount,showProductActions:false,
+          onChoose:() {},onDelete:() {},onChanged:()=>update(() {})),
+        if(stockStream!=null) StreamBuilder<int?>(stream:stockStream,builder:(context,snapshot)=>Text(
+          'الكمية المتوفرة: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.data ?? 'جارٍ التحميل'}',style:const TextStyle(color:gold))),
+        if(unitCost!=null) Text('سعر التكلفة: ${unitCost.toStringAsFixed(2)} ج.م',style:const TextStyle(color:gold)),
+      ]))),
+      actions:[
+        if(allowDelete) TextButton.icon(icon:const Icon(Icons.delete_outline,color:Colors.redAccent),label:const Text('حذف الصنف'),
+          onPressed:()=>Navigator.pop(dialog,InvoiceLineEditAction.delete)),
+        TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('تراجع')),
+        FilledButton(onPressed:() async {
+          final q=int.tryParse(draftQuantity.text.trim()),p=double.tryParse(draftPrice.text.trim().replaceAll(',', '.'));
+          if(q==null || q<=0 || p==null || !p.isFinite || p<0) {
+            await showInvoiceSaveProblem(dialog,'أدخل عددًا أكبر من صفر وسعرًا صحيحًا',title:'بيانات الصنف',button:'رجوع للصنف');return;
+          }
+          Navigator.pop(dialog,InvoiceLineEditAction.apply);
+        },child:const Text('متابعة')),
+      ],
+    )));
+  if(action==InvoiceLineEditAction.apply) {
+    quantity.text=draftQuantity.text;price.text=draftPrice.text;
+    discount.baseCost=draftDiscount.baseCost;discount.percent=draftDiscount.percent;
+  }
+  draftPrice.dispose();draftQuantity.dispose();return action;
+}
+
+Future<String> invoiceDraftNumberPreview(String type) async {
+  try {
+    final data=(await db.collection('settings').doc('invoiceCounter_$type').get()).data();
+    return '${((data?['lastNumber'] as num?)?.toInt() ?? 0)+1}'.padLeft(6,'0')+' (مبدئي)';
+  } catch(_) { return 'يُخصص عند الحفظ'; }
 }
