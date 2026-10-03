@@ -4,6 +4,35 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/main.dart';
 
 void main() {
+  testWidgets('customer choices show right-hand numbering, adjacent name and green debt on a small phone', (tester) async {
+    tester.view.physicalSize = const Size(360, 640); tester.view.devicePixelRatio = 1;
+    addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
+    var selected = false;
+    await tester.pumpWidget(MaterialApp(home: MediaQuery(
+      data: const MediaQueryData(size: Size(360, 640), viewInsets: EdgeInsets.only(bottom: 280)),
+      child: Scaffold(body: Builder(builder: (context) => AlertDialog(
+        insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+        contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        title: const Text('اختيار عميل مسجل'),
+        content: SizedBox(width: 500, height: invoiceCustomerChoicesHeight(context), child: ListView(children: [
+          InvoiceCustomerChoiceRow(number: 1, name: 'الحاج أحمد محمود بورسعيد', balance: 82502.7, onTap: () => selected = true),
+          InvoiceCustomerChoiceRow(number: 2, name: 'الحاج أحمد الجمل', balance: 9, onTap: () {}),
+        ])),
+        actions: [TextButton(onPressed: () {}, child: const Text('إلغاء'))],
+      ))),
+    )));
+    expect(tester.takeException(), isNull);
+    final number = tester.getRect(find.text('1.'));
+    final name = tester.getRect(find.text('الحاج أحمد محمود بورسعيد'));
+    final debt = tester.getRect(find.text('82502.70 ج.م'));
+    expect(number.left, greaterThan(name.right));
+    expect(name.left, greaterThan(debt.right));
+    expect(number.center.dy, closeTo(name.center.dy, 1));
+    expect(debt.center.dy, closeTo(name.center.dy, 1));
+    expect(tester.widget<Text>(find.text('82502.70 ج.م')).style!.color, Colors.greenAccent);
+    await tester.tap(find.text('الحاج أحمد محمود بورسعيد')); await tester.pump();
+    expect(selected, isTrue);
+  });
   for (final supplier in [false, true]) {
     testWidgets('create ${supplier ? 'supplier' : 'customer'} before invoice save preserves draft and selects returned ID', (tester) async {
       Map<String, dynamic>? saved;

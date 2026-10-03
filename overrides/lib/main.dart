@@ -4741,12 +4741,45 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
 }
 
 
+class InvoiceCustomerChoiceRow extends StatelessWidget {
+  final int number;
+  final String name;
+  final num balance;
+  final VoidCallback onTap;
+  const InvoiceCustomerChoiceRow({super.key, required this.number, required this.name,
+    required this.balance, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+      child: Row(textDirection: TextDirection.rtl, children: [
+        SizedBox(width: 32, child: Text('$number.', textAlign: TextAlign.right,
+          textDirection: TextDirection.ltr, style: const TextStyle(color: gold, fontWeight: FontWeight.bold))),
+        const SizedBox(width: 4),
+        Expanded(child: Text(name, textDirection: TextDirection.rtl,
+          textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w600))),
+        const SizedBox(width: 8),
+        Text('${balance.toStringAsFixed(2)} ج.م', textDirection: TextDirection.rtl,
+          style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+      ]),
+    ),
+  );
+}
+
+double invoiceCustomerChoicesHeight(BuildContext context) =>
+  (MediaQuery.sizeOf(context).height - MediaQuery.viewInsetsOf(context).bottom - 240)
+    .clamp(100.0, 360.0).toDouble();
+
 Future<String?> selectRegisteredCustomer(BuildContext context) async {
   String query = '';
   return showDialog<String>(context: context, builder: (dialog) => StatefulBuilder(
     builder: (dialog, update) => AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
       title: const Text('اختيار عميل مسجل'),
-      content: SizedBox(width: 500, height: 360, child: Column(children: [
+      content: SizedBox(width: 500, height: invoiceCustomerChoicesHeight(dialog), child: Column(children: [
         TextField(autofocus: true, decoration: const InputDecoration(labelText: 'بحث بالاسم أو رقم الهاتف', prefixIcon: Icon(Icons.search)),
           onChanged: (value) => update(() => query = value.trim().toLowerCase())),
         Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -4760,7 +4793,8 @@ Future<String?> selectRegisteredCustomer(BuildContext context) async {
             if (rows.isEmpty) return const Center(child: Text('لا يوجد عملاء مطابقون'));
             return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
               final row = rows[index];
-              return ListTile(title: Text('${row.data()['name'] ?? ''}'),
+              return InvoiceCustomerChoiceRow(number: index + 1,
+                name: '${row.data()['name'] ?? ''}', balance: (row.data()['balance'] as num?) ?? 0,
                 onTap: () => Navigator.pop(dialog, row.id));
             });
           },
@@ -5231,4 +5265,3 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
 }
-
