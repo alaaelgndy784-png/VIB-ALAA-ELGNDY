@@ -1,4 +1,4 @@
-name: Publish VIB numbered customer rows and green debt
+name: Publish VIB video invoice workflow updates
 on:
   workflow_dispatch:
   push:
@@ -15,30 +15,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37149797589 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
-          test "$(cat source-run.txt)" = "0cd532de78e2c560e475a7cdcac3a71f8150c972 success"
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37151995105 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "bb7a0951df5671798aa8d894487eb93d8ae3825f success"
       - name: Download tested staff APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37149797589
+          run-id: 37151995105
           github-token: ${{ github.token }}
           path: download
       - name: Download tested manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37149797589
+          run-id: 37151995105
           github-token: ${{ github.token }}
           path: download
-      - name: Verify and publish numbered customer row APKs
+      - name: Verify and publish video-style invoice APKs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mv download/VIB-SALES-MANAGER.apk download/VIB-Manager-Customers.apk
-          echo 'ee1ffb10e68d077b33f9c2a2d91cc9aceafd1046acfe0c9d9c78d40b2ad22140  download/VIB-Manager-Customers.apk' | sha256sum --check
-          mv download/VIB-SALES-STAFF.apk download/VIB-Staff-Customers.apk
-          echo 'ef083dd0abe3f3a7b57231a8c2c89be5c880277f14e9e27fdb6e0c0c75b4db78  download/VIB-Staff-Customers.apk' | sha256sum --check
-          gh release view vib-customer-rows-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-customer-rows-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB numbered customer rows — 3 October 2026' --notes 'Invoice customer selection shows sequential numbers on the right, customer names directly alongside and debt in green on the same row. Phone numbers are hidden from the list. Dialog adjusts to the keyboard. Existing account data and accounting remain intact. Small-phone layout and selection test passed. Install as an update over the corresponding app.'
-          gh release upload vib-customer-rows-20261003 download/VIB-Staff-Customers.apk download/VIB-Manager-Customers.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+          mv download/VIB-SALES-MANAGER.apk download/VIB-Manager-Invoice-Video.apk
+          echo 'a149dcd6c0ec331336ecb326b20e5b888b99af3e526e0a91089679f1c1df2273  download/VIB-Manager-Invoice-Video.apk' | sha256sum --check
+          mv download/VIB-SALES-STAFF.apk download/VIB-Staff-Invoice-Video.apk
+          echo '751284bce5c20f7b37dfe5858763fd64d6fb6d3058026d90fc02fca9f6556d33  download/VIB-Staff-Invoice-Video.apk' | sha256sum --check
+          gh release view vib-invoice-video-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-invoice-video-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB video-style invoices — 3 October 2026' --notes 'Sales and manual purchase creation now share a compact numbered RTL table, inline product search, item quantity/price/discount dialog with live available stock and cost, and a payment step with cash/credit and account balances. Cancel leaves the original line untouched; applying edits updates totals; deleting renumbers remaining rows. Price permissions, stock checks and existing grouped accounting are preserved. Draft invoice number is explicitly provisional until atomic allocation on save. Manager invoice notes print on A4 and thermal receipts. Install as an update over the corresponding app.'
+          gh release upload vib-invoice-video-20261003 download/VIB-Staff-Invoice-Video.apk download/VIB-Manager-Invoice-Video.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
 
