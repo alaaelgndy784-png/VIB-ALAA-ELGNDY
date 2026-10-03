@@ -10,7 +10,7 @@ void main() {
     var selected = false;
     await tester.pumpWidget(MaterialApp(home: MediaQuery(
       data: const MediaQueryData(size: Size(360, 640), viewInsets: EdgeInsets.only(bottom: 280)),
-      child: Scaffold(body: Builder(builder: (context) => AlertDialog(
+      child: Scaffold(resizeToAvoidBottomInset: false, body: Builder(builder: (context) => AlertDialog(
         insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
         contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
         title: const Text('اختيار عميل مسجل'),
