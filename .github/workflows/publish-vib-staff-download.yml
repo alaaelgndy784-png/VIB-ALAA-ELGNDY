@@ -1,4 +1,4 @@
-name: Publish VIB invoice numbers and barcodes downloads
+name: Publish VIB A4 style 2 and invoice tools downloads
 on:
   workflow_dispatch:
   push:
@@ -15,30 +15,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37125094027 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
-          test "$(cat source-run.txt)" = "ce27934ea3339178ba025cf37f03cbfbf4454260 success"
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37129620811 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "49129af5bf12f4ad2831adceccca5a121c336dc5 success"
       - name: Download tested staff APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37125094027
+          run-id: 37129620811
           github-token: ${{ github.token }}
           path: download
       - name: Download tested manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37125094027
+          run-id: 37129620811
           github-token: ${{ github.token }}
           path: download
-      - name: Verify and publish invoice history APKs
+      - name: Verify and publish A4 style 2 APKs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mv download/VIB-SALES-MANAGER.apk download/VIB-SALES-MANAGER-INVOICE-NUMBERS.apk
-          echo 'fcc9feb9b18ca60c4cfedc32651867544501373679f17aec7a961e624d5a961e  download/VIB-SALES-MANAGER-INVOICE-NUMBERS.apk' | sha256sum --check
-          mv download/VIB-SALES-STAFF.apk download/VIB-SALES-STAFF-INVOICE-NUMBERS.apk
-          echo 'f12e420725759ea13fb17477fcb2f53841c112ed8902088565d28b53b4a1152e  download/VIB-SALES-STAFF-INVOICE-NUMBERS.apk' | sha256sum --check
-          gh release view vib-invoice-numbers-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-invoice-numbers-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB invoice numbers and barcodes — 3 October 2026' --notes 'Tested invoice numbering and printable Code128 barcodes. Purchases have persistent consecutive internal numbers separately from supplier invoice references. Manager sales are allocated on save; legacy and staff sales receive persistent numbers during manager review. Includes dated invoice history and existing inventory, returns and Geidea preparation. Install over the corresponding existing app without deleting it.'
-          gh release upload vib-invoice-numbers-20261003 download/VIB-SALES-STAFF-INVOICE-NUMBERS.apk download/VIB-SALES-MANAGER-INVOICE-NUMBERS.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+          mv download/VIB-SALES-MANAGER.apk download/VIB-SALES-MANAGER-A4-STYLE-2.apk
+          echo 'e36a094d850cc8472681102fa0a0d58c44354e6e9c1068c5d51a802917cd02ba  download/VIB-SALES-MANAGER-A4-STYLE-2.apk' | sha256sum --check
+          mv download/VIB-SALES-STAFF.apk download/VIB-SALES-STAFF-A4-STYLE-2.apk
+          echo '590698f2eb0261b898142ad2aaeaaf070863645767a3e72ed472061bef8d9158  download/VIB-SALES-STAFF-A4-STYLE-2.apk' | sha256sum --check
+          gh release view vib-a4-style-2-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-a4-style-2-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB A4 style 2 and invoice tools — 3 October 2026' --notes 'Selected navy/gold A4 invoice layout for sales and purchases. Manager can create and select customer/supplier contacts inside invoice drafts, including first supplier and photographed purchases. Direct sales invoice editing adds or changes products on the same invoice with existing accounting and receipt protections. Existing thermal receipts, numbering/barcodes, inventory and returns preserved. Tested 78 Flutter cases plus 32 Node and 62 rules cases. Install over the corresponding existing app without deleting it.'
+          gh release upload vib-a4-style-2-20261003 download/VIB-SALES-STAFF-A4-STYLE-2.apk download/VIB-SALES-MANAGER-A4-STYLE-2.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
 
