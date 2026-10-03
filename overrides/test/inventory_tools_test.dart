@@ -44,6 +44,14 @@ void main() {
     expect(accountBalanceLabel(-30,supplier:true),'رصيد لك عند المورد');
     expect(accountBalanceLabel(-30,supplier:false),'رصيد للعميل عندك');
   });
+  test('general customer receipts remain credit while linked receipts are refunded once', () {
+    final r=returnSettlement({'total':100,'paid':30,'due':70,'receiptPaid':25},sales:true);
+    // Opening20 + due70 - linked25 - general50 =15 before return.
+    expect(15-r.debt,-30);
+    // Opening cash200 + paid30 + linked25 + general50 - refund55.
+    expect(200+30+25+50-r.cash,250);
+    expect(accountBalanceLabel(-30,supplier:false),'رصيد للعميل عندك');
+  });
   test('return validates invoice settlement and preview becomes stale on collection', () {
     expect(()=>returnSettlement({'total':100,'paid':30,'due':80},sales:true),throwsStateError);
     expect(()=>returnSettlement({'paid':30,'due':70,'cashPaidPosted':40},sales:false),throwsStateError);

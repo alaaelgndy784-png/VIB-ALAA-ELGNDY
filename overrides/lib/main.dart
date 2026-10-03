@@ -4149,6 +4149,7 @@ Future<void> confirmReturn(BuildContext context, String type, String id, Map<Str
       if(party != null) Text('الرصيد الحالي: ${balance.toStringAsFixed(2)}\nالرصيد بعد المرتجع: ${after.toStringAsFixed(2)} • ${accountBalanceLabel(after,supplier:!sales)}'),
       Text('${sales ? 'رد من الصندوق' : 'استرداد إلى الصندوق'}: ${settlement.cash.toStringAsFixed(2)} ج.م'),
       if(!sales) const Text('سندات الصرف العامة للمورد تظل مسجلة. أي رصيد سالب بعد المرتجع يُحسب مبلغًا لك عند المورد، ولا يُرد من الصندوق مرة أخرى.'),
+      if(sales) const Text('سندات القبض المرتبطة بهذه الفاتورة تدخل في رد النقدية. سندات القبض العامة تظل محفوظة؛ أي زيادة بعد المرتجع تصبح رصيدًا للعميل عندك.'),
       const Text('الفاتورة الأصلية تظل محفوظة، ولا يمكن إرجاعها مرتين. الأرصدة تُراجع مجددًا عند التنفيذ.'),
     ])), actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('إلغاء')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('تأكيد المرتجع'))])) ?? false;
     if (!yes || !context.mounted) return;
@@ -4168,7 +4169,6 @@ Future<void> returnInvoice(String type, String id, {String? expectedSignature}) 
   if (!['sales', 'purchases'].contains(type)) throw StateError('نوع الفاتورة غير صحيح');
   final preflight = (await db.collection(type).doc(id).get()).data();
   if (preflight == null) throw Exception('الفاتورة غير موجودة');
-  if (type == 'sales') await assertNoUnallocatedReceipt(preflight);
   await db.runTransaction((tx) async {
     final invoiceRef = db.collection(type).doc(id);
     final invoiceSnap = await tx.get(invoiceRef);
@@ -4226,11 +4226,8 @@ Future<void> returnInvoice(String type, String id, {String? expectedSignature}) 
         if (((cashSnap.data()?['balance'] as num?)?.toDouble() ?? 0) < paid) throw Exception('رصيد الصندوق لا يكفي لرد المبلغ المحصل');
       }
       if (customerSnap != null && !customerSnap.exists) throw Exception('حساب العميل غير موجود');
-      final latest = '${customerSnap?.data()?['lastReceiptId'] ?? ''}';
-      if (latest.isNotEmpty) {
-        final receipt = (await tx.get(db.collection('receipts').doc(latest))).data();
-        if (receipt != null && unallocatedReceiptAfter(d, receipt)) throw Exception('حدد الفواتير الخاصة بسند القبض العام قبل المرتجع');
-      }
+      // General receipts are account-level credit and remain posted. Only
+      // this invoice's receiptPaid is refunded; unrelated collections are retained.
 
       final ret = db.collection('salesReturns').doc();
       for (final item in items) {
