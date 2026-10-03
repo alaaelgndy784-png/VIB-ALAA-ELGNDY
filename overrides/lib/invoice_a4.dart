@@ -21,9 +21,9 @@ Future<Uint8List> createStyledA4InvoicePdf({
     PdfColor color = PdfColors.black, pw.TextAlign align = pw.TextAlign.right}) =>
     pw.Text(value, textAlign: align, style: pw.TextStyle(fontSize: size,
       fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal, color: color));
-  pw.Widget ltr(String value, {double size = 9, PdfColor color = PdfColors.black}) =>
+  pw.Widget ltr(String value, {double size = 9, bool bold = false, PdfColor color = PdfColors.black}) =>
     pw.Directionality(textDirection: pw.TextDirection.ltr,
-      child: txt(value, size: size, color: color, align: pw.TextAlign.left));
+      child: txt(value, size: size, bold: bold, color: color, align: pw.TextAlign.left));
   pw.Widget info(String label, String value, {bool numeric = false}) => pw.Padding(
     padding: const pw.EdgeInsets.symmetric(vertical: 3), child: pw.Row(children: [
       pw.Expanded(child: txt(label, color: navy)), pw.SizedBox(width: 8),
@@ -50,7 +50,8 @@ Future<Uint8List> createStyledA4InvoicePdf({
       decoration: pw.BoxDecoration(color: highlight ? gold : pale,
         border: pw.Border(bottom: pw.BorderSide(color: line, width: .4))),
       child: pw.Row(children: [pw.Expanded(child: txt(label, bold: highlight, color: navy)),
-        pw.SizedBox(width: 6), ltr('${money(value)} EGP', size: highlight ? 11 : 9, color: navy)])));
+        pw.SizedBox(width: 6), ltr(money(value), size: highlight ? 11 : 9, bold: highlight, color: navy),
+        pw.SizedBox(width: 4), txt('ج.م', size: 8, color: navy)])));
   }
   if (data.containsKey(previousKey)) amount('الرصيد السابق', data[previousKey]);
   amount('إجمالي الفاتورة', total);
@@ -93,8 +94,10 @@ Future<Uint8List> createStyledA4InvoicePdf({
       ])), pw.SizedBox(width: 10),
       pw.Expanded(flex: 2, child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
         for (final phone in phones) pw.Padding(padding: const pw.EdgeInsets.only(bottom: 3), child: ltr(phone, size: 8, color: PdfColors.white)),
-        if (taxNumber.isNotEmpty) txt('البطاقة الضريبية: $taxNumber', size: 7, color: PdfColors.white),
-        if (commercialRegister.isNotEmpty) txt('السجل التجاري: $commercialRegister', size: 7, color: PdfColors.white),
+        if (taxNumber.isNotEmpty) pw.Row(children: [txt('البطاقة الضريبية: ', size: 7, color: PdfColors.white),
+          pw.Flexible(child: ltr(taxNumber, size: 7, color: PdfColors.white))]),
+        if (commercialRegister.isNotEmpty) pw.Row(children: [txt('السجل التجاري: ', size: 7, color: PdfColors.white),
+          pw.Flexible(child: ltr(commercialRegister, size: 7, color: PdfColors.white))]),
       ])), pw.SizedBox(width: 10),
       pw.Container(width: 42, height: 42, color: PdfColors.white, padding: const pw.EdgeInsets.all(2),
         child: pw.Image(logo, fit: pw.BoxFit.contain)),
