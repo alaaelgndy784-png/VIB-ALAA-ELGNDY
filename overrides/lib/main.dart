@@ -38,6 +38,7 @@ part 'invoice_editor.dart';
 part 'product_import.dart';
 part 'inventory_tools.dart';
 part 'online_payments.dart';
+part 'invoice_history.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1297,6 +1298,8 @@ class Management extends StatelessWidget {
     option(context, 'الموظفون والصلاحيات', Icons.groups_outlined, const Staff(), highlight: true),
     option(context, 'الفروع والمخزون', Icons.storefront_outlined, const Branches()),
     option(context, 'جرد المخزون', Icons.inventory_2_outlined, const InventoryAudit()),
+    option(context, 'عرض فواتير المبيعات', Icons.receipt_long_outlined, const InvoiceHistoryPage(type: 'sales')),
+    option(context, 'عرض فواتير المشتريات', Icons.shopping_bag_outlined, const InvoiceHistoryPage(type: 'purchases')),
     option(context, 'إرجاع فاتورة مبيعات', Icons.assignment_return, const InvoiceReturnPage(type: 'sales')),
     option(context, 'إرجاع فاتورة مشتريات', Icons.assignment_return_outlined, const InvoiceReturnPage(type: 'purchases')),
     option(context, 'جيديا — روابط الدفع بالكارت', Icons.credit_card, const GeideaPayments()),
@@ -5195,3 +5198,4 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
 }
+
