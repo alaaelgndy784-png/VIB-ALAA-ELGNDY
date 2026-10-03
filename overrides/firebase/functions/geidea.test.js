@@ -115,3 +115,17 @@ test('refresh inquires authenticated provider details instead of trusting link p
   await refreshRequest(db,FV,HttpsError,'owner','abcdefghijklmnopqrst',config,fetcher);
   assert.equal(calls,2);assert.equal(db.read('customers/c').balance,0);
 });
+
+test('ambiguous HTTP-200 provider error locks link creation instead of allowing another charge request',async()=>{
+ const db=setup();let calls=0;
+ const fetcher=async()=>{calls++;return {ok:true,json:async()=>({responseCode:'500'})};};
+ await assert.rejects(createLink(db,FV,HttpsError,'owner',input,config,fetcher,()=>1000));
+ assert.equal(db.read('paymentRequests/'+input.requestId).state,'creation_unknown');
+ await assert.rejects(createLink(db,FV,HttpsError,'owner',input,config,fetcher,()=>1001));assert.equal(calls,1);
+});
+test('reset account is held for review rather than receiving stale payment or refund balance edits',async()=>{
+ const db=setup();db.put('paymentRequests/abcdefghijklmnopqrst',{...db.read('paymentRequests/abcdefghijklmnopqrst'),actorId:'owner',resetAtMs:0});
+ db.put('users/owner',{role:'owner',active:true,resetAt:{toMillis:()=>1}});
+ assert.equal((await reconcile(db,FV,snapshot())).state,'review');assert.equal(db.read('customers/c').balance,100);
+ assert.equal(db.read('settings/geideaClearing').balance,100);
+});

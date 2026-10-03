@@ -34,7 +34,7 @@ async function api(path, options, fetcher = fetch) {
   const response = await fetcher(BASE + path, {...options, signal: AbortSignal.timeout(20000)});
   if (!response.ok) {const e=Error('GEIDEA_HTTP');e.httpStatus=response.status;throw e;}
   const data=await response.json();
-  if (data.responseCode !== '000') {const e=Error('GEIDEA_DECLINED');e.httpStatus=422;throw e;}
+  if (data.responseCode !== '000') {throw Error('GEIDEA_UNCONFIRMED_RESPONSE');}
   return data;
 }
 async function inquire(paymentIntentId,orderId,cfg,fetcher=fetch) {

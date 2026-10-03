@@ -51,12 +51,17 @@ exports.geideaWebhook=onRequest(giOptions,async(req,res)=>{
   const settings=cfg();
   if(!settings.enabled)return res.status(503).send('inactive');
   const body=req.body;
-  if(!geidea.verifyCallback(body?.order,body?.timeStamp??body?.timestamp,body?.signature,settings))return res.status(403).send('invalid signature');
+  const timestamp=body?.timeStamp??body?.timestamp;
+  if(timestamp && !geidea.verifyCallback(body?.order,timestamp,body?.signature,settings))return res.status(403).send('invalid signature');
+  // Legacy documented callbacks omit timestamps. Their bodies are only hints: an authenticated
+  // server inquiry of an already mapped merchant order is the sole payment authority.
   try {
-    const intentId=geidea.providerId(body.order?.paymentIntent?.id);
+    const orderId=geidea.providerId(body?.order?.orderId);
+    const saved=(await getFirestore().collection('geideaTransactions').doc(orderId).get()).data();
+    const intentId=geidea.providerId(body.order?.paymentIntent?.id??saved?.paymentIntentId);
     const mapping=(await getFirestore().collection('geideaIntents').doc(intentId).get()).data();
     if(!mapping)return res.status(200).send('unmatched');
-    const snapshot=await geidea.inquire(intentId,body.order.orderId,settings);
+    const snapshot=await geidea.inquire(intentId,orderId,settings);
     return res.status(200).json(await geidea.reconcile(getFirestore(),FieldValue,snapshot));
   }catch(_){return res.status(503).send('retry');}
 });
