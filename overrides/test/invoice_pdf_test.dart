@@ -237,6 +237,29 @@ void main() {
   }
   final brand = <String, dynamic>{'companyName': 'VIB للتجارة والتوزيع', 'address': 'عنوان الشركة - مثال توضيحي',
     'taxNumber': '123-456-789', 'commercialRegister': '54321', 'phone': '01000000000', 'phone2': '01100000000', 'invoiceFooter': 'شكراً لتعاملكم معنا - نموذج توضيحي للطباعة'};
+  for (final count in [5, 65]) {
+    test('navy gold purchase A4 renders $count lines with separate reference and balances', () async {
+      final names = ['حنفية خلاط', 'محبس مياه', 'وصلة مرنة', 'كوع نحاس', 'شريط تفلون'];
+      final costs = [350, 120, 30, 25, 5];
+      final quantities = [10, 20, 50, 40, 100];
+      final items = List.generate(count, (i) => <String, dynamic>{
+        'productName': count == 5 ? names[i] : '${names[i % 5]} - اسم صنف تفصيلي طويل رقم ${i + 1}',
+        'quantity': quantities[i % 5], 'unitCost': costs[i % 5],
+        'lineTotal': quantities[i % 5] * costs[i % 5],
+      });
+      final total = items.fold<double>(0, (sum, row) => sum + (row['lineTotal'] as num));
+      final bytes = await createInvoicePdf('purchases', 'PURCHASE-STYLE-2', {
+        'internalNumber': 1, 'invoiceBarcode': 'VIB-P-000001', 'invoiceNumber': '4587',
+        'items': items, 'total': total, 'paid': 5000, 'due': total - 5000,
+        'supplierName': 'شركة النور — نموذج تجريبي', 'supplierPhone': '01012345678',
+        'supplierPreviousBalance': 1250, 'supplierBalanceAfter': 1250 + total - 5000,
+        'createdAt': Timestamp.fromDate(DateTime(2026, 10, 3, 14)),
+      }, paperChoice: 'a4', settingsOverride: brand);
+      expect(String.fromCharCodes(bytes.take(4)), '%PDF');
+      Directory('dist').createSync(recursive: true);
+      File('dist/VIB-A4-STYLE-2${count == 5 ? '' : '-LONG'}.pdf').writeAsBytesSync(bytes);
+    });
+  }
   for (final paper in ['a4', '80','58']) {
     test('purchase $paper prints supplier outstanding balance after instalment', () async {
       final bytes = await createInvoicePdf('purchases', 'PURCHASE-DEMO', {
@@ -316,4 +339,3 @@ void main() {
     }
   }
 }
-

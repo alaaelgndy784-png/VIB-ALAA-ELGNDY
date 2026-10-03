@@ -41,6 +41,7 @@ part 'inventory_tools.dart';
 part 'online_payments.dart';
 part 'invoice_history.dart';
 part 'invoice_serials.dart';
+part 'invoice_a4.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -4042,6 +4043,11 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
       liveSupplierBalance = true;
     } catch (_) { /* Keep missing historical balances explicit instead of printing zero. */ }
   }
+  if (!thermal) return createStyledA4InvoicePdf(font: font, logo: logo, isSale: isSale,
+    number: number, barcode: barcode, data: data, items: items, company: company,
+    address: address, taxNumber: taxNumber, commercialRegister: commercialRegister,
+    phones: phones, footer: footer, supplierBalance: supplierBalance,
+    liveSupplierBalance: liveSupplierBalance);
   final format = thermal ? (narrow ? PdfPageFormat(58 * PdfPageFormat.mm, double.infinity) : PdfPageFormat.roll80) : PdfPageFormat.a4;
   pw.Text text(String value, {double? fontSize, bool bold = false, PdfColor? color, pw.TextAlign align = pw.TextAlign.right}) =>
     pw.Text(value, textAlign: align, style: pw.TextStyle(fontSize: fontSize ?? size,
