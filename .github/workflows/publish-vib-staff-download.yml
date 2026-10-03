@@ -1,4 +1,4 @@
-name: Publish VIB numbered inventory downloads
+name: Publish VIB compact inventory downloads
 on:
   workflow_dispatch:
   push:
@@ -15,29 +15,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37107158358 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
-          test "$(cat source-run.txt)" = "a65575a4851d8417032908a56bc0b01f7151ead2 success"
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37109892031 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "341ca3452c9f2a00de0df68c3a8ebe16f832e549 success"
       - name: Download tested staff APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37107158358
+          run-id: 37109892031
           github-token: ${{ github.token }}
           path: download
       - name: Download tested manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37107158358
+          run-id: 37109892031
           github-token: ${{ github.token }}
           path: download
       - name: Verify and publish inventory APKs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mv download/VIB-SALES-MANAGER.apk download/VIB-SALES-MANAGER-NUMBERED-STOCK.apk
-          echo '9c6a1c94341c9d8a7c7173827ea84f3f98069493f40c62ea1b8cdaaa4b584b09  download/VIB-SALES-MANAGER-NUMBERED-STOCK.apk' | sha256sum --check
-          mv download/VIB-SALES-STAFF.apk download/VIB-SALES-STAFF-NUMBERED-STOCK.apk
-          echo '21457f94a606f15cd7e09f1a4ab298210325115cf44198c6a189be7332690e7d  download/VIB-SALES-STAFF-NUMBERED-STOCK.apk' | sha256sum --check
-          gh release view vib-numbered-stock-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-numbered-stock-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB numbered inventory — 3 October 2026' --notes 'Tested manager and staff Android updates with numbered inventory and colored quantity, sale price, and total fields. Install over the corresponding existing app without deleting it.'
-          gh release upload vib-numbered-stock-20261003 download/VIB-SALES-STAFF-NUMBERED-STOCK.apk download/VIB-SALES-MANAGER-NUMBERED-STOCK.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+          mv download/VIB-SALES-MANAGER.apk download/VIB-SALES-MANAGER-COMPACT-STOCK.apk
+          echo '9d3f7ecfa3695b94ab1e3292915034e4b64cf2bba98c744e7a8de38f7171c605  download/VIB-SALES-MANAGER-COMPACT-STOCK.apk' | sha256sum --check
+          mv download/VIB-SALES-STAFF.apk download/VIB-SALES-STAFF-COMPACT-STOCK.apk
+          echo 'a237bec5a5fa320a9b5c2b27de89711712906499648f1532cbfab895f1be5ed4  download/VIB-SALES-STAFF-COMPACT-STOCK.apk' | sha256sum --check
+          gh release view vib-compact-stock-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-compact-stock-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB compact inventory — 3 October 2026' --notes 'Tested manager and staff Android updates with compact inventory and colored quantity, sale price, and total fields. Install over the corresponding existing app without deleting it.'
+          gh release upload vib-compact-stock-20261003 download/VIB-SALES-STAFF-COMPACT-STOCK.apk download/VIB-SALES-MANAGER-COMPACT-STOCK.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
