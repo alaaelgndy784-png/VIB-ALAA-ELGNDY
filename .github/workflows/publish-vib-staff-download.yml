@@ -1,4 +1,4 @@
-name: Publish VIB A4 style 2 and invoice tools downloads
+name: Publish VIB name-only account selectors
 on:
   workflow_dispatch:
   push:
@@ -15,30 +15,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37129620811 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
-          test "$(cat source-run.txt)" = "49129af5bf12f4ad2831adceccca5a121c336dc5 success"
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37135448659 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "534e68dfb43da023f4f660d01a9e6628dfc9f0e5 success"
       - name: Download tested staff APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37129620811
+          run-id: 37135448659
           github-token: ${{ github.token }}
           path: download
       - name: Download tested manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37129620811
+          run-id: 37135448659
           github-token: ${{ github.token }}
           path: download
       - name: Verify and publish A4 style 2 APKs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mv download/VIB-SALES-MANAGER.apk download/VIB-SALES-MANAGER-A4-STYLE-2.apk
-          echo 'e36a094d850cc8472681102fa0a0d58c44354e6e9c1068c5d51a802917cd02ba  download/VIB-SALES-MANAGER-A4-STYLE-2.apk' | sha256sum --check
-          mv download/VIB-SALES-STAFF.apk download/VIB-SALES-STAFF-A4-STYLE-2.apk
-          echo '590698f2eb0261b898142ad2aaeaaf070863645767a3e72ed472061bef8d9158  download/VIB-SALES-STAFF-A4-STYLE-2.apk' | sha256sum --check
-          gh release view vib-a4-style-2-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-a4-style-2-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB A4 style 2 and invoice tools — 3 October 2026' --notes 'Selected navy/gold A4 invoice layout for sales and purchases. Manager can create and select customer/supplier contacts inside invoice drafts, including first supplier and photographed purchases. Direct sales invoice editing adds or changes products on the same invoice with existing accounting and receipt protections. Existing thermal receipts, numbering/barcodes, inventory and returns preserved. Tested 78 Flutter cases plus 32 Node and 62 rules cases. Install over the corresponding existing app without deleting it.'
-          gh release upload vib-a4-style-2-20261003 download/VIB-SALES-STAFF-A4-STYLE-2.apk download/VIB-SALES-MANAGER-A4-STYLE-2.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+          mv download/VIB-SALES-MANAGER.apk download/VIB-Manager-Names.apk
+          echo '27815e2cc9d0c61d7b157e89bb2e78c9133b90652baff4fdfcab83c1c61b7db6  download/VIB-Manager-Names.apk' | sha256sum --check
+          mv download/VIB-SALES-STAFF.apk download/VIB-Staff-Names.apk
+          echo 'db2eebe4445aef5dbedaec1c2b6e1e4fd76513ac789665a096263af46694ed7a  download/VIB-Staff-Names.apk' | sha256sum --check
+          gh release view vib-names-only-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-names-only-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB names only — 3 October 2026' --notes 'Invoice customer selection displays names only. Supplier invoice choices already display names only. Phone and balance records and accounting remain intact. Install as an update over the corresponding existing app.'
+          gh release upload vib-names-only-20261003 download/VIB-Staff-Names.apk download/VIB-Manager-Names.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
 
