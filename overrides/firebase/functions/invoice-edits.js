@@ -34,6 +34,7 @@ async function appendInvoice(db, FieldValue, ErrorType, uid, input) {
       if (prior.actorId !== uid || prior.fingerprint !== fingerprint) fail('already-exists', 'طلب التعديل محفوظ ببيانات أخرى');
       return {invoiceId: invoiceRef.id, revision: prior.revision};
     }
+    if (input.type === 'sales' && old.onlinePaymentEver === true) fail('failed-precondition', 'الفاتورة لها سداد بالكارت؛ أنشئ فاتورة جديدة');
     if (old.status !== 'completed') fail('failed-precondition', 'لا يمكن إضافة بنود لفاتورة مرتجعة');
     if (typeof old.total !== 'number' || typeof old.paid !== 'number' || typeof old.due !== 'number' ||
         cents(old.total) - cents(old.paid) !== cents(old.due))
@@ -138,3 +139,4 @@ async function appendInvoice(db, FieldValue, ErrorType, uid, input) {
   });
 }
 module.exports = {appendInvoice};
+

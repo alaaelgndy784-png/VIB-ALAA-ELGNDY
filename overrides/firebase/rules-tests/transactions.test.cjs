@@ -269,3 +269,20 @@ test('fractional import stock rejects the entire chunk including products and re
 test('staff and inactive accounts cannot bulk import products and opening stock',async()=>{
  for(const uid of ['staff','inactive']) await assertFails(productImportBatch(env.authenticatedContext(uid).firestore(),[0,-3,12]));
 });
+
+
+test('card-paid invoice rejects client return but permits printing; confirmed full refund permits return',async()=>{
+ await seedEditableSale();
+ await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'sales/editable'),{onlinePaid:30,onlinePaymentEver:true,receiptPaid:30},{merge:true}));
+ const db=env.authenticatedContext('owner').firestore();
+ await assertFails(setDoc(doc(db,'sales/editable'),{status:'returned',returnedAt:serverTimestamp()},{merge:true}));
+ await assertSucceeds(setDoc(doc(db,'sales/editable'),{printedAt:serverTimestamp(),printedBy:'owner'},{merge:true}));
+ await assertFails(editSaleBatch(db));
+ await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'sales/editable'),{onlinePaid:0,receiptPaid:0},{merge:true}));
+ await assertSucceeds(setDoc(doc(db,'sales/editable'),{status:'returned',returnedAt:serverTimestamp()},{merge:true}));
+});
+test('payment requests, provider transactions and clearing totals cannot be fabricated by a client',async()=>{
+ const db=env.authenticatedContext('owner').firestore();
+ for(const path of ['paymentRequests/fake','geideaIntents/fake','geideaTransactions/fake','settings/geideaClearing'])
+   await assertFails(setDoc(doc(db,path),{balance:100,state:'paid'}));
+});

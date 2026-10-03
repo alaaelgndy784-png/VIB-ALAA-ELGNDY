@@ -22,6 +22,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '21'
+      - run: node --test overrides/firebase/functions/*.test.js
       - run: npm ci && npm test
         working-directory: overrides/firebase/rules-tests
   build:

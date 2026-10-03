@@ -37,6 +37,7 @@ part 'chat_alerts.dart';
 part 'invoice_editor.dart';
 part 'product_import.dart';
 part 'inventory_tools.dart';
+part 'online_payments.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1298,6 +1299,7 @@ class Management extends StatelessWidget {
     option(context, 'جرد المخزون', Icons.inventory_2_outlined, const InventoryAudit()),
     option(context, 'إرجاع فاتورة مبيعات', Icons.assignment_return, const InvoiceReturnPage(type: 'sales')),
     option(context, 'إرجاع فاتورة مشتريات', Icons.assignment_return_outlined, const InvoiceReturnPage(type: 'purchases')),
+    option(context, 'جيديا — روابط الدفع بالكارت', Icons.credit_card, const GeideaPayments()),
     option(context, 'الصندوق', Icons.account_balance_wallet_outlined, const CashBox()),
     option(context, 'المصروفات', Icons.receipt_long_outlined, const Expenses()),
     option(context, 'تقرير الأرباح', Icons.bar_chart_outlined, const ProfitReport()),
@@ -3525,6 +3527,7 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
     ListTile(leading: const Icon(Icons.picture_as_pdf, color: gold), title: const Text('حفظ أو مشاركة الفاتورة PDF'), onTap: () { Navigator.pop(c); exportInvoicePdf(context, type, id, data); }),
+    if (type == 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.credit_card, color: gold), title: const Text('رابط دفع بالكارت — جيديا'), onTap: () { Navigator.pop(c); openGeideaPayments(context, invoiceId:id); }),
     if (type != 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.playlist_add, color: gold), title: const Text('إضافة بند جديد لنفس الفاتورة'), onTap: () { Navigator.pop(c); appendInvoiceDialog(context, type, id); }),
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
     if (type == 'sales' && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال للزبون على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
@@ -3554,6 +3557,7 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
     }
     final old = (await tx.get(invoiceRef)).data();
     if (old == null || old['status'] != 'completed') throw Exception('الفاتورة غير متاحة للتعديل');
+    if(type=='sales' && old['onlinePaymentEver']==true)throw StateError('الفاتورة لها سداد بالكارت؛ أنشئ فاتورة جديدة');
     if ((old['revision'] ?? 0) != revision) throw Exception('الفاتورة اتعدلت؛ افتحها من جديد');
     if (old['total'] is! num || old['paid'] is! num || old['due'] is! num ||
         cents(old['total'] as num) - cents(old['paid'] as num) != cents(old['due'] as num)) {
@@ -4085,7 +4089,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
           if (!isSale && data.containsKey('supplierPreviousBalance'))
             summaryRow('الإجمالي المستحق', (data['supplierPreviousBalance'] as num).toDouble() + total),
           summaryRow('المدفوع نقدًا', paid),
-          if (receiptPaid > 0) summaryRow('محصّل بسندات قبض', receiptPaid),
+          if (receiptPaid > 0) summaryRow(data['onlinePaymentEver'] == true ? 'محصّل بعد الفاتورة' : 'محصّل بسندات قبض', receiptPaid),
           summaryRow('باقي هذه الفاتورة', due - receiptPaid, strong: true),
           if (isSale && data.containsKey('customerBalanceAfter'))
             summaryRow('رصيد العميل بعد الفاتورة', data['customerBalanceAfter'], strong: true),
@@ -4138,6 +4142,11 @@ Future<void> confirmReturn(BuildContext context, String type, String id, Map<Str
   try {
     final current = (await db.collection(type).doc(id).get(const GetOptions(source: Source.server))).data();
     if (current == null || current['status'] == 'returned' || !visibleAfterReset(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    if(type=='sales' && ((current['onlinePaid'] as num?)??0)>0){
+      if(context.mounted){await showInvoiceSaveProblem(context,'الفاتورة لها سداد بالكارت. رد المبلغ من سجل جيديا وانتظر تأكيده قبل إرجاع الفاتورة.',title:'رد الكارت أولًا',button:'تمام');
+        if(context.mounted)await openGeideaPayments(context,invoiceId:id);}
+      return;
+    }
     final sales = type == 'sales', settlement = returnSettlement(current, sales: type == 'sales');
     final partyId = '${current[sales ? 'customerId' : 'supplierId'] ?? ''}';
     final party = partyId.isEmpty ? null : (await db.collection(sales ? 'customers' : 'suppliers').doc(partyId).get(const GetOptions(source: Source.server))).data();
@@ -4165,7 +4174,7 @@ String accountBalanceLabel(num balance, {required bool supplier}) => balance < 0
   : balance == 0 ? 'الحساب متعادل' : supplier ? 'المتبقي عليك للمورد' : 'المتبقي على العميل';
 
 String invoiceReturnSignature(Map<String,dynamic> data) => jsonEncode({for(final key in
-  ['status','revision','items','productId','quantity','branchId','stockBranchId','customerId','supplierId','total','due','paid','receiptPaid','cashPosted','cashPaidPosted']) key:data[key]});
+  ['status','revision','items','productId','quantity','branchId','stockBranchId','customerId','supplierId','total','due','paid','receiptPaid','onlinePaid','onlinePaymentEver','cashPosted','cashPaidPosted']) key:data[key]});
 
 Future<void> returnInvoice(String type, String id, {String? expectedSignature}) async {
   if (!['sales', 'purchases'].contains(type)) throw StateError('نوع الفاتورة غير صحيح');
@@ -4181,6 +4190,7 @@ Future<void> returnInvoice(String type, String id, {String? expectedSignature}) 
     if (profile.data()?['active'] != true || profile.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
     if (!visibleAfterReset(d)) throw StateError('الفاتورة تخص دورة قديمة');
     if (expectedSignature != null && invoiceReturnSignature(d) != expectedSignature) throw StateError('الفاتورة تغيّرت؛ افتح مراجعة المرتجع من جديد');
+    if(type=='sales' && ((d['onlinePaid'] as num?)??0)>0)throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
     if (d['status'] == 'returned') throw Exception('الفاتورة مرتجعة بالفعل');
 
     final now = FieldValue.serverTimestamp();
@@ -5042,6 +5052,7 @@ Future<void> editSaleByNumber(BuildContext context) async {
 }
 
 Future<void> assertSaleEditable(Map<String, dynamic> data) async {
+  if(data['onlinePaymentEver']==true)throw StateError('الفاتورة لها سداد بالكارت؛ أنشئ فاتورة جديدة');
   if ('${data['receiptId'] ?? ''}'.isNotEmpty) throw Exception('الفاتورة مرتبطة بسند قبض ولا يمكن تعديلها');
   final customerId = '${data['customerId'] ?? ''}';
   if (customerId.isEmpty) return;
@@ -5075,6 +5086,7 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
     }
     final old = (await tx.get(ref)).data();
     if (old == null || old['status'] != 'completed' || (old['revision'] ?? 0) != revision) throw Exception('الفاتورة غير متاحة أو اتعدلت؛ افتحها من جديد');
+    if(old['onlinePaymentEver']==true)throw StateError('الفاتورة لها سداد بالكارت؛ أنشئ فاتورة جديدة');
     if ('${old['receiptId'] ?? ''}'.isNotEmpty) throw Exception('الفاتورة مرتبطة بسند قبض');
     if (old['paid'] is! num || old['due'] is! num || cents(old['total']) - cents(old['paid']) != cents(old['due'])) throw Exception('الفاتورة القديمة تحتاج مراجعة المدفوع والباقي');
     final customerId = '${old['customerId'] ?? ''}';
