@@ -237,43 +237,76 @@ class InvoiceCompactTableLine extends StatelessWidget {
 }
 
 enum InvoiceLineEditAction { apply, delete }
+class _InvoiceLineEditorResult {
+  final InvoiceLineEditAction action;
+  final String price,quantity;
+  final double? baseCost;
+  final double percent;
+  _InvoiceLineEditorResult(this.action,this.price,this.quantity,this.baseCost,this.percent);
+}
+
 Future<InvoiceLineEditAction?> showInvoiceLineEditor(BuildContext context, {
   required String name,required TextEditingController price,required TextEditingController quantity,
   required PurchaseDiscountDraft discount, bool priceEditable=true,bool allowDelete=false,
   num? unitCost,Stream<int?>? stockStream,
 }) async {
-  final draftPrice=TextEditingController(text:price.text),draftQuantity=TextEditingController(text:quantity.text);
-  final draftDiscount=PurchaseDiscountDraft()..baseCost=discount.baseCost..percent=discount.percent;
-  final action=await showDialog<InvoiceLineEditAction>(context:context,barrierDismissible:false,
-    builder:(dialog)=>StatefulBuilder(builder:(dialog,update)=>AlertDialog(
-      insetPadding:const EdgeInsets.symmetric(horizontal:12,vertical:16),
-      contentPadding:const EdgeInsets.all(10),title:const Text('بيانات الصنف'),
-      content:SizedBox(width:450,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
-        PurchaseInvoiceLine(number:1,name:name,cost:draftPrice,quantity:draftQuantity,enabled:true,
-          priceEditable:priceEditable,totalEditable:priceEditable,discountDraft:draftDiscount,showProductActions:false,
-          onChoose:() {},onDelete:() {},onChanged:()=>update(() {})),
-        if(stockStream!=null) StreamBuilder<int?>(stream:stockStream,builder:(context,snapshot)=>Text(
-          'الكمية المتوفرة: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.data ?? 'جارٍ التحميل'}',style:const TextStyle(color:gold))),
-        if(unitCost!=null) Text('سعر التكلفة: ${unitCost.toStringAsFixed(2)} ج.م',style:const TextStyle(color:gold)),
-      ]))),
-      actions:[
-        if(allowDelete) TextButton.icon(icon:const Icon(Icons.delete_outline,color:Colors.redAccent),label:const Text('حذف الصنف'),
-          onPressed:()=>Navigator.pop(dialog,InvoiceLineEditAction.delete)),
-        TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('تراجع')),
-        FilledButton(onPressed:() async {
-          final q=int.tryParse(draftQuantity.text.trim()),p=double.tryParse(draftPrice.text.trim().replaceAll(',', '.'));
-          if(q==null || q<=0 || p==null || !p.isFinite || p<0) {
-            await showInvoiceSaveProblem(dialog,'أدخل عددًا أكبر من صفر وسعرًا صحيحًا',title:'بيانات الصنف',button:'رجوع للصنف');return;
-          }
-          Navigator.pop(dialog,InvoiceLineEditAction.apply);
-        },child:const Text('متابعة')),
-      ],
-    )));
-  if(action==InvoiceLineEditAction.apply) {
-    quantity.text=draftQuantity.text;price.text=draftPrice.text;
-    discount.baseCost=draftDiscount.baseCost;discount.percent=draftDiscount.percent;
+  final result=await showDialog<_InvoiceLineEditorResult>(context:context,barrierDismissible:false,
+    builder:(_)=>_InvoiceLineEditorDialog(name:name,initialPrice:price.text,initialQuantity:quantity.text,
+      baseCost:discount.baseCost,percent:discount.percent,priceEditable:priceEditable,
+      allowDelete:allowDelete,unitCost:unitCost,stockStream:stockStream));
+  if(result?.action==InvoiceLineEditAction.apply) {
+    quantity.text=result!.quantity;price.text=result.price;
+    discount.baseCost=result.baseCost;discount.percent=result.percent;
   }
-  draftPrice.dispose();draftQuantity.dispose();return action;
+  return result?.action;
+}
+
+class _InvoiceLineEditorDialog extends StatefulWidget {
+  final String name,initialPrice,initialQuantity;
+  final double? baseCost;
+  final double percent;
+  final bool priceEditable,allowDelete;
+  final num? unitCost;
+  final Stream<int?>? stockStream;
+  const _InvoiceLineEditorDialog({required this.name,required this.initialPrice,required this.initialQuantity,
+    required this.baseCost,required this.percent,required this.priceEditable,required this.allowDelete,this.unitCost,this.stockStream});
+  @override State<_InvoiceLineEditorDialog> createState()=>_InvoiceLineEditorDialogState();
+}
+
+class _InvoiceLineEditorDialogState extends State<_InvoiceLineEditorDialog> {
+  late final TextEditingController draftPrice,draftQuantity;
+  late final PurchaseDiscountDraft draftDiscount;
+  @override void initState() {
+    super.initState();draftPrice=TextEditingController(text:widget.initialPrice);draftQuantity=TextEditingController(text:widget.initialQuantity);
+    draftDiscount=PurchaseDiscountDraft()..baseCost=widget.baseCost..percent=widget.percent;
+  }
+  @override void dispose() {draftPrice.dispose();draftQuantity.dispose();super.dispose();}
+  void finish(InvoiceLineEditAction action)=>Navigator.pop(context,_InvoiceLineEditorResult(
+    action,draftPrice.text,draftQuantity.text,draftDiscount.baseCost,draftDiscount.percent));
+  @override Widget build(BuildContext context)=>Directionality(textDirection:TextDirection.rtl,child:AlertDialog(
+    insetPadding:const EdgeInsets.symmetric(horizontal:12,vertical:16),contentPadding:const EdgeInsets.all(10),
+    title:const Text('بيانات الصنف'),
+    content:SizedBox(width:450,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
+      PurchaseInvoiceLine(number:1,name:widget.name,cost:draftPrice,quantity:draftQuantity,enabled:true,
+        priceEditable:widget.priceEditable,totalEditable:widget.priceEditable,discountDraft:draftDiscount,showProductActions:false,
+        onChoose:() {},onDelete:() {},onChanged:()=>setState(() {})),
+      if(widget.stockStream!=null) StreamBuilder<int?>(stream:widget.stockStream,builder:(context,snapshot)=>Text(
+        'الكمية المتوفرة: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.data ?? 'جارٍ التحميل'}',style:const TextStyle(color:gold))),
+      if(widget.unitCost!=null) Text('سعر التكلفة: ${widget.unitCost!.toStringAsFixed(2)} ج.م',style:const TextStyle(color:gold)),
+    ]))),
+    actions:[
+      if(widget.allowDelete) TextButton.icon(icon:const Icon(Icons.delete_outline,color:Colors.redAccent),label:const Text('حذف الصنف'),
+        onPressed:()=>finish(InvoiceLineEditAction.delete)),
+      TextButton(onPressed:()=>Navigator.pop(context),child:const Text('تراجع')),
+      FilledButton(onPressed:() async {
+        final q=int.tryParse(draftQuantity.text.trim()),p=double.tryParse(draftPrice.text.trim().replaceAll(',', '.'));
+        if(q==null || q<=0 || p==null || !p.isFinite || p<0) {
+          await showInvoiceSaveProblem(context,'أدخل عددًا أكبر من صفر وسعرًا صحيحًا',title:'بيانات الصنف',button:'رجوع للصنف');return;
+        }
+        finish(InvoiceLineEditAction.apply);
+      },child:const Text('متابعة')),
+    ],
+  ));
 }
 
 Future<String> invoiceDraftNumberPreview(String type) async {
