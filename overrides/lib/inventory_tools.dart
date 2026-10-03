@@ -136,7 +136,7 @@ class _InventoryPriceAdjustmentState extends State<InventoryPriceAdjustment> {
     body: loading ? const Center(child:CircularProgressIndicator()) : Column(children:[
       if (error.isNotEmpty) Padding(padding:const EdgeInsets.all(12),child:Text(error,style:const TextStyle(color:Colors.redAccent))),
       if (preview == null) ...[
-        Padding(padding:const EdgeInsets.all(12),child:Column(children:[
+        Flexible(child:SingleChildScrollView(child:Padding(padding:const EdgeInsets.all(12),child:Column(children:[
           DropdownButtonFormField<String>(value:field,decoration:const InputDecoration(labelText:'الأسعار المطلوب تعديلها'),items:const[
             DropdownMenuItem(value:'price',child:Text('سعر البيع')),DropdownMenuItem(value:'purchasePrice',child:Text('سعر الشراء')),
             DropdownMenuItem(value:'both',child:Text('سعر الشراء والبيع'))],onChanged:(v)=>setState(()=>field=v!)),
@@ -146,7 +146,7 @@ class _InventoryPriceAdjustmentState extends State<InventoryPriceAdjustment> {
           TextField(controller:search,decoration:const InputDecoration(labelText:'بحث عن صنف',prefixIcon:Icon(Icons.search)),onChanged:(_)=>setState((){})),
           Wrap(spacing:12,children:[TextButton(onPressed:()=>setState(()=>selected.addAll(filtered.map((p)=>p.id))),child:const Text('تحديد كل النتائج')),
             TextButton(onPressed:()=>setState(()=>selected.clear()),child:const Text('إلغاء التحديد')),Text('المختار: ${selected.length}')]),
-        ])),
+        ])))),
         Expanded(child:ListView.builder(itemCount:filtered.length,itemBuilder:(c,i){final p=filtered[i];return CheckboxListTile(value:selected.contains(p.id),title:Text('${p.data()['name']}'),subtitle:Text('شراء: ${p.data()['purchasePrice'] ?? 'غير مسجل'} • بيع: ${p.data()['price'] ?? 'غير مسجل'}'),onChanged:(v)=>setState(()=>v==true?selected.add(p.id):selected.remove(p.id)));})),
         Padding(padding:const EdgeInsets.all(12),child:FilledButton.icon(onPressed:prepare,icon:const Icon(Icons.visibility),label:const Text('معاينة الأسعار الجديدة'))),
       ] else ...[
@@ -196,11 +196,11 @@ class _InvoiceReturnPageState extends State<InvoiceReturnPage> {
     finally{if(mounted)setState(()=>loading=false);}
   }
   @override Widget build(BuildContext context)=>Column(children:[
-    Padding(padding:const EdgeInsets.all(12),child:Column(children:[
+    Flexible(child:SingleChildScrollView(child:Padding(padding:const EdgeInsets.all(12),child:Column(children:[
       Text(sales?'مرتجع المبيعات يضيف الكميات إلى مخزون الفاتورة.':'مرتجع المشتريات يخصم الكميات من المخزون الرئيسي.'),
-      TextField(controller:number,decoration:const InputDecoration(labelText:'رقم الفاتورة أو رمزها الكامل'),onSubmitted:(_)=>find()),
+      TextField(controller:number,decoration:const InputDecoration(labelText:'رقم الفاتورة أو رمزها الكامل'),onChanged:(_)=>setState((){}),onSubmitted:(_)=>find()),
       FilledButton.icon(onPressed:loading?null:find,icon:const Icon(Icons.search),label:Text(number.text.trim().isEmpty?'عرض آخر 100 فاتورة':'بحث')),
-    ])),
+    ])))),
     if(error.isNotEmpty)Text(error,style:const TextStyle(color:Colors.redAccent)),
     if(loading)const CircularProgressIndicator(),
     Expanded(child:ListView(children:invoices.map((d){final data=d.data();return Card(child:ListTile(

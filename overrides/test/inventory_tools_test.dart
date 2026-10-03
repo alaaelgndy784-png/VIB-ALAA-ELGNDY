@@ -1,8 +1,18 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
 import '../lib/inventory_price_data.dart';
 import '../lib/main.dart';
 
 void main() {
+  testWidgets('return entry pages fit a small phone with keyboard and text scaling', (tester) async {
+    tester.view.physicalSize=const Size(360,640);tester.view.devicePixelRatio=1;
+    addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);
+    for(final type in ['sales','purchases']) {
+      await tester.pumpWidget(MaterialApp(home:MediaQuery(data:const MediaQueryData(size:Size(360,640),viewInsets:EdgeInsets.only(bottom:280),textScaler:TextScaler.linear(1.3)),child:Directionality(textDirection:TextDirection.rtl,child:Scaffold(body:InvoiceReturnPage(key:ValueKey(type),type:type))))));
+      await tester.enterText(find.byType(TextField),'TEST-123');await tester.pump();
+      expect(find.text('بحث'),findsOneWidget);expect(tester.takeException(),isNull);
+    }
+  });
   test('price adjustments use current prices and round fractional amounts', () {
     expect(adjustedInventoryPrice(100,10,increase:true),110);
     expect(adjustedInventoryPrice(100,10,increase:false),90);
