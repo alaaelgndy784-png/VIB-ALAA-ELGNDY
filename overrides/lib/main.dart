@@ -1244,7 +1244,12 @@ class _SalesState extends State<Sales> {
             : '${sale['productName'] ?? ''} × ${sale['quantity'] ?? 0}';
         final paymentText = sale.containsKey('paid') ? ' • مدفوع ${sale['paid'] ?? 0} • باقي ${sale['due'] ?? 0}' : '';
         return Card(child: ListTile(
-          title: Text('رقم الفاتورة: ${invoiceDisplayNumber('sales',d.id,sale)}\n$itemText${itemCount > 3 ? ' • +${itemCount - 3} أصناف' : ''}'),
+          title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('رقم الفاتورة: ${invoiceDisplayNumber('sales',d.id,sale)}'),
+            Text('${sale['customerName'] ?? ''}'.trim().isEmpty ? 'بدون عميل مسجل' : '${sale['customerName']}',
+              style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+            Text('$itemText${itemCount > 3 ? ' • +${itemCount - 3} أصناف' : ''}'),
+          ]),
           subtitle: Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجع' : ''}'),
           trailing: Text('${sale['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
           onTap: () => invoiceActions(context, 'sales', d.id, sale, canReturn: owner),
@@ -1681,7 +1686,11 @@ class _PurchasesState extends State<Purchases>{
               ? rawItems.take(3).map((e) => '${(e as Map)['productName'] ?? ''} × ${e['quantity'] ?? 0}').join(' • ')
               : '${p['productName'] ?? ''} × ${p['quantity'] ?? 0}';
           return Card(child: ListTile(
-            title: Text('فاتورة ${invoiceDisplayNumber('purchases',d.id,p)} • ${p['supplierName'] ?? ''}'),
+            title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('فاتورة ${invoiceDisplayNumber('purchases',d.id,p)}'),
+              Text('${p['supplierName'] ?? ''}'.trim().isEmpty ? 'مورد غير مسمى' : '${p['supplierName']}',
+                style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+            ]),
             subtitle: Text('$itemText${itemCount > 3 ? ' • +${itemCount - 3} أصناف' : ''}\n${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),
             isThreeLine: true,
             trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
