@@ -73,28 +73,74 @@ class _InvoiceEditSearchDialogState extends State<_InvoiceEditSearchDialog> {
     if(result.metadata.isFromCache || result.metadata.hasPendingWrites) throw StateError('انتظر تأكيد الفواتير من الخادم');
     return result;
   }
-  @override Widget build(BuildContext context)=>AlertDialog(
-    title:Text(widget.type=='sales' ? 'تعديل فاتورة مبيعات' : 'تعديل فاتورة مشتريات'),
-    content:SizedBox(width:620,height:MediaQuery.sizeOf(context).height*.55,child:Column(children:[
-      TextField(controller:widget.search,autofocus:true,onChanged:(_)=>setState((){}),decoration:InputDecoration(
-        labelText:widget.type=='sales' ? 'اسم العميل أو رقم الفاتورة' : 'اسم المورد أو رقم الفاتورة',prefixIcon:const Icon(Icons.search))),
-      const SizedBox(height:8), const Text('اختر الفاتورة من النتائج. الفاتورة المرتبطة بسند لا تقبل التعديل.'),
-      Expanded(child:FutureBuilder<QuerySnapshot<Map<String,dynamic>>>(future:invoices,builder:(context,snapshot){
-        if(snapshot.hasError)return Center(child:Text('تعذر تحميل الفواتير: ${snapshot.error}'));
-        if(!snapshot.hasData)return const Center(child:CircularProgressIndicator());
-        final rows=snapshot.data!.docs.where((d)=>visibleAfterReset(d.data()) && d.data()['status']=='completed' && invoiceMatchesEditSearch(widget.type,d.id,d.data(),widget.search.text)).toList();
-        if(rows.isEmpty)return const Center(child:Text('لا توجد فاتورة مطابقة للاسم أو الرقم'));
-        return ListView.builder(itemCount:rows.length,itemBuilder:(context,i){
-          final row=rows[i],data=row.data(),sales=widget.type=='sales';
-          final blocked=invoiceHasLinkedVoucher(data);
-          return ListTile(leading:Icon(blocked ? Icons.lock_outline : Icons.receipt_long_outlined),
-            title:Text('${data[sales ? 'customerName' : 'supplierName'] ?? ''}',style:const TextStyle(color:Colors.greenAccent)),
-            subtitle:Text('رقم الفاتورة: ${invoiceDisplayNumber(widget.type,row.id,data)}\n${formatDate(data['createdAt'])}${blocked ? '\nمرتبطة بسند — التعديل ممنوع' : ''}'),
-            trailing:Text('${((data['total'] as num?) ?? 0).toStringAsFixed(2)} ج.م'),enabled:!blocked,
-            onTap:blocked ? null : ()=>Navigator.pop(context,row.id));
-        });
-      })),
-    ])),actions:[TextButton(onPressed:()=>Navigator.pop(context),child:const Text('إلغاء'))]);
+  @override Widget build(BuildContext context)=>InvoiceEditSearchFrame(type:widget.type,search:widget.search,
+    onChanged:(_)=>setState((){}),results:FutureBuilder<QuerySnapshot<Map<String,dynamic>>>(future:invoices,builder:(context,snapshot){
+      if(snapshot.hasError)return SingleChildScrollView(child:Text('تعذر تحميل الفواتير: ${snapshot.error}'));
+      if(!snapshot.hasData)return const Center(child:CircularProgressIndicator());
+      final rows=snapshot.data!.docs.where((d)=>visibleAfterReset(d.data()) && d.data()['status']=='completed' && invoiceMatchesEditSearch(widget.type,d.id,d.data(),widget.search.text)).toList();
+      if(rows.isEmpty)return const Center(child:Text('لا توجد فاتورة مطابقة للاسم أو الرقم'));
+      return ListView.builder(itemCount:rows.length,itemBuilder:(context,i){
+        final row=rows[i],data=row.data(),sales=widget.type=='sales';
+        final blocked=invoiceHasLinkedVoucher(data);
+        return InvoiceEditResultCard(key:ValueKey(row.id),party:'${data[sales ? 'customerName' : 'supplierName'] ?? ''}',
+          number:invoiceDisplayNumber(widget.type,row.id,data),date:formatDate(data['createdAt']),
+          amount:((data['total'] as num?) ?? 0).toStringAsFixed(2),blocked:blocked,
+          onOpen:()=>Navigator.pop(context,row.id));
+      });
+    }));
+}
+
+void selectInvoiceNumberText(TextEditingController controller) =>
+  controller.selection=TextSelection(baseOffset:0,extentOffset:controller.text.length);
+
+class InvoiceEditSearchFrame extends StatelessWidget {
+  final String type;
+  final TextEditingController search;
+  final ValueChanged<String> onChanged;
+  final Widget results;
+  const InvoiceEditSearchFrame({super.key,required this.type,required this.search,required this.onChanged,required this.results});
+  @override Widget build(BuildContext context)=>Dialog(
+    insetPadding:const EdgeInsets.symmetric(horizontal:12,vertical:16),
+    child:ConstrainedBox(constraints:const BoxConstraints(maxWidth:680),child:LayoutBuilder(builder:(context,constraints)=>
+      SizedBox(width:double.infinity,height:constraints.maxHeight.clamp(0.0,560.0).toDouble(),child:Padding(
+        padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+          Text(type=='sales' ? 'تعديل فاتورة مبيعات' : 'تعديل فاتورة مشتريات',
+            maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:18,fontWeight:FontWeight.bold)),
+          const SizedBox(height:8),
+          TextField(controller:search,autofocus:false,onChanged:onChanged,style:const TextStyle(fontSize:14),
+            decoration:InputDecoration(labelText:type=='sales' ? 'اسم العميل أو رقم الفاتورة' : 'اسم المورد أو رقم الفاتورة',
+              prefixIcon:const Icon(Icons.search,size:20),isDense:true,border:const OutlineInputBorder(),
+              contentPadding:const EdgeInsets.symmetric(horizontal:10,vertical:10))),
+          const SizedBox(height:6),
+          const Text('اختر الفاتورة من النتائج. المرتبطة بسند لا تقبل التعديل.',
+            maxLines:2,overflow:TextOverflow.ellipsis,style:TextStyle(fontSize:11)),
+          const SizedBox(height:6),Expanded(child:results),
+          Align(alignment:AlignmentDirectional.centerEnd,child:TextButton(
+            onPressed:()=>Navigator.pop(context),child:const Text('إلغاء'))),
+        ]))))));
+}
+
+class InvoiceEditResultCard extends StatelessWidget {
+  final String party,number,date,amount;
+  final bool blocked;
+  final VoidCallback onOpen;
+  const InvoiceEditResultCard({super.key,required this.party,required this.number,required this.date,
+    required this.amount,required this.blocked,required this.onOpen});
+  @override Widget build(BuildContext context)=>Card(margin:const EdgeInsets.symmetric(vertical:3),
+    child:InkWell(onTap:blocked ? null : onOpen,child:Padding(padding:const EdgeInsets.all(9),
+      child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+        Row(children:[Icon(blocked ? Icons.lock_outline : Icons.receipt_long_outlined,size:19,color:gold),
+          const SizedBox(width:6),Expanded(child:Text(party.isEmpty ? 'بدون اسم مسجل' : party,
+            maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(color:Colors.greenAccent,fontSize:14,fontWeight:FontWeight.bold)))]),
+        const SizedBox(height:4),
+        Wrap(spacing:12,runSpacing:2,children:[
+          Text('رقم الفاتورة: $number',maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12)),
+          Text('$amount ج.م',maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(color:gold,fontSize:12,fontWeight:FontWeight.bold)),
+        ]),
+        Text(date,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:11)),
+        if(blocked) const Text('مرتبطة بسند — التعديل ممنوع',maxLines:2,overflow:TextOverflow.ellipsis,
+          style:TextStyle(fontSize:11,color:Colors.redAccent)),
+      ]))));
 }
 
 bool invoiceHasLinkedVoucher(Map<String,dynamic> data) =>
@@ -233,3 +279,4 @@ int purchaseEditTotalCents(List<Map<String,dynamic>> items) {
   if(!total.isFinite || total>10000000000)throw StateError('إجمالي الفاتورة غير صحيح');
   return (total*100).round();
 }
+

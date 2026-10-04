@@ -2062,6 +2062,7 @@ class _PurchaseInvoiceLineState extends State<PurchaseInvoiceLine> {
     Widget field(TextEditingController controller, String label, {bool integer = false}) => TextField(
       controller: controller, enabled: enabled && (integer || priceEditable), textAlign: TextAlign.center,
       style: const TextStyle(fontSize: 13),
+      onTapAlwaysCalled: true, onTap: () => selectInvoiceNumberText(controller),
       keyboardType: TextInputType.numberWithOptions(decimal: !integer),
       decoration: InputDecoration(labelText: label, floatingLabelBehavior: FloatingLabelBehavior.always,
         labelStyle: const TextStyle(fontSize: 11), isDense: true,
@@ -2090,6 +2091,7 @@ class _PurchaseInvoiceLineState extends State<PurchaseInvoiceLine> {
           const SizedBox(width: 5), Expanded(flex: 2, child: field(quantity, 'العدد', integer: true)),
           const SizedBox(width: 5), Expanded(flex: 4, child: widget.totalEditable ? TextField(
             controller: _total, enabled: enabled && priceEditable, textAlign: TextAlign.center,
+            onTapAlwaysCalled:true,onTap:()=>selectInvoiceNumberText(_total),
             style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: gold),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: InputDecoration(labelText: 'الإجمالي', errorText: _totalError,
@@ -2107,6 +2109,7 @@ class _PurchaseInvoiceLineState extends State<PurchaseInvoiceLine> {
             constraints:const BoxConstraints.tightFor(width:32,height:32),padding:EdgeInsets.zero,
             icon:const Icon(Icons.remove,size:18,color:gold)),
           Expanded(child:TextField(controller:_discount,enabled:enabled && priceEditable,textAlign:TextAlign.center,
+            onTapAlwaysCalled:true,onTap:()=>selectInvoiceNumberText(_discount),
             keyboardType:const TextInputType.numberWithOptions(decimal:true),style:const TextStyle(fontSize:12),
             decoration:InputDecoration(labelText:'خصم %',errorText:_discountError,isDense:true,
               floatingLabelBehavior:FloatingLabelBehavior.always,contentPadding:const EdgeInsets.symmetric(horizontal:5,vertical:7),
@@ -5314,4 +5317,5 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
 }
+
 

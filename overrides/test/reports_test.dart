@@ -1,4 +1,6 @@
 import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart' show rootBundle;
@@ -15,6 +17,58 @@ void main() {
     'total':total,if(paid!=null)'paid':paid,if(due!=null)'due':due,'receiptPaid':receipts,
     'status':status,'createdAt':Timestamp.fromDate(at ?? movementReportBoundary(day)),
   };
+  for(final size in [const Size(320,700),const Size(360,740),const Size(564,900)]) {
+    for(final keyboard in [0.0,280.0]) {
+      testWidgets('compact invoice results at ${size.width} with keyboard $keyboard',(tester) async {
+        tester.view.physicalSize=size;tester.view.devicePixelRatio=1;
+        addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);
+        final search=TextEditingController();addTearDown(search.dispose);
+        final boundary=GlobalKey();
+        const party='محل الراشد البنفسج 10';
+        await tester.pumpWidget(RepaintBoundary(key:boundary,child:MaterialApp(theme:ThemeData.dark(),
+          builder:(context,child)=>MediaQuery(data:MediaQuery.of(context).copyWith(
+            viewInsets:EdgeInsets.only(bottom:keyboard),textScaler:TextScaler.linear(1.5)),child:Directionality(textDirection:TextDirection.rtl,child:child!)),
+          home:Scaffold(resizeToAvoidBottomInset:false,body:InvoiceEditSearchFrame(type:'purchases',search:search,onChanged:(_){},
+            results:ListView(children:[
+              InvoiceEditResultCard(party:party,number:'000004',date:'03/10/2026 15:23',amount:'83048.00',blocked:false,onOpen:(){}),
+              InvoiceEditResultCard(party:'محل السعيد المبارك',number:'000016',date:'04/10/2026 12:30',amount:'13721.00',blocked:true,onOpen:(){}),
+            ]))))));
+        await tester.pumpAndSettle();
+        expect(tester.takeException(),isNull);
+        expect(tester.getSize(find.text(party)).width,greaterThan(180));
+        expect(tester.getSize(find.byType(InvoiceEditResultCard).first).height,lessThan(220));
+        expect(find.text('رقم الفاتورة: 000004'),findsOneWidget);
+        expect(find.text('83048.00 ج.م'),findsOneWidget);
+        await tester.runAsync(() async {
+          final image=await (boundary.currentContext!.findRenderObject() as RenderRepaintBoundary).toImage(pixelRatio:1);
+          final bytes=await image.toByteData(format:ui.ImageByteFormat.png);
+          Directory('dist').createSync(recursive:true);
+          File('dist/VIB-COMPACT-${size.width.toInt()}-${keyboard.toInt()}.png').writeAsBytesSync(bytes!.buffer.asUint8List());image.dispose();
+        });
+      });
+    }
+  }
+  testWidgets('invoice quantity and price select all on each tap for direct replacement',(tester) async {
+    final cost=TextEditingController(text:'224.40'),qty=TextEditingController(text:'12');
+    addTearDown(cost.dispose);addTearDown(qty.dispose);
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:Center(child:SizedBox(width:340,
+      child:PurchaseInvoiceLine(number:1,name:'محول مسطرة فيردي',cost:cost,quantity:qty,
+        enabled:true,totalEditable:true,showProductActions:false,onChoose:(){},onDelete:(){},onChanged:(){}))))));
+    final quantity=find.byWidgetPredicate((w)=>w is TextField && identical(w.controller,qty));
+    final price=find.byWidgetPredicate((w)=>w is TextField && identical(w.controller,cost));
+    await tester.tap(quantity);await tester.pump();
+    expect(qty.selection,TextSelection(baseOffset:0,extentOffset:2));
+    await tester.enterText(quantity,'7');
+    await tester.tap(quantity);await tester.pump();
+    expect(qty.selection,TextSelection(baseOffset:0,extentOffset:1));
+    await tester.tap(price);await tester.pump();
+    expect(cost.selection,TextSelection(baseOffset:0,extentOffset:6));
+    await tester.enterText(price,'199.50');
+    await tester.tap(price);await tester.pump();
+    expect(cost.selection,TextSelection(baseOffset:0,extentOffset:6));
+    expect(cost.text,'199.50');expect(qty.text,'7');
+    expect(tester.takeException(),isNull);
+  });
   testWidgets('period waits for explicit approval and supports inclusive multi-day range',(tester) async {
     DateTime? selectedStart,selectedEnd;
     await tester.pumpWidget(MaterialApp(home:Scaffold(body:MovementPeriodControls(
@@ -163,4 +217,5 @@ void main() {
     }
   });
 }
+
 
