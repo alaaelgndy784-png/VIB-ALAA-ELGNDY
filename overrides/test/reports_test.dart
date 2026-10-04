@@ -43,6 +43,9 @@ void main() {
     expect(invoiceHasLinkedVoucher({...data,'receiptId':'receipt'}),isTrue);
     expect(invoiceHasLinkedVoucher({...data,'receiptPaid':1}),isTrue);
     expect(invoiceHasLinkedVoucher(data),isFalse);
+    invoiceSerialCache[serialKey('sales','legacy')]={'internalNumber':12};
+    expect(invoiceMatchesEditSearch('sales','legacy',{'customerName':'قديم'},'12'),isTrue);
+    invoiceSerialCache.remove(serialKey('sales','legacy'));
   });
   test('purchase correction reverses stock and cash directions and blocks relevant vouchers',(){
     expect(purchaseEditStockDelta(10,7),-3);

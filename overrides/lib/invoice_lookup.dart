@@ -46,7 +46,7 @@ bool invoiceMatchesEditSearch(String type, String id, Map<String,dynamic> data, 
   final number=invoiceSearchText(invoiceDisplayNumber(type,id,data));
   final numeric=RegExp(r'^\d+$').hasMatch(needle);
   final internal='${data['internalNumber'] ?? ''}';
-  if(numeric) return int.tryParse(internal)==int.tryParse(needle) || number==needle || number.endsWith('-$needle') || invoiceSearchText(id)==needle;
+  if(numeric) return int.tryParse(internal)==int.tryParse(needle) || int.tryParse(number)==int.tryParse(needle) || number==needle || number.endsWith('-$needle') || invoiceSearchText(id)==needle;
   return invoiceSearchText('${data[type=='sales' ? 'customerName' : 'supplierName'] ?? ''}').contains(needle) || number.contains(needle) || invoiceSearchText(id)==needle;
 }
 
