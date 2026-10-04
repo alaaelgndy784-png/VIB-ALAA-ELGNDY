@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 class InventoryProductCard extends StatelessWidget {
+  final bool employee;
   final int number;
   final String name, priceLabel;
   final num? quantity, unitPrice;
@@ -8,7 +9,7 @@ class InventoryProductCard extends StatelessWidget {
   final List<Widget> actions;
   final VoidCallback? onTap;
   const InventoryProductCard({super.key, required this.number, required this.name,
-    required this.quantity, required this.unitPrice, this.priceLabel = 'سعر البيع',
+    required this.quantity, required this.unitPrice, this.priceLabel = 'سعر البيع', this.employee=false,
     this.quantityMessage, this.detail, this.actions = const [], this.onTap});
 
   static const quantityColor = Color(0xFF66DE91);
@@ -40,15 +41,16 @@ class InventoryProductCard extends StatelessWidget {
               decoration: BoxDecoration(color: totalColor.withValues(alpha: .15), borderRadius: BorderRadius.circular(8)),
               child: Text('$number', style: const TextStyle(color: totalColor, fontSize: 12, fontWeight: FontWeight.bold))),
             const SizedBox(width: 6),
-            Expanded(child: Text(name, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600))),
+            Expanded(child: Text(name, style: TextStyle(color:employee ? Colors.lightBlueAccent : null,fontSize:15,fontWeight:FontWeight.w600))),
           ]),
+          if(employee) Padding(padding:const EdgeInsets.only(top:4),child:Text('المتاح: $qty',style:const TextStyle(color:Colors.redAccent,fontSize:12))),
           if(detail != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text(detail!, style: const TextStyle(fontSize: 12))),
           const SizedBox(height: 6),
           Align(alignment: AlignmentDirectional.centerStart, child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 270),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Expanded(child: box('العدد', qty, quantityColor)), const SizedBox(width: 4),
-              Expanded(child: box(priceLabel, price, priceColor)), const SizedBox(width: 4),
+              Expanded(child: box('العدد', qty, employee ? totalColor : quantityColor)), const SizedBox(width: 4),
+              Expanded(child: box(priceLabel, price, employee ? quantityColor : priceColor)), const SizedBox(width: 4),
               Expanded(child: box('الإجمالي', total != null && total.isFinite ? total.toStringAsFixed(2) : 'غير متاح', totalColor)),
             ]),
           )),
@@ -59,3 +61,4 @@ class InventoryProductCard extends StatelessWidget {
       ))));
   }
 }
+

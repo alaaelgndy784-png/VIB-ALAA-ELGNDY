@@ -131,15 +131,15 @@ class InvoiceProductOptionRow extends StatelessWidget {
   final Stream<int?>? quantityStream;
   const InvoiceProductOptionRow({super.key,required this.name,this.unitCost,this.quantityStream});
   @override Widget build(BuildContext context) => Row(crossAxisAlignment:CrossAxisAlignment.center,children:[
-    Expanded(flex:5,child:Text(name,softWrap:true,style:const TextStyle(fontSize:14))),
+    Expanded(flex:5,child:Text(name,softWrap:true,style:TextStyle(fontSize:14,color:staffApp ? Colors.lightBlueAccent : null))),
     const SizedBox(width:8),
     Expanded(flex:4,child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
       StreamBuilder<int?>(stream:quantityStream,builder:(context,snapshot)=>Text(
         'المتاح: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.connectionState == ConnectionState.waiting ? 'جارٍ التحميل' : snapshot.data == null ? 'غير متاح' : snapshot.data}',
-        softWrap:true,style:const TextStyle(fontSize:12,color:gold))),
+        softWrap:true,style:TextStyle(fontSize:12,color:staffApp ? Colors.redAccent : gold))),
       const SizedBox(height:3),
       Text('تكلفة الوحدة: ${unitCost == null ? 'غير مسجلة' : '${unitCost!.toStringAsFixed(2)} ج.م'}',
-        softWrap:true,style:const TextStyle(fontSize:12)),
+        softWrap:true,style:TextStyle(fontSize:12,color:staffApp ? Colors.greenAccent : null)),
     ])),
   ]);
 }
@@ -220,17 +220,17 @@ class InvoiceCompactTableLine extends StatelessWidget {
   @override Widget build(BuildContext context) {
     final p=double.tryParse(price.text.trim().replaceAll(',', '.')) ?? 0;
     final q=int.tryParse(quantity.text.trim()) ?? 0;
-    Widget value(String text)=>Container(margin:const EdgeInsets.all(2),padding:const EdgeInsets.symmetric(vertical:7,horizontal:2),
-      decoration:BoxDecoration(border:Border.all(color:const Color(0xFFD4D4D4))),
+    Widget value(String text,{Color? background})=>Container(margin:const EdgeInsets.all(2),padding:const EdgeInsets.symmetric(vertical:7,horizontal:2),
+      decoration:BoxDecoration(color:background,border:Border.all(color:const Color(0xFFD4D4D4))),
       child:FittedBox(fit:BoxFit.scaleDown,child:Text(text,style:const TextStyle(color:Colors.black,fontSize:12,fontWeight:FontWeight.w600))));
     return Material(color:number.isOdd ? Colors.white : const Color(0xFFF5F4F0),child:InkWell(onTap:onEdit,
       child:Container(padding:const EdgeInsets.symmetric(vertical:8,horizontal:4),
         decoration:const BoxDecoration(border:Border(bottom:BorderSide(color:Color(0xFFDDDDDD)))),
         child:Row(textDirection:TextDirection.rtl,children:[
           SizedBox(width:22,child:Text('$number',textAlign:TextAlign.center,style:const TextStyle(color:Colors.black54,fontSize:11))),
-          Expanded(flex:5,child:Text(name,textDirection:TextDirection.rtl,style:const TextStyle(color:Colors.black,fontSize:12))),
-          Expanded(flex:3,child:value(p.toStringAsFixed(2))),
-          Expanded(flex:2,child:value('$q')),
+          Expanded(flex:5,child:Text(name,textDirection:TextDirection.rtl,style:TextStyle(color:staffApp ? const Color(0xFF0056B3) : Colors.black,fontSize:12))),
+          Expanded(flex:3,child:value(p.toStringAsFixed(2),background:staffApp ? const Color(0xFFB9F6CA) : null)),
+          Expanded(flex:2,child:value('$q',background:staffApp ? const Color(0xFFFFF59D) : null)),
           Expanded(flex:3,child:value((p*q).toStringAsFixed(2))),
         ]))));
   }
@@ -291,8 +291,8 @@ class _InvoiceLineEditorDialogState extends State<_InvoiceLineEditorDialog> {
         priceEditable:widget.priceEditable,totalEditable:widget.priceEditable,discountDraft:draftDiscount,showProductActions:false,
         onChoose:() {},onDelete:() {},onChanged:()=>setState(() {})),
       if(widget.stockStream!=null) StreamBuilder<int?>(stream:widget.stockStream,builder:(context,snapshot)=>Text(
-        'الكمية المتوفرة: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.data ?? 'جارٍ التحميل'}',style:const TextStyle(color:gold))),
-      if(widget.unitCost!=null) Text('سعر التكلفة: ${widget.unitCost!.toStringAsFixed(2)} ج.م',style:const TextStyle(color:gold)),
+        'الكمية المتوفرة: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.data ?? 'جارٍ التحميل'}',style:TextStyle(color:staffApp ? Colors.redAccent : gold))),
+      if(widget.unitCost!=null) Text('سعر التكلفة: ${widget.unitCost!.toStringAsFixed(2)} ج.م',style:TextStyle(color:staffApp ? Colors.greenAccent : gold)),
     ]))),
     actions:[
       if(widget.allowDelete) TextButton.icon(icon:const Icon(Icons.delete_outline,color:Colors.redAccent),label:const Text('حذف الصنف'),
@@ -315,3 +315,4 @@ Future<String> invoiceDraftNumberPreview(String type) async {
     return '${((data?['lastNumber'] as num?)?.toInt() ?? 0)+1}'.padLeft(6,'0')+' (مبدئي)';
   } catch(_) { return 'يُخصص عند الحفظ'; }
 }
+

@@ -324,3 +324,56 @@ test('inactive target and staff cannot reassign customer',async()=>{
  await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),'customers/newcustomer'),{active:false},{merge:true}));
  await assertFails(transferSale(owner));
 });
+
+async function enablePurchasing(enabled=true){await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),'users/staff'),{canPurchase:enabled},{merge:true}));}
+function employeePurchase(db,{n=1,paid=10,omit='',mutate=()=>{}}={}){
+ const id='ep',items=Array.from({length:n},(_,i)=>({productId:'p'+i,productName:'Product'+i,quantity:2,unitCost:6,lineTotal:12}));
+ const total=n*12,due=total-paid,ts=serverTimestamp();
+ const s={id,actorId:'staff',actorName:'Staff',branchId:'staffbranch',supplierId:'supplier',supplierName:'Supplier',
+  invoiceNumber:'SUP-1',note:'',items,itemCount:n,stockIndex:Object.fromEntries(items.map((x,i)=>[x.productId,i])),
+  total,paid,due,cashPosted:true,cashBefore:500,cashAfter:500-paid,supplierPreviousBalance:100,supplierBalanceAfter:100+due,
+  paymentStatus:due>0?'credit':'cash',status:'completed',source:'employee',requestKey:'test',createdAt:ts};mutate(s);
+ const b=writeBatch(db);b.set(doc(db,'purchases/'+id),s);
+ if(omit!=='supplier')b.update(doc(db,'suppliers/supplier'),{balance:100+due,lastPurchaseId:id,updatedAt:ts});
+ if(omit!=='supplierMovement')b.set(doc(db,'accountMovements/ep_supplier'),{accountType:'suppliers',accountId:'supplier',accountName:'Supplier',kind:'purchase',amount:due,paid,balanceBefore:100,balanceAfter:100+due,referenceId:id,actorId:'staff',createdAt:ts});
+ if(paid>0){
+  if(omit!=='cash')b.update(doc(db,'settings/cash'),{balance:500-paid,lastPurchaseId:id,updatedAt:ts});
+  if(omit!=='cashMovement')b.set(doc(db,'accountMovements/ep_cash'),{accountType:'cash',accountId:'supplier',accountName:'Supplier',kind:'purchasePayment',amount:paid,delta:-paid,balanceBefore:500,balanceAfter:500-paid,referenceId:id,actorId:'staff',createdAt:ts});
+ }
+ for(const x of items){
+  if(omit!=='stock')b.update(doc(db,'stock/main_'+x.productId),{quantity:12,lastPurchaseId:id});
+  if(omit!=='product')b.update(doc(db,'products/'+x.productId),{purchasePrice:6,lastPurchaseId:id,updatedAt:ts});
+  if(omit!=='stockMovement')b.set(doc(db,'stockMovements/ep_'+x.productId),{productId:x.productId,productName:x.productName,branchId:'main',kind:'purchase',quantity:2,balanceAfter:12,referenceId:id,actorId:'staff',createdAt:ts});
+ }
+ return b.commit();
+}
+for(const n of [1,4])for(const paid of [0,10,n*12])test(`permitted employee purchases ${n} lines paid ${paid} atomically`,async()=>{
+ await enablePurchasing();const db=env.authenticatedContext('staff').firestore();await assertSucceeds(employeePurchase(db,{n,paid}));
+ assert.equal((await getDoc(doc(db,'stock/main_p0'))).data().quantity,12);
+ const owner=env.authenticatedContext('owner').firestore();assert.equal((await getDoc(doc(owner,'suppliers/supplier'))).data().balance,100+n*12-paid);
+ assert.equal((await getDoc(doc(db,'settings/cash'))).data().balance,500-paid);
+ await assertFails(employeePurchase(db,{n,paid}));
+});
+for(const omit of ['supplier','supplierMovement','cash','cashMovement','stock','product','stockMovement'])test('employee purchase missing '+omit+' fails atomically',async()=>{
+ await enablePurchasing();const db=env.authenticatedContext('staff').firestore();await assertFails(employeePurchase(db,{omit}));
+ assert.equal((await getDoc(doc(db,'stock/main_p0'))).data().quantity,10);
+});
+test('purchase permission defaults denied, revocation and deleted employee are enforced server side',async()=>{
+ const db=env.authenticatedContext('staff').firestore();await assertFails(employeePurchase(db));await enablePurchasing();await enablePurchasing(false);await assertFails(employeePurchase(db));
+ await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),'users/staff'),{role:'deleted',active:false,canPurchase:true},{merge:true}));
+ await assertFails(employeePurchase(db));await assertFails(saleBatch(db));
+});
+for(const [name,mutate] of [['forged actor',s=>s.actorId='owner'],['forged supplier',s=>s.supplierName='fake'],['wrong total',s=>s.total=1],['duplicate item',s=>{s.items[1]={...s.items[0]};s.stockIndex={p0:0}}],['negative cost',s=>s.items[0].unitCost=-1]])test('employee purchase rejects '+name,async()=>{
+ await enablePurchasing();await assertFails(employeePurchase(env.authenticatedContext('staff').firestore(),{n:2,mutate}));
+});
+test('employee purchase permission cannot be self granted and other employee invoices cannot be read',async()=>{
+ const staff=env.authenticatedContext('staff').firestore();await assertFails(setDoc(doc(staff,'users/staff'),{canPurchase:true},{merge:true}));
+ await enablePurchasing();await employeePurchase(staff);
+ await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),'users/other'),{role:'employee',active:true,canPurchase:true,branchId:'staffbranch'}));
+ await assertFails(getDoc(doc(env.authenticatedContext('other').firestore(),'purchases/ep')));
+ await assertSucceeds(getDocs(query(collection(staff,'purchases'),require('firebase/firestore').where('actorId','==','staff'))));
+});
+test('owner stock edits still work after employee purchase marker',async()=>{
+ await enablePurchasing();await employeePurchase(env.authenticatedContext('staff').firestore());
+ await assertSucceeds(setDoc(doc(env.authenticatedContext('owner').firestore(),'stock/main_p0'),{quantity:15},{merge:true}));
+});

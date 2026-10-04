@@ -45,6 +45,8 @@ part 'invoice_a4.dart';
 part 'invoice_parties.dart';
 part 'business_reports.dart';
 part 'invoice_lookup.dart';
+part 'account_statements.dart';
+part 'staff_purchases.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -59,8 +61,10 @@ const _vibStorageBucket = 'vib-sales.firebasestorage.app';
 const _managerFirebaseAppId = '1:200962643703:android:04784682cd1d95b22c65f2';
 const _staffFirebaseAppId = '1:200962643703:android:fd5ac8ff4a1fae7c2c65f2';
 
+bool staffApp = false;
 Future<FirebaseOptions> _firebaseOptionsForThisApp() async {
   final packageName = (await PackageInfo.fromPlatform()).packageName;
+  staffApp = packageName == 'com.alaa.vibsales.staffscan';
   final appId = packageName == 'com.alaa.vibsales.staffscan'
       ? _staffFirebaseAppId
       : _managerFirebaseAppId;
@@ -161,7 +165,7 @@ class Gate extends StatelessWidget {
             ])));
           }
           activeResetAt = data['resetAt'] as Timestamp?;
-          final home = Home(key:ValueKey('${auth.data!.uid}:${data['role']}'), uid: auth.data!.uid, role: data['role'] as String, branchId: (data['branchId'] ?? '') as String, name: (data['name'] ?? '') as String);
+          final home = Home(canPurchase:data['canPurchase']==true,key:ValueKey('${auth.data!.uid}:${data['role']}'), uid: auth.data!.uid, role: data['role'] as String, branchId: (data['branchId'] ?? '') as String, name: (data['name'] ?? '') as String);
           return data['role'] == 'owner' ? OwnerSecurity(child: home) : home;
         },
       );
@@ -451,7 +455,8 @@ ThemeData managerTheme(BuildContext context) => Theme.of(context).copyWith(
 
 class Home extends StatefulWidget {
   final String uid, role, branchId, name;
-  const Home({super.key, required this.uid, required this.role, required this.branchId, required this.name});
+  final bool canPurchase;
+  const Home({super.key, required this.uid, required this.role, required this.branchId, required this.name,this.canPurchase=false});
   @override
   State<Home> createState() => _HomeState();
 }
@@ -493,6 +498,7 @@ class _HomeState extends State<Home> {
     return Scaffold(
       appBar: AppBar(title: Text('VIB | ${widget.name}'), actions: [
         const ChatShortcut(owner: false),
+        if(widget.canPurchase) IconButton(tooltip:'المشتريات',icon:const Icon(Icons.post_add),onPressed:()=>openPage('مشتريات الموظف',const Purchases(owner:false))),
         IconButton(tooltip: 'خروج', onPressed: () => FirebaseAuth.instance.signOut(), icon: const Icon(Icons.logout)),
       ]),
       body: page == 0
@@ -604,9 +610,9 @@ class _ProductsState extends State<Products> {
             stream: db.collection('stock').doc('main_${d.id}').snapshots(),
             builder: (context, stock) {
               final quantity = stock.hasError || !stock.hasData ? null : (stock.data?.data()?['quantity'] as num?)?.toInt() ?? 0;
-              return InventoryProductCard(number: i + 1, name: '${p['name'] ?? ''}', quantity: quantity,
+              return InventoryProductCard(employee:!owner,number: i + 1, name: '${p['name'] ?? ''}', quantity: quantity,
                 quantityMessage: stock.hasError ? 'تعذر التحميل' : 'جارٍ التحميل', unitPrice: p['price'] as num?,
-                onTap: () => productDetails(context, d.id), actions: owner ? [
+                onTap: () => productDetails(context, d.id,employee:!owner), actions: owner ? [
                   IconButton(tooltip: 'تعديل', icon: const Icon(Icons.edit), onPressed: () => productDialog(context, id: d.id, data: p)),
                   IconButton(tooltip: 'المخزون الرئيسي', icon: const Icon(Icons.warehouse), onPressed: () => mainStockDialog(context, d.id, '${p['name']}')),
                   IconButton(tooltip: 'حذف المنتج', icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: () => archiveProduct(context, d.id, '${p['name'] ?? ''}')),
@@ -619,7 +625,7 @@ class _ProductsState extends State<Products> {
   );
 }
 
-Future<void> productDetails(BuildContext context, String productId) async {
+Future<void> productDetails(BuildContext context, String productId,{bool employee=false}) async {
   await showDialog<void>(context: context, builder: (c) => AlertDialog(
     title: const Text('تفاصيل الصنف'),
     content: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
@@ -631,20 +637,20 @@ Future<void> productDetails(BuildContext context, String productId) async {
         if (data == null || data['active'] == false) return const Text('الصنف غير متاح');
         String price(Object? value) => value is num ? '${value.toStringAsFixed(2)} ج.م' : 'غير مسجل';
         return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text('${data['name'] ?? ''}', style: const TextStyle(color: gold, fontSize: 20)),
+          Text('${data['name'] ?? ''}', style: TextStyle(color:employee ? Colors.lightBlueAccent : gold,fontSize:20)),
           const SizedBox(height: 12),
           Text('الفئة: ${data['category'] ?? 'غير مصنف'}'),
           const SizedBox(height: 8),
-          Text('سعر الشراء: ${price(data['purchasePrice'])}'),
+          Text('سعر الشراء: ${price(data['purchasePrice'])}',style:TextStyle(color:employee ? Colors.greenAccent : null)),
           const SizedBox(height: 8),
-          Text('سعر البيع: ${price(data['price'])}'),
+          Text('سعر البيع: ${price(data['price'])}',style:TextStyle(color:employee ? Colors.greenAccent : null)),
           const SizedBox(height: 8),
           StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
             stream: db.collection('stock').doc('main_$productId').snapshots(),
             builder: (c, stock) {
               if (stock.hasError) return const Text('تعذر تحميل المخزون الرئيسي', style: TextStyle(color: Colors.redAccent));
               if (!stock.hasData) return const Text('جارٍ تحميل الكمية…');
-              return Text('المتوفر في المخزون الرئيسي: ${(stock.data!.data()?['quantity'] as num?)?.toInt() ?? 0}');
+              return Text('المتوفر في المخزون الرئيسي: ${(stock.data!.data()?['quantity'] as num?)?.toInt() ?? 0}',style:TextStyle(color:employee ? Colors.redAccent : null));
             },
           ),
         ]);
@@ -1246,7 +1252,7 @@ class _SalesState extends State<Sales> {
           leading: const Icon(Icons.receipt_long_outlined, color: gold),
           title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('${sale['customerName'] ?? ''}'.trim().isEmpty ? 'بدون عميل مسجل' : '${sale['customerName']}',
-              style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+              style: TextStyle(color:owner ? Colors.greenAccent : Colors.lightBlueAccent,fontWeight:FontWeight.bold,fontSize:16)),
             Text('رقم الفاتورة: ${invoiceDisplayNumber('sales',d.id,sale)}'),
           ]),
           subtitle: Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجع' : ''}'),
@@ -1298,19 +1304,34 @@ Future<void> stockDialog(BuildContext context, String branchId) async {
 
 class Staff extends StatelessWidget {
   const Staff({super.key});
-  @override
-  Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('users').snapshots(), builder: (context, snap) {
-    if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-    return ListView(children: snap.data!.docs.map((d) {
-      final data = d.data();
-      return ListTile(
-        title: Text('${data['name'] ?? data['phone'] ?? d.id}'),
-        subtitle: Text('${data['phone'] ?? ''} • ${data['role'] == 'pending' ? 'بانتظار التفعيل' : (data['branchId'] ?? 'المدير')}'),
-        trailing: data['role'] == 'owner' ? const Icon(Icons.verified_user) :
-          TextButton(onPressed: () => assignEmployee(context, d.id, data), child: const Text('تحديد الفرع')),
-      );
-    }).toList());
+  @override Widget build(BuildContext context)=>StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:db.collection('users').snapshots(),builder:(context,snapshot){
+    if(snapshot.hasError)return const Center(child:Text('تعذر تحميل الموظفين'));
+    if(!snapshot.hasData)return const Center(child:CircularProgressIndicator());
+    final rows=snapshot.data!.docs.where((d)=>d.data()['role']!='deleted').toList();
+    return ListView.builder(itemCount:rows.length,itemBuilder:(context,i){final row=rows[i],data=row.data();
+      return ListTile(title:Text('${i+1}. ${data['name'] ?? data['phone'] ?? row.id}'),
+        subtitle:Text(data['role']=='owner'?'المدير':data['role']=='pending'?'بانتظار التفعيل':'${data['branchId'] ?? ''} • ${data['canPurchase']==true?'المشتريات مسموحة':'المشتريات ممنوعة'}'),
+        trailing:data['role']=='owner'?const Icon(Icons.verified_user):Row(mainAxisSize:MainAxisSize.min,children:[
+          IconButton(tooltip:'صلاحيات الموظف',icon:const Icon(Icons.manage_accounts),onPressed:()=>assignEmployee(context,row.id,data)),
+          IconButton(tooltip:'حذف الموظف',icon:const Icon(Icons.delete_forever,color:Colors.redAccent),onPressed:()=>deleteEmployee(context,row.id,data)),
+        ]));});
   });
+}
+Future<void> deleteEmployee(BuildContext context,String id,Map<String,dynamic> data) async {
+  final yes=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('حذف الموظف'),
+    content:Text('حذف ${data['name'] ?? ''} ومنع دخوله؟ الفواتير وسندات القبض القديمة تظل محفوظة.'),actions:[
+      TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('إلغاء')),
+      FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('حذف الموظف'))]));
+  if(yes!=true)return;
+  try {await db.runTransaction((tx) async {
+    final actor=FirebaseAuth.instance.currentUser!.uid;
+    final profile=(await tx.get(db.collection('users').doc(actor))).data();
+    final ref=db.collection('users').doc(id),target=(await tx.get(ref)).data();
+    if(profile?['role']!='owner' || profile?['active']!=true || target?['role']=='owner' || actor==id)throw StateError('لا يمكن حذف المدير');
+    if(target==null)throw StateError('الموظف غير موجود');
+    tx.update(ref,{'role':'deleted','active':false,'canPurchase':false,'deletedAt':FieldValue.serverTimestamp(),'deletedBy':actor});
+  });if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تم حذف الموظف ومنع دخوله')));
+  }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر حذف الموظف: $e');}
 }
 
 class Management extends StatelessWidget {
@@ -1640,23 +1661,24 @@ class Purchases extends StatefulWidget {
 class _PurchasesState extends State<Purchases>{
   int _visibleLimit = 100;
   late Stream<QuerySnapshot<Map<String, dynamic>>> _purchaseStream =
-      db.collection('purchases').orderBy('createdAt', descending: true).limit(_visibleLimit).snapshots();
+      purchaseQuery().limit(_visibleLimit).snapshots();
+  Query<Map<String,dynamic>> purchaseQuery()=>widget.owner ? db.collection('purchases').orderBy('createdAt',descending:true) : db.collection('purchases').where('actorId',isEqualTo:FirebaseAuth.instance.currentUser!.uid);
   void _showOlderPurchases() {
     setState(() {
       _visibleLimit += 100;
-      _purchaseStream = db.collection('purchases').orderBy('createdAt', descending: true).limit(_visibleLimit).snapshots();
+      _purchaseStream = purchaseQuery().limit(_visibleLimit).snapshots();
     });
   }
   bool get owner=>widget.owner;
   @override void initState(){super.initState();if(owner)prepareInvoiceSerials('purchases').then((_){if(mounted)setState((){});}).catchError((Object e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر تجهيز أرقام المشتريات: $e')));});}
   @override
   Widget build(BuildContext context) => Column(children: [
-    if (owner) Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, children: [
-      FilledButton.icon(onPressed: () => purchaseDialog(context), icon: const Icon(Icons.add), label: const Text('فاتورة مشتريات جديدة')),
-      OutlinedButton.icon(onPressed: () => openVibReport(context, 'تقرير حركة المشتريات', const InvoiceMovementReportPage(type: 'purchases')),
+    Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, children: [
+      FilledButton.icon(onPressed: () => purchaseDialog(context,owner:owner), icon: const Icon(Icons.add), label: const Text('فاتورة مشتريات جديدة')),
+      if(owner) OutlinedButton.icon(onPressed: () => openVibReport(context, 'تقرير حركة المشتريات', const InvoiceMovementReportPage(type: 'purchases')),
         icon: const Icon(Icons.summarize_outlined), label: const Text('تقرير حركة المشتريات')),
-      OutlinedButton.icon(onPressed: () => findInvoiceForEdit(context, 'purchases'), icon: const Icon(Icons.edit_note), label: const Text('تعديل فاتورة مشتريات')),
-      OutlinedButton.icon(onPressed: () => scannedPurchaseDialog(context), icon: const Icon(Icons.camera_alt), label: const Text('تصوير فاتورة مشتريات')),
+      if(owner) OutlinedButton.icon(onPressed: () => findInvoiceForEdit(context, 'purchases'), icon: const Icon(Icons.edit_note), label: const Text('تعديل فاتورة مشتريات')),
+      if(owner) OutlinedButton.icon(onPressed: () => scannedPurchaseDialog(context), icon: const Icon(Icons.camera_alt), label: const Text('تصوير فاتورة مشتريات')),
     ])),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _purchaseStream,
@@ -2061,10 +2083,10 @@ class _PurchaseInvoiceLineState extends State<PurchaseInvoiceLine> {
       (double.tryParse(cost.text.trim().replaceAll(',', '.')) ?? 0);
     Widget field(TextEditingController controller, String label, {bool integer = false}) => TextField(
       controller: controller, enabled: enabled && (integer || priceEditable), textAlign: TextAlign.center,
-      style: const TextStyle(fontSize: 13),
+      style:TextStyle(fontSize:13,color:staffApp ? (integer ? Colors.yellowAccent : Colors.greenAccent) : null),
       onTapAlwaysCalled: true, onTap: () => selectInvoiceNumberText(controller),
       keyboardType: TextInputType.numberWithOptions(decimal: !integer),
-      decoration: InputDecoration(labelText: label, floatingLabelBehavior: FloatingLabelBehavior.always,
+      decoration: InputDecoration(filled:staffApp,fillColor:staffApp ? (integer ? const Color(0xFF665C16) : const Color(0xFF164B2A)) : null,labelText: label, floatingLabelBehavior: FloatingLabelBehavior.always,
         labelStyle: const TextStyle(fontSize: 11), isDense: true,
         contentPadding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8), border: const OutlineInputBorder()),
       onChanged: (_) => onChanged());
@@ -2077,7 +2099,7 @@ class _PurchaseInvoiceLineState extends State<PurchaseInvoiceLine> {
           const SizedBox(width: 5),
           Expanded(child: InkWell(onTap: enabled && widget.showProductActions ? onChoose : null,
             child: Padding(padding: const EdgeInsets.symmetric(vertical: 5),
-              child: Text(name, softWrap: true, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600))))),
+              child: Text(name,softWrap:true,style:TextStyle(color:staffApp ? Colors.lightBlueAccent : null,fontSize:13,fontWeight:FontWeight.w600))))),
           if(widget.showProductActions) IconButton(tooltip: 'تغيير الصنف', onPressed: enabled ? onChoose : null,
             padding: EdgeInsets.zero, constraints: const BoxConstraints.tightFor(width: 30, height: 30),
             icon: const Icon(Icons.search, size: 18, color: gold)),
@@ -2164,7 +2186,7 @@ class PurchaseSettlementPanel extends StatelessWidget {
   }
 }
 
-Future<void> purchaseDialog(BuildContext context) async {
+Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
   final products = await db.collection('products').where('active', isEqualTo: true).get();
   final suppliers = await db.collection('suppliers').get();
   if (!context.mounted) return;
@@ -2181,7 +2203,8 @@ Future<void> purchaseDialog(BuildContext context) async {
   final invoice = TextEditingController();
   final markup = TextEditingController();
   final note = TextEditingController();
-  final draftNumber = await invoiceDraftNumberPreview('purchases');
+  final employeePurchaseRef=db.collection('purchases').doc();
+  final draftNumber = owner ? await invoiceDraftNumberPreview('purchases') : 'يُخصص رقمها عند المدير';
   bool saving = false, credit = true, checkout = false;
 
   await showDialog<void>(
@@ -2206,7 +2229,7 @@ Future<void> purchaseDialog(BuildContext context) async {
         else if(adding) row.dispose();
       }
       void addSelected(String id) async {
-        if(saving || lines.length >= 50 || lines.any((row)=>row.productId == id)) return;
+        if(saving || lines.length >= (owner?50:4) || lines.any((row)=>row.productId == id)) return;
         final product=products.docs.firstWhere((d)=>d.id == id);
         final row=ScannedLine(productId:id);
         row.cost.text=((product.data()['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
@@ -2216,18 +2239,19 @@ Future<void> purchaseDialog(BuildContext context) async {
         title:checkout ? 'حفظ فاتورة المشتريات' : 'فاتورة مشتريات',checkout:checkout,total:previewTotal,
         tableMode:true,invoiceNumber:draftNumber,itemCount:lines.length,
         quantityCount:lines.fold<int>(0,(sum,row)=>sum+(int.tryParse(row.quantity.text) ?? 0)),
-        headerAction:IgnorePointer(ignoring:saving,child:const ChatShortcut(owner:true)),
+        headerAction:IgnorePointer(ignoring:saving,child:ChatShortcut(owner:owner)),
         toolbar:InvoiceProductsBar(inlineSearch:true,
           unitCosts:{for(final product in products.docs) product.id:product.data()['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
           products:[for(final product in products.docs) if(!lines.any((row)=>row.productId == product.id))
             (id:product.id,name:'${product.data()['name'] ?? ''}')],
-          enabled:!saving && lines.length < 50,onSelect:addSelected,
+          enabled:!saving && lines.length < (owner?50:4),onSelect:addSelected,
           onSearch:() async {
             final id=await pickPurchaseProduct(c,products.docs,lines.map((row)=>row.productId).whereType<String>().toSet());
             if(id != null && c.mounted) addSelected(id);
           },
         ),
         body:checkout ? ListView(children:[
+          if(!owner) const Text('حتى 4 أصناف في الفاتورة؛ المشتريات تُضاف للمخزون الرئيسي وحساب المورد والصندوق.'),
           PurchaseSettlementPanel(total:previewTotal,previousBalance:previousSupplierBalance,credit:credit,
             paid:paid,enabled:!saving,onModeChanged:(value)=>setLocal(()=>credit=value),onChanged:()=>setLocal(() {})),
           DropdownButtonFormField<String>(key:ValueKey(supplierId),initialValue:supplierId.isEmpty ? null : supplierId,isExpanded:true,
@@ -2237,7 +2261,7 @@ Future<void> purchaseDialog(BuildContext context) async {
               for(final entry in addedSuppliers.entries) DropdownMenuItem(value:entry.key,child:Text('${entry.value['name'] ?? ''}',maxLines:2,overflow:TextOverflow.ellipsis)),
             ],
             onChanged:saving ? null : (id) {if(id != null) setLocal(()=>supplierId=id);}),
-          FilledButton.icon(icon:const Icon(Icons.person_add_alt_1),label:const Text('إضافة مورد'),
+          if(owner) FilledButton.icon(icon:const Icon(Icons.person_add_alt_1),label:const Text('إضافة مورد'),
             onPressed:saving ? null : () async {
               final result=await createInvoiceParty(c,'suppliers',true);
               if(result != null && c.mounted) setLocal(() {addedSuppliers[result.id]=result.data;supplierId=result.id;});
@@ -2248,7 +2272,7 @@ Future<void> purchaseDialog(BuildContext context) async {
           ExpansionTile(title:const Text('تفاصيل إضافية (اختياري)',style:TextStyle(fontSize:13)),children:[
             TextField(controller:invoice,enabled:!saving,decoration:_vibInvoiceInput('رقم فاتورة المورد')),
             const SizedBox(height:8),
-            TextField(controller:markup,enabled:!saving,keyboardType:const TextInputType.numberWithOptions(decimal:true),
+            if(owner) TextField(controller:markup,enabled:!saving,keyboardType:const TextInputType.numberWithOptions(decimal:true),
               decoration:_vibInvoiceInput('زيادة سعر البيع %')),
           ]),
         ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
@@ -2290,6 +2314,15 @@ Future<void> purchaseDialog(BuildContext context) async {
               return;
             }
 
+            if(!owner) {
+              setLocal(()=>saving=true);
+              try {
+                final saved=await saveEmployeePurchase(employeePurchaseRef.id,supplierId,entries,payment,invoice.text.trim(),note.text.trim());
+                if(c.mounted)Navigator.pop(c);
+                if(context.mounted)await showInvoiceSavedActions(context,'purchases',employeePurchaseRef.id,saved);
+              } catch(e) {if(c.mounted){setLocal(()=>saving=false);await showInvoiceSaveProblem(c,'تعذر حفظ مشتريات الموظف: $e');}}
+              return;
+            }
             setLocal(() => saving = true);
             await prepareInvoiceSerials('purchases');
         final purchaseRef = db.collection('purchases').doc();
@@ -2453,6 +2486,7 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
       ? data['branchId'] as String : branches.docs.first.id;
   bool enabled = data['active'] == true;
   bool canPrint = data['canPrint'] == true;
+  bool canPurchase=data['canPurchase']==true;
   await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(
     builder: (c, setDialogState) => AlertDialog(
       title: const Text('صلاحيات الموظف'),
@@ -2464,6 +2498,7 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
           onChanged: (v) { if (v != null) setDialogState(() => selected = v); }),
         SwitchListTile(title: const Text('تفعيل الدخول'), value: enabled,
           onChanged: (v) => setDialogState(() => enabled = v)),
+        SwitchListTile(title:const Text('السماح بعمل فواتير مشتريات'),value:canPurchase,onChanged:(v)=>setDialogState(()=>canPurchase=v)),
         SwitchListTile(title: const Text('السماح بطباعة الفواتير'), value: canPrint,
           onChanged: (v) => setDialogState(() => canPrint = v)),
       ]),
@@ -2473,7 +2508,7 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
           try {
             await db.collection('users').doc(uid).update({
               'name': name.text.trim(), 'role': 'employee', 'branchId': selected,
-              'active': enabled, 'canPrint': canPrint,
+              'active': enabled, 'canPrint': canPrint, 'canPurchase':canPurchase,
             });
             if (c.mounted) Navigator.pop(c);
           } catch (_) {
@@ -2972,7 +3007,10 @@ class _AccountsState extends State<Accounts> {
                 Text('${account['balance'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
                 Text(accountBalanceLabel((account['balance'] as num?) ?? 0, supplier: suppliers)),
               ]),
-              onTap: () => accountDialog(context, collection, d.id, account),
+              onTap: () => showModalBottomSheet<void>(context:context,builder:(c)=>SafeArea(child:Column(mainAxisSize:MainAxisSize.min,children:[
+                ListTile(leading:const Icon(Icons.summarize),title:const Text('كشف حساب من تاريخ لتاريخ'),onTap:(){Navigator.pop(c);openVibReport(context,'كشف حساب ${account['name'] ?? ''}',AccountStatementPage(collection:collection,id:d.id));}),
+                ListTile(leading:const Icon(Icons.payments),title:Text(suppliers?'سند صرف للمورد':'سند قبض من العميل'),onTap:(){Navigator.pop(c);accountDialog(context,collection,d.id,account);}),
+              ]))),
             );
           });
         },
@@ -4518,59 +4556,38 @@ class ItemMovementReport extends StatefulWidget {
 }
 
 class _ItemMovementReportState extends State<ItemMovementReport> {
-  String? productId, branchId;
+  String? productId, branchId='main';
   DateTimeRange? range;
 
-  Future<Map<String, String>> _movementCounterparties(List<QueryDocumentSnapshot<Map<String, dynamic>>> rows) async {
-    final result = <String, String>{};
-    for (final row in rows) {
-      final data = row.data();
-      final kind = '${data['kind'] ?? ''}';
-      final refId = '${data['referenceId'] ?? ''}';
-      if (refId.isEmpty) {
-        result[row.id] = _movementFallbackParty(data);
-        continue;
-      }
-
+  Future<Map<String,String>> _movementCounterparties(List<QueryDocumentSnapshot<Map<String,dynamic>>> rows) async {
+    final result=<String,String>{},invoices=<String,Map<String,dynamic>?>{},people=<String,String>{};
+    for(final row in rows) {
+      final d=row.data(),kind='${row.data()['kind'] ?? ''}',ref='${row.data()['referenceId'] ?? ''}';
+      final type=kind=='sale' || kind=='saleCorrection' || kind=='correction_sale' || kind=='correction_return' ? 'sales'
+        : kind=='purchase' || kind=='purchaseCorrection' ? 'purchases' : kind=='sales_return'?'salesReturns':kind=='purchase_return'?'purchaseReturns':null;
+      final lines=<String>[];
       try {
-        String collection = '';
-        if (kind == 'sale' || kind == 'correction_sale' || kind == 'correction_return') {
-          collection = 'sales';
-        } else if (kind == 'purchase') {
-          collection = 'purchases';
-        } else if (kind == 'sales_return') {
-          collection = 'salesReturns';
-        } else if (kind == 'purchase_return') {
-          collection = 'purchaseReturns';
+        if(type!=null && ref.isNotEmpty){
+          final key='$type/$ref';
+          if(!invoices.containsKey(key))invoices[key]=(await db.collection(type).doc(ref).get(const GetOptions(source:Source.server))).data();
+          final invoice=invoices[key];
+          if(invoice!=null){
+            final purchase=type=='purchases' || type=='purchaseReturns';
+            lines.add('${purchase?'المورد':'العميل'}: ${invoice[purchase?'supplierName':'customerName'] ?? 'غير مسجل'}');
+            lines.add('فاتورة: ${invoiceDisplayNumber(purchase?'purchases':'sales',ref,invoice)}');
+          }else lines.add('مرجع الفاتورة: $ref');
+        }else {
+          final fallback=_movementFallbackParty(d);if(fallback.isNotEmpty)lines.add(fallback);
+          if(ref.isNotEmpty)lines.add('المرجع: $ref');
         }
-
-        if (collection.isEmpty) {
-          result[row.id] = _movementFallbackParty(data);
-          continue;
+        final actor='${d['actorId'] ?? ''}';
+        if(actor.isNotEmpty){
+          if(!people.containsKey(actor))people[actor]='${(await db.collection('users').doc(actor).get(const GetOptions(source:Source.server))).data()?['name'] ?? actor}';
+          lines.add('المستخدم: ${people[actor]}');
         }
-
-        final doc = await db.collection(collection).doc(refId).get();
-        final invoice = doc.data();
-        if (invoice == null) {
-          result[row.id] = _movementFallbackParty(data);
-          continue;
-        }
-
-        if (kind == 'purchase' || kind == 'purchase_return') {
-          final supplier = '${invoice['supplierName'] ?? ''}'.trim();
-          result[row.id] = supplier.isEmpty ? 'مورد غير مسجل' : 'المورد: $supplier';
-        } else {
-          final customer = '${invoice['customerName'] ?? ''}'.trim();
-          final phone = '${invoice['customerPhone'] ?? ''}'.trim();
-          result[row.id] = customer.isNotEmpty
-              ? 'العميل: $customer${phone.isNotEmpty ? ' • $phone' : ''}'
-              : (phone.isNotEmpty ? 'عميل هاتف: $phone' : 'بيع نقدي بدون عميل مسجل');
-        }
-      } catch (_) {
-        result[row.id] = _movementFallbackParty(data);
-      }
-    }
-    return result;
+      }catch(e){lines.add('تعذر تأكيد بيانات الطرف؛ المرجع: $ref');}
+      result[row.id]=lines.join('\n');
+    }return result;
   }
 
   String _movementFallbackParty(Map<String, dynamic> data) {
@@ -4584,67 +4601,13 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
     return '';
   }
 
-  Future<void> _printMovementReport(
-    BuildContext context,
-    String productName,
-    List<QueryDocumentSnapshot<Map<String, dynamic>>> rows,
-    Map<String, String> parties,
-    int currentQty,
-  ) async {
+  Future<void> _printMovementReport(BuildContext context,String productName,List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,
+      Map<String,String> parties,ProductPeriodTotals total) async {
     try {
-      final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-      final pdf = pw.Document();
-      final incoming = rows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).clamp(0, 999999999)));
-      final outgoing = rows.fold<num>(0, (sum, d) => sum + ((-((d.data()['quantity'] as num?) ?? 0)).clamp(0, 999999999)));
-
-      pdf.addPage(pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
-        theme: pw.ThemeData.withFont(base: font, bold: font),
-        build: (_) => [
-          pw.Directionality(
-            textDirection: pw.TextDirection.rtl,
-            child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-              pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
-              pw.SizedBox(height: 6),
-              pw.Text('تقرير حركة منتج: $productName', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
-              pw.Text('الرصيد الحالي: $currentQty'),
-              pw.Text('إجمالي الداخل: $incoming   •   إجمالي الخارج: $outgoing   •   عدد الحركات: ${rows.length}'),
-              pw.SizedBox(height: 8),
-            ]),
-          ),
-          pw.Directionality(
-            textDirection: pw.TextDirection.rtl,
-            child: pw.Table(
-              border: pw.TableBorder.all(width: .4),
-              children: [
-                pw.TableRow(children: ['الرصيد بعد الحركة', 'الكمية', 'الطرف/البيان', 'التاريخ', 'الحركة', 'م'].map((v) => pw.Padding(
-                  padding: const pw.EdgeInsets.all(5),
-                  child: pw.Text(v, textAlign: pw.TextAlign.center, style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                )).toList()),
-                for (var i = 0; i < rows.length; i++)
-                  pw.TableRow(children: [
-                    '${rows[i].data()['balanceAfter'] ?? '-'}',
-                    '${(rows[i].data()['quantity'] as num?) ?? 0}',
-                    parties[rows[i].id] ?? '',
-                    formatDate(rows[i].data()['createdAt']),
-                    movementName('${rows[i].data()['kind']}'),
-                    '${i + 1}',
-                  ].map((v) => pw.Padding(padding: const pw.EdgeInsets.all(5), child: pw.Text(v, textAlign: pw.TextAlign.center))).toList()),
-              ],
-            ),
-          ),
-        ],
-      ));
-
-      await Printing.layoutPdf(
-        name: 'VIB-MOVEMENT-$productName-${DateFormat('yyyyMMdd-HHmm').format(DateTime.now())}.pdf',
-        onLayout: (_) => pdf.save(),
-      );
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر إنشاء تقرير حركة المنتج: $e')));
-      }
-    }
+      final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+      final bytes=await createProductTracePdf(productName,rows.map((r)=>{...r.data(),'id':r.id}).toList(),parties,total,font,range:range);
+      await Printing.layoutPdf(name:'VIB-PRODUCT-MOVEMENT.pdf',onLayout:(_)async=>bytes);
+    }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر طباعة حركة المنتج: $e');}
   }
 
   @override
@@ -4680,24 +4643,15 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                 items: [
                   const DropdownMenuItem<String>(value: null, child: Text('كل الفروع')),
                   const DropdownMenuItem(value: 'main', child: Text('المخزون الرئيسي')),
-                  ...branches.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))),
+                  ...branches.where((d)=>d.id!='main').map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))),
                 ],
                 onChanged: (v) => setState(() => branchId = v),
               )),
               const SizedBox(width: 6),
-              OutlinedButton.icon(
-                onPressed: () async {
-                  final r = await showDateRangePicker(
-                    context: context,
-                    firstDate: DateTime(2020),
-                    lastDate: DateTime.now().add(const Duration(days: 1)),
-                  );
-                  if (r != null) setState(() => range = r);
-                },
-                icon: const Icon(Icons.date_range, size: 18),
-                label: Text(range == null ? 'كل الفترات' : '${DateFormat('dd/MM').format(range!.start)} - ${DateFormat('dd/MM').format(range!.end)}'),
-              ),
             ]),
+            MovementPeriodControls(from:range?.start ?? DateTime(DateTime.now().year,DateTime.now().month,1),
+              to:range?.end ?? DateTime.now(),enabled:true,onConfirm:(a,b)=>setState(()=>range=DateTimeRange(start:a,end:b))),
+            TextButton(onPressed:()=>setState(()=>range=null),child:const Text('عرض كل الحركات')),
             const SizedBox(height: 7),
             SizedBox(
               width: double.infinity,
@@ -4717,7 +4671,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
       child: productId == null
           ? const Center(child: Text('اختر المنتج لعرض تاريخه كامل'))
           : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: db.collection('stockMovements').where('productId', isEqualTo: productId).snapshots(),
+              stream: db.collection('stockMovements').where('productId', isEqualTo: productId).snapshots(includeMetadataChanges:true),
               builder: (context, snap) {
                 if (snap.hasError) {
                   return Center(child: Padding(
@@ -4732,10 +4686,10 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                   if (!visibleAfterReset(x)) return false;
                   final date = (x['createdAt'] as Timestamp?)?.toDate();
                   return (branchId == null || x['branchId'] == branchId) &&
-                      (range == null || (date != null && !date.isBefore(range!.start) && date.isBefore(range!.end.add(const Duration(days: 1)))));
+                      (range == null || (date != null && !date.isBefore(movementReportBoundary(range!.start)) && date.isBefore(movementReportBoundary(range!.end,next:true))));
                 }).toList()
-                  ..sort((a, b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
-                      .compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+                  ..sort((a, b) => ((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
+                      .compareTo((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
 
                 final incoming = rows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).clamp(0, 999999999)));
                 final outgoing = rows.fold<num>(0, (sum, d) => sum + ((-((d.data()['quantity'] as num?) ?? 0)).clamp(0, 999999999)));
@@ -4744,11 +4698,12 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                   future: Future.wait([
                     _movementCounterparties(rows),
                     branchId == null
-                        ? db.collection('stock').where('productId', isEqualTo: productId).get()
-                        : db.collection('stock').doc('${branchId}_$productId').get(),
+                        ? db.collection('stock').where('productId', isEqualTo: productId).get(const GetOptions(source:Source.server))
+                        : db.collection('stock').doc('${branchId}_$productId').get(const GetOptions(source:Source.server)),
                     db.collection('products').doc(productId).get(),
                   ]),
                   builder: (context, details) {
+                    if(details.hasError)return Center(child:Text('تعذر تأكيد رصيد المنتج: ${details.error}'));
                     if (!details.hasData) return const Center(child: CircularProgressIndicator());
 
                     final parties = details.data![0] as Map<String, String>;
@@ -4763,6 +4718,8 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                     final productSnap = details.data![2] as DocumentSnapshot<Map<String, dynamic>>;
                     final productName = '${productSnap.data()?['name'] ?? 'المنتج'}';
 
+                    final ProductPeriodTotals totals;
+                    try {totals=summarizeProductPeriod(snap.data!.docs.where((d)=>visibleAfterReset(d.data()) && (branchId==null || d.data()['branchId']==branchId)).map((d)=>d.data()).toList(),currentQty,range);}on StateError catch(e){return Center(child:Text('${e.message}'));}
                     return Column(children: [
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -4773,6 +4730,8 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                               Expanded(child: Text(productName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
                               Text('الموجود الآن: $currentQty', style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 17)),
                             ]),
+                            Text('أول المدة: ${totals.opening} • آخر المدة: ${totals.closing}'),
+                            if(totals.gap!=0)Text('فرق غير مطابق لآخر حركة مسجلة: ${totals.gap}',style:const TextStyle(color:Colors.redAccent)),
                             const SizedBox(height: 4),
                             Row(children: [
                               Expanded(child: Text('إجمالي الداخل: $incoming', style: const TextStyle(color: Colors.greenAccent))),
@@ -4783,7 +4742,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                             Align(
                               alignment: Alignment.centerLeft,
                               child: OutlinedButton.icon(
-                                onPressed: rows.isEmpty ? null : () => _printMovementReport(context, productName, rows, parties, currentQty),
+                                onPressed: rows.isEmpty || snap.data!.metadata.isFromCache || snap.data!.metadata.hasPendingWrites ? null : () => _printMovementReport(context, productName, rows, parties, totals),
                                 icon: const Icon(Icons.picture_as_pdf, size: 18),
                                 label: const Text('تقرير PDF'),
                               ),
@@ -4819,7 +4778,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                                       title: Text(action, style: const TextStyle(fontWeight: FontWeight.bold)),
                                       subtitle: Text([
                                         if (party.isNotEmpty) party,
-                                        'التاريخ: ${formatDate(x['createdAt'])}',
+                                        'التاريخ: ${receiptReportStamp(x,DateTime.now())}',
                                         'الفرع: ${x['branchId'] == 'main' ? 'المخزون الرئيسي' : x['branchId']}',
                                       ].join('\n')),
                                       isThreeLine: true,
@@ -4864,10 +4823,10 @@ class InvoiceCustomerChoiceRow extends StatelessWidget {
           textDirection: TextDirection.ltr, style: const TextStyle(color: gold, fontWeight: FontWeight.bold))),
         const SizedBox(width: 4),
         Expanded(child: Text(name, textDirection: TextDirection.rtl,
-          textAlign: TextAlign.right, style: const TextStyle(fontWeight: FontWeight.w600))),
+          textAlign:TextAlign.right,style:TextStyle(color:staffApp ? Colors.lightBlueAccent : null,fontWeight:FontWeight.w600))),
         const SizedBox(width: 8),
         Text('${balance.toStringAsFixed(2)} ج.م', textDirection: TextDirection.rtl,
-          style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold)),
+          style:TextStyle(color:staffApp ? Colors.redAccent : Colors.greenAccent,fontWeight:FontWeight.bold)),
       ]),
     ),
   );
@@ -4935,8 +4894,8 @@ class _StaffCustomersState extends State<StaffCustomers> {
       if (rows.isEmpty) return const Center(child: Text('لا يوجد عملاء مطابقون'));
       return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
         final data = rows[index].data();
-        return ListTile(title: Text('${data['name'] ?? ''}'), subtitle: Text('${data['phone'] ?? ''}'),
-          trailing: Text('الرصيد: ${data['balance'] ?? 0} ج.م', style: const TextStyle(color: gold)));
+        return ListTile(title: Text('${data['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent)), subtitle: Text('${data['phone'] ?? ''}'),
+          trailing: Text('الرصيد: ${data['balance'] ?? 0} ج.م', style: const TextStyle(color: Colors.redAccent)));
       });
     })),
   ]);
@@ -5383,6 +5342,7 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
 }
+
 
 
 

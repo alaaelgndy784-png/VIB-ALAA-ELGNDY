@@ -7,6 +7,7 @@ import 'package:flutter/services.dart' show rootBundle, FontLoader;
 import 'package:flutter/material.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../lib/main.dart';
+import '../lib/inventory_rows.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -62,6 +63,56 @@ void main() {
       expect(bytes.length,greaterThan(1000));
       File('dist/VIB-REPAYMENTS-PERIOD-${thermal ? '80MM' : 'A4'}.pdf').writeAsBytesSync(bytes);
     }
+  });
+  test('account statement includes final Cairo day and derives opening excluding later activity',(){
+    Map<String,dynamic> row(String id,int day,int before,int after)=>{'id':id,'createdAt':Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,day))),'balanceBefore':before,'balanceAfter':after,'kind':'sale'};
+    final rows=[row('a',1,100,300),row('b',3,300,220),row('c',4,220,250)];
+    final r=summarizeAccountPeriod(rows,{'name':'عميل','balance':250},DateTime(2026,10,1),DateTime(2026,10,3),supplier:false);
+    expect(r.opening,10000);expect(r.closing,22000);expect(r.current,25000);expect(r.increase,20000);expect(r.decrease,8000);
+    expect(r.rows.length,2);expect(r.rows.last['periodBalance'],22000);
+    final empty=summarizeAccountPeriod(rows,{'balance':250},DateTime(2026,10,2),DateTime(2026,10,2),supplier:true);
+    expect(empty.rows,isEmpty);expect(empty.opening,30000);expect(empty.closing,30000);
+    expect(()=>summarizeAccountPeriod([{'createdAt':Timestamp.now()}],{'balance':0},DateTime(2026,10,1),DateTime(2026,10,3),supplier:false),throwsStateError);
+  });
+  test('product trace separates period from future movement and highlights unexplained stock difference',(){
+    Map<String,dynamic> row(int day,int qty,int balance)=>{'branchId':'main','createdAt':Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,day))),'quantity':qty,'balanceAfter':balance};
+    final rows=[row(1,-5,15),row(3,3,18),row(4,-10,8)];
+    final range=DateTimeRange(start:DateTime(2026,10,1),end:DateTime(2026,10,3));
+    final r=summarizeProductPeriod(rows,8,range);
+    expect(r.opening,20);expect(r.closing,18);expect(r.incoming,3);expect(r.outgoing,5);expect(r.gap,0);
+    expect(summarizeProductPeriod(rows,7,range).gap,-1);
+  });
+  testWidgets('employee product colours and compact fields render on narrow phone',(tester) async {
+    staffApp=true;addTearDown(()=>staffApp=false);
+    tester.view.physicalSize=const Size(360,740);tester.view.devicePixelRatio=1;
+    addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);
+    final price=TextEditingController(text:'224.40'),qty=TextEditingController(text:'12');addTearDown(price.dispose);addTearDown(qty.dispose);
+    final boundary=GlobalKey();
+    await tester.pumpWidget(RepaintBoundary(key:boundary,child:MaterialApp(theme:ThemeData.dark().copyWith(textTheme:ThemeData.dark().textTheme.apply(fontFamily:'VIBQA')),
+      builder:(c,child)=>Directionality(textDirection:TextDirection.rtl,child:child!),home:Scaffold(body:ListView(children:[
+        const InventoryProductCard(employee:true,number:1,name:'محول مسطرة فيردي',quantity:12,unitPrice:224.4),
+        InvoiceProductOptionRow(name:'محول البحث',unitCost:200,quantityStream:Stream.value(12)),
+        InvoiceCompactTableLine(number:1,name:'محول الفاتورة',price:price,quantity:qty),
+      ])))));
+    await tester.pumpAndSettle();expect(tester.takeException(),isNull);
+    expect(tester.widget<Text>(find.text('محول البحث')).style!.color,Colors.lightBlueAccent);
+    expect(tester.widget<Text>(find.text('المتاح: 12').last).style!.color,Colors.redAccent);
+    expect(tester.widget<Text>(find.text('تكلفة الوحدة: 200.00 ج.م')).style!.color,Colors.greenAccent);
+    await tester.runAsync(() async {final image=await (boundary.currentContext!.findRenderObject() as RenderRepaintBoundary).toImage(pixelRatio:1);
+      final bytes=await image.toByteData(format:ui.ImageByteFormat.png);Directory('dist').createSync(recursive:true);File('dist/VIB-EMPLOYEE-COLOURS.png').writeAsBytesSync(bytes!.buffer.asUint8List());image.dispose();});
+  });
+  test('generate account statements and trace PDFs',() async {
+    final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final from=DateTime(2026,10,1),to=DateTime(2026,10,3);
+    Directory('dist').createSync(recursive:true);
+    for(final supplier in [false,true]) {
+      final r=summarizeAccountPeriod(List.generate(12,(i)=>{'id':'m$i','kind':i.isEven?'purchase':'payment','referenceLabel':'000${100+i}',
+        'createdAt':Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,i%3+1))),
+        'balanceBefore':100+i*10,'balanceAfter':110+i*10}),{'name':supplier?'المورد الاختبار':'العميل الاختبار','balance':220},from,to,supplier:supplier);
+      File('dist/VIB-STATEMENT-${supplier?'SUPPLIER':'CUSTOMER'}.pdf').writeAsBytesSync(await createAccountStatementPdf(r,font));
+    }
+    final rows=List.generate(8,(i)=><String,dynamic>{'id':'m$i','kind':i.isEven?'purchase':'sale','quantity':i.isEven?10:-3,'balanceAfter':20+i,'branchId':'main','createdAt':Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,i%3+1)))});
+    File('dist/VIB-PRODUCT-TRACE.pdf').writeAsBytesSync(await createProductTracePdf('محول مسطرة فيردي',rows,{for(var i=0;i<8;i++)'m$i':'${i.isEven?'المورد':'العميل'}: اسم الاختبار\nفاتورة: 000${100+i}\nالمستخدم: موظف التحصيل'},summarizeProductPeriod(rows,27,null),font));
   });
   for(final size in [const Size(320,700),const Size(360,740),const Size(564,900)]) {
     for(final keyboard in [0.0,280.0]) {
@@ -263,6 +314,7 @@ void main() {
     }
   });
 }
+
 
 
 

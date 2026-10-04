@@ -187,6 +187,89 @@ service cloud.firestore {
         && m.createdAt == request.time && m.productName == x.productName;
     }
 
+    function purchasingStaff() { return employee() && profile().get('canPurchase', false) == true; }
+    function purchase(id) { return getAfter(/databases/$(database)/documents/purchases/$(id)).data; }
+    function newStaffPurchase(id) {
+      let p = purchase(id);
+      return purchasingStaff() && p.actorId == request.auth.uid && p.source == 'employee'
+        && p.createdAt == request.time && p.status == 'completed';
+    }
+    function purchaseLine(s, i) {
+      let x = s.items[i];
+      let stock = getAfter(/databases/$(database)/documents/stock/$('main_' + x.productId)).data;
+      return x.keys().hasOnly(['productId','productName','quantity','unitCost','lineTotal'])
+        && natural(x.quantity) && x.quantity > 0 && x.quantity <= 1000000
+        && x.unitCost is number && x.unitCost >= 0 && x.unitCost <= 1000000000
+        && moneyEqual(x.lineTotal, x.quantity * x.unitCost) && s.stockIndex[x.productId] == i
+        && stock.lastPurchaseId == s.id;
+    }
+    function purchaseSupplier(s) {
+      let before = get(/databases/$(database)/documents/suppliers/$(s.supplierId)).data;
+      let after = getAfter(/databases/$(database)/documents/suppliers/$(s.supplierId)).data;
+      return before.get('active', true) == true && s.supplierName == before.name
+        && moneyEqual(s.supplierPreviousBalance, before.balance)
+        && moneyEqual(s.supplierBalanceAfter, before.balance + s.due)
+        && after.lastPurchaseId == s.id && moneyEqual(after.balance, s.supplierBalanceAfter)
+        && getAfter(/databases/$(database)/documents/accountMovements/$(s.id + '_supplier')).data.referenceId == s.id;
+    }
+    function purchaseCash(s) {
+      let before = get(/databases/$(database)/documents/settings/cash).data;
+      let after = getAfter(/databases/$(database)/documents/settings/cash).data;
+      return s.paid <= before.balance && moneyEqual(s.cashBefore, before.balance)
+        && moneyEqual(s.cashAfter, before.balance - s.paid) && after.lastPurchaseId == s.id
+        && moneyEqual(after.balance, s.cashAfter)
+        && getAfter(/databases/$(database)/documents/accountMovements/$(s.id + '_cash')).data.referenceId == s.id;
+    }
+    function validStaffPurchase(id) {
+      let s = request.resource.data;
+      return purchasingStaff() && s.keys().hasOnly(['id','actorId','actorName','branchId','supplierId','supplierName',
+        'invoiceNumber','note','items','itemCount','stockIndex','total','paid','due','cashPosted','cashBefore','cashAfter',
+        'supplierPreviousBalance','supplierBalanceAfter','paymentStatus','status','source','requestKey','createdAt'])
+        && s.id == id && s.actorId == request.auth.uid && s.actorName == profile().get('name', '') && s.branchId == branch()
+        && s.createdAt == request.time && s.status == 'completed' && s.source == 'employee' && s.cashPosted == true
+        && s.requestKey is string && s.requestKey.size() <= 6000 && s.note is string && s.note.size() <= 1000
+        && s.invoiceNumber is string && s.invoiceNumber.size() <= 100
+        && s.items is list && s.items.size() >= 1 && s.items.size() <= 4 && s.itemCount == s.items.size()
+        && s.stockIndex is map && s.stockIndex.size() == s.itemCount && purchaseLine(s, 0)
+        && (s.itemCount < 2 || purchaseLine(s, 1)) && (s.itemCount < 3 || purchaseLine(s, 2)) && (s.itemCount < 4 || purchaseLine(s, 3))
+        && moneyEqual(s.total, s.items[0].lineTotal + (s.itemCount > 1 ? s.items[1].lineTotal : 0)
+          + (s.itemCount > 2 ? s.items[2].lineTotal : 0) + (s.itemCount > 3 ? s.items[3].lineTotal : 0))
+        && s.total <= 1000000000000 && s.paid is number && s.paid >= 0 && s.paid <= s.total
+        && moneyEqual(s.due, s.total - s.paid) && s.paymentStatus == (s.due > 0 ? 'credit' : 'cash')
+        && purchaseSupplier(s) && (s.paid == 0 || purchaseCash(s));
+    }
+    function staffPurchaseStock(id, before) {
+      let next = request.resource.data;
+      let s = purchase(next.lastPurchaseId);
+      let x = s.items[s.stockIndex[next.productId]];
+      let p = getAfter(/databases/$(database)/documents/products/$(next.productId)).data;
+      let m = getAfter(/databases/$(database)/documents/stockMovements/$(s.id + '_' + next.productId)).data;
+      return newStaffPurchase(s.id) && id == 'main_' + next.productId && next.branchId == 'main'
+        && next.keys().hasOnly(['branchId','productId','quantity','lastSaleId','lastPurchaseId'])
+        && whole(next.quantity) && next.quantity == before + x.quantity
+        && p.active == true && p.name == x.productName && p.lastPurchaseId == s.id && p.purchasePrice == x.unitCost
+        && m.referenceId == s.id && m.actorId == request.auth.uid && m.createdAt == request.time
+        && m.productId == next.productId && m.productName == x.productName && m.kind == 'purchase'
+        && m.branchId == 'main' && m.quantity == x.quantity && m.balanceAfter == next.quantity;
+    }
+    function staffPurchaseProduct(id) {
+      let next = request.resource.data;
+      let s = purchase(next.lastPurchaseId);
+      let x = s.items[s.stockIndex[id]];
+      return newStaffPurchase(s.id) && next.diff(resource.data).affectedKeys().hasOnly(['purchasePrice','lastPurchaseId','updatedAt'])
+        && resource.data.active == true && next.updatedAt == request.time && next.purchasePrice == x.unitCost;
+    }
+    function staffPurchaseMoney(id) {
+      let m = request.resource.data;
+      let s = purchase(m.referenceId);
+      return newStaffPurchase(m.referenceId) && m.actorId == request.auth.uid && m.createdAt == request.time
+        && m.keys().hasOnly(['accountType','accountId','accountName','kind','amount','paid','delta','balanceBefore','balanceAfter','referenceId','actorId','createdAt'])
+        && m.accountId == s.supplierId && m.accountName == s.supplierName
+        && ((id == s.id + '_supplier' && m.kind == 'purchase' && m.accountType == 'suppliers'
+          && moneyEqual(m.amount, s.due) && m.paid == s.paid && moneyEqual(m.balanceBefore, s.supplierPreviousBalance) && moneyEqual(m.balanceAfter, s.supplierBalanceAfter))
+        || (id == s.id + '_cash' && m.kind == 'purchasePayment' && m.accountType == 'cash'
+          && moneyEqual(m.amount, s.paid) && moneyEqual(m.delta, -s.paid) && moneyEqual(m.balanceBefore, s.cashBefore) && moneyEqual(m.balanceAfter, s.cashAfter)));
+    }
     function validChatAudio(m) {
       return !m.keys().hasAny(['audioBase64','audioSeconds','audioMime']) ||
         (m.audioBase64 is string && m.audioBase64.size() > 0 && m.audioBase64.size() <= 800000
@@ -258,6 +341,7 @@ service cloud.firestore {
     match /products/{id} {
       allow read: if active();
       allow write: if owner();
+      allow update: if purchasingStaff() && staffPurchaseProduct(id);
     }
     match /branches/{id} {
       allow read: if active();
@@ -268,8 +352,10 @@ service cloud.firestore {
       // Staff browse shared inventory; validated atomic writes preserve stock and balances.
       allow get: if employee() && id.matches('main_.*');
       allow delete: if false;
-      allow create, update: if owner() && request.resource.data.keys().hasOnly(['branchId', 'productId', 'quantity', 'lastSaleId']) && whole(request.resource.data.quantity) && id == request.resource.data.branchId + '_' + request.resource.data.productId;
+      allow create, update: if owner() && request.resource.data.keys().hasOnly(['branchId', 'productId', 'quantity', 'lastSaleId', 'lastPurchaseId']) && whole(request.resource.data.quantity) && id == request.resource.data.branchId + '_' + request.resource.data.productId;
       allow update: if employee() && staffStock(id);
+      allow create: if purchasingStaff() && staffPurchaseStock(id, 0);
+      allow update: if purchasingStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity','lastPurchaseId']) && staffPurchaseStock(id, resource.data.quantity);
     }
     match /receipts/{id} {
       allow read: if owner();
@@ -298,10 +384,15 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /suppliers/{id} {
+      allow read: if purchasingStaff();
+      allow update: if purchasingStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastPurchaseId','updatedAt'])
+        && newStaffPurchase(request.resource.data.lastPurchaseId) && purchase(request.resource.data.lastPurchaseId).supplierId == id
+        && moneyEqual(request.resource.data.balance, resource.data.balance + purchase(request.resource.data.lastPurchaseId).due) && request.resource.data.updatedAt == request.time;
       allow read, create, update: if owner();
       allow delete: if false;
     }
     match /accountMovements/{id} {
+      allow create: if purchasingStaff() && staffPurchaseMoney(id);
       allow create: if employee() && request.resource.data.kind == 'sale' && staffMoneyMovement(id);
       allow create: if employee() && request.resource.data.kind in ['collection','customerCollection'] && newReceipt(request.resource.data.referenceId)
         && request.resource.data.keys().hasOnly(['accountType','accountId','accountName','kind','amount','delta',
@@ -325,6 +416,9 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /settings/{id} {
+      allow update: if purchasingStaff() && id == 'cash' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastPurchaseId','updatedAt'])
+        && newStaffPurchase(request.resource.data.lastPurchaseId) && purchase(request.resource.data.lastPurchaseId).paid > 0
+        && moneyEqual(request.resource.data.balance, resource.data.balance - purchase(request.resource.data.lastPurchaseId).paid) && request.resource.data.updatedAt == request.time;
       allow create: if employee() && id == 'cash' && 'lastSaleId' in request.resource.data && request.resource.data.keys().hasOnly(['balance','lastSaleId','updatedAt']) && staffCashWrite();
       allow update: if employee() && id == 'cash' && request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastSaleId']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastSaleId','updatedAt']) && staffCashWrite();
       allow get: if employee() && id in ['cash', 'invoiceBranding'];
@@ -343,6 +437,9 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /stockMovements/{id} {
+      allow create: if purchasingStaff() && newStaffPurchase(request.resource.data.referenceId) && request.resource.data.kind == 'purchase'
+        && id == request.resource.data.referenceId + '_' + request.resource.data.productId
+        && request.resource.data.keys().hasOnly(['productId','productName','branchId','kind','quantity','balanceAfter','referenceId','actorId','createdAt']);
       allow read, create: if owner();
       allow create: if employee() && staffStockMovement(id);
       allow update: if false;
@@ -363,6 +460,11 @@ service cloud.firestore {
       allow update, delete: if false;
     }
     match /purchases/{id} {
+      allow get: if employee() && (!exists(/databases/$(database)/documents/purchases/$(id)) || resource.data.actorId == request.auth.uid);
+      allow list: if employee() && resource.data.actorId == request.auth.uid;
+      allow create: if validStaffPurchase(id);
+      allow update: if employee() && resource.data.actorId == request.auth.uid && profile().get('canPrint', false) == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy']) && request.resource.data.printedBy == request.auth.uid;
       allow read, create: if owner();
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
@@ -389,6 +491,7 @@ service cloud.firestore {
     }
   }
 }
+
 
 
 
