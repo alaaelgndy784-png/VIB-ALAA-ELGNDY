@@ -187,12 +187,15 @@ service cloud.firestore {
         && m.createdAt == request.time && m.productName == x.productName;
     }
 
-    function purchasingStaff() { return employee() && profile().get('canPurchase', false) == true; }
+    function purchasingStaff() {
+      let user = profile();
+      return signed() && user.role == 'employee' && user.active == true && user.get('canPurchase', false) == true;
+    }
     function purchase(id) { return getAfter(/databases/$(database)/documents/purchases/$(id)).data; }
     function newStaffPurchase(id) {
       let p = purchase(id);
       return p.actorId == request.auth.uid && p.source == 'employee'
-        && p.createdAt == request.time && p.status == 'completed';
+        && p.createdAt == request.time;
     }
     function purchaseLine(s, i) {
       let x = s.items[i];
@@ -392,9 +395,9 @@ service cloud.firestore {
       allow delete: if false;
     }
     match /accountMovements/{id} {
-      allow create: if purchasingStaff() && staffPurchaseMoney(id);
-      allow create: if employee() && request.resource.data.kind == 'sale' && staffMoneyMovement(id);
-      allow create: if employee() && request.resource.data.kind in ['collection','customerCollection'] && newReceipt(request.resource.data.referenceId)
+      allow create: if request.resource.data.kind in ['purchase','purchasePayment'] && purchasingStaff() && staffPurchaseMoney(id);
+      allow create: if request.resource.data.kind == 'sale' && employee() && staffMoneyMovement(id);
+      allow create: if request.resource.data.kind in ['collection','customerCollection'] && employee() && newReceipt(request.resource.data.referenceId)
         && request.resource.data.keys().hasOnly(['accountType','accountId','accountName','kind','amount','delta',
           'balanceBefore','balanceAfter','referenceId','reason','actorId','branchId','createdAt'])
         && request.resource.data.actorId == request.auth.uid && request.resource.data.branchId == branch()
@@ -441,7 +444,7 @@ service cloud.firestore {
         && id == request.resource.data.referenceId + '_' + request.resource.data.productId
         && request.resource.data.keys().hasOnly(['productId','productName','branchId','kind','quantity','balanceAfter','referenceId','actorId','createdAt']);
       allow read, create: if owner();
-      allow create: if employee() && request.resource.data.kind == 'sale' && staffStockMovement(id);
+      allow create: if request.resource.data.kind == 'sale' && employee() && staffStockMovement(id);
       allow update: if false;
       allow delete: if false;
     }

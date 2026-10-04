@@ -62,6 +62,7 @@ const _managerFirebaseAppId = '1:200962643703:android:04784682cd1d95b22c65f2';
 const _staffFirebaseAppId = '1:200962643703:android:fd5ac8ff4a1fae7c2c65f2';
 
 bool staffApp = false;
+final saleCostVisible = ValueNotifier<bool>(false);
 Future<FirebaseOptions> _firebaseOptionsForThisApp() async {
   final packageName = (await PackageInfo.fromPlatform()).packageName;
   staffApp = packageName == 'com.alaa.vibsales.staffscan';
@@ -165,6 +166,8 @@ class Gate extends StatelessWidget {
             ])));
           }
           activeResetAt = data['resetAt'] as Timestamp?;
+          final showCost = data['role']=='owner' || data['showSaleCost']==true;
+          if(saleCostVisible.value!=showCost)WidgetsBinding.instance.addPostFrameCallback((_)=>saleCostVisible.value=showCost);
           final home = Home(canPurchase:data['canPurchase']==true,key:ValueKey('${auth.data!.uid}:${data['role']}'), uid: auth.data!.uid, role: data['role'] as String, branchId: (data['branchId'] ?? '') as String, name: (data['name'] ?? '') as String);
           return data['role'] == 'owner' ? OwnerSecurity(child: home) : home;
         },
@@ -888,7 +891,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
       Future<void> editSelected(SaleLine row, {bool adding=false}) async {
         final product=productDoc(row.productId!).data();
         final result=await showInvoiceLineEditor(c,name:'${product['name'] ?? ''}',price:row.price,quantity:row.quantity,
-          discount:row.discount,priceEditable:owner,allowDelete:!adding,
+          discount:row.discount,priceEditable:owner,allowDelete:!adding,saleScreen:true,
           unitCost:product['purchasePrice'] as num?,stockStream:invoiceMainStock(row.productId!));
         if(!c.mounted) {if(adding) row.dispose();return;}
         if(result==InvoiceLineEditAction.apply) update(() {if(adding) lines.add(row);});
@@ -905,7 +908,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         tableMode:true,invoiceNumber:draftNumber,itemCount:lines.length,
         quantityCount:lines.fold<int>(0,(sum,row)=>sum+(int.tryParse(row.quantity.text) ?? 0)),
         headerAction:IgnorePointer(ignoring:saving,child:ChatShortcut(owner:owner)),
-        toolbar:InvoiceProductsBar(inlineSearch:true,
+        toolbar:InvoiceProductsBar(inlineSearch:true,saleScreen:true,
           unitCosts:{for(final product in products) product.id:product.data()['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
           products:[for(final product in products) if(!lines.any((row)=>row.productId == product.id))
             (id:product.id,name:'${product.data()['name'] ?? ''}')],
@@ -2487,10 +2490,11 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
   bool enabled = data['active'] == true;
   bool canPrint = data['canPrint'] == true;
   bool canPurchase=data['canPurchase']==true;
+  bool showSaleCost=data['showSaleCost']==true;
   await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(
     builder: (c, setDialogState) => AlertDialog(
       title: const Text('صلاحيات الموظف'),
-      content: Column(mainAxisSize: MainAxisSize.min, children: [
+      content: SingleChildScrollView(child:Column(mainAxisSize: MainAxisSize.min, children: [
         TextField(controller: name, decoration: const InputDecoration(labelText: 'اسم الموظف')),
         DropdownButtonFormField<String>(initialValue: selected,
           decoration: const InputDecoration(labelText: 'الفرع'),
@@ -2498,17 +2502,18 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
           onChanged: (v) { if (v != null) setDialogState(() => selected = v); }),
         SwitchListTile(title: const Text('تفعيل الدخول'), value: enabled,
           onChanged: (v) => setDialogState(() => enabled = v)),
+        SwitchListTile(title:const Text('إظهار سعر التكلفة في شاشة البيع'),value:showSaleCost,onChanged:(v)=>setDialogState(()=>showSaleCost=v)),
         SwitchListTile(title:const Text('السماح بعمل فواتير مشتريات'),value:canPurchase,onChanged:(v)=>setDialogState(()=>canPurchase=v)),
         SwitchListTile(title: const Text('السماح بطباعة الفواتير'), value: canPrint,
           onChanged: (v) => setDialogState(() => canPrint = v)),
-      ]),
+      ])),
       actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')),
         FilledButton(onPressed: () async {
           if (name.text.trim().isEmpty) return;
           try {
             await db.collection('users').doc(uid).update({
               'name': name.text.trim(), 'role': 'employee', 'branchId': selected,
-              'active': enabled, 'canPrint': canPrint, 'canPurchase':canPurchase,
+              'active': enabled, 'canPrint': canPrint, 'canPurchase':canPurchase, 'showSaleCost':showSaleCost,
             });
             if (c.mounted) Navigator.pop(c);
           } catch (_) {
@@ -4870,7 +4875,7 @@ Future<String?> selectRegisteredCustomer(BuildContext context) async {
 }
 
 Future<String?> selectSaleProduct(BuildContext context, List<QueryDocumentSnapshot<Map<String, dynamic>>> products, Set<String> added) =>
-  showInvoiceProductChoices(context,
+  showInvoiceProductChoices(context,saleScreen:true,
     products:[for(final p in products) (id:p.id,name:'${p.data()['name'] ?? ''}')],
     excluded:added,unitCosts:{for(final p in products) p.id:p.data()['purchasePrice'] as num?},
     stockStreamFor:invoiceMainStock,

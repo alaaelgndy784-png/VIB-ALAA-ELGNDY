@@ -69,12 +69,12 @@ class InvoiceEditorFrame extends StatelessWidget {
 class InvoiceProductsBar extends StatefulWidget {
   final List<({String id,String name})> products;
   final bool enabled;
-  final bool inlineSearch;
+  final bool inlineSearch,saleScreen;
   final Map<String,num?> unitCosts;
   final Stream<int?> Function(String)? stockStreamFor;
   final VoidCallback onSearch;
   final ValueChanged<String> onSelect;
-  const InvoiceProductsBar({super.key,required this.products,required this.enabled,required this.onSearch,required this.onSelect,this.unitCosts=const {},this.stockStreamFor,this.inlineSearch=false});
+  const InvoiceProductsBar({super.key,required this.products,required this.enabled,required this.onSearch,required this.onSelect,this.unitCosts=const {},this.stockStreamFor,this.inlineSearch=false,this.saleScreen=false});
   @override State<InvoiceProductsBar> createState() => _InvoiceProductsBarState();
 }
 
@@ -100,7 +100,7 @@ class _InvoiceProductsBarState extends State<InvoiceProductsBar> {
               return InkWell(key:ValueKey('inline-product-${product.id}'),onTap:enabled ? () {
                 FocusScope.of(context).unfocus(); search.clear();setState(() {});onSelect(product.id);
               } : null,child:Padding(padding:const EdgeInsets.symmetric(vertical:8,horizontal:4),
-                child:InvoiceProductOptionRow(name:product.name,unitCost:unitCosts[product.id],quantityStream:stockStreamFor?.call(product.id))));
+                child:InvoiceProductOptionRow(saleScreen:widget.saleScreen,name:product.name,unitCost:unitCosts[product.id],quantityStream:stockStreamFor?.call(product.id))));
             })),
       ]);
     }
@@ -114,7 +114,7 @@ class _InvoiceProductsBarState extends State<InvoiceProductsBar> {
       selectedItemBuilder:(context)=>products.map((p)=>Align(alignment:AlignmentDirectional.centerStart,
         child:Text(p.name,maxLines:1,overflow:TextOverflow.ellipsis))).toList(),
       items:products.map((p)=>DropdownMenuItem(value:p.id,child:Padding(padding:const EdgeInsets.symmetric(vertical:8),
-        child:InvoiceProductOptionRow(name:p.name,unitCost:unitCosts[p.id],quantityStream:stockStreamFor?.call(p.id))))).toList(),
+        child:InvoiceProductOptionRow(saleScreen:widget.saleScreen,name:p.name,unitCost:unitCosts[p.id],quantityStream:stockStreamFor?.call(p.id))))).toList(),
       onChanged:enabled ? (id) {if(id != null) onSelect(id);} : null,
     ),
   ]);
@@ -127,9 +127,10 @@ Stream<int?> invoiceMainStock(String productId) => db.collection('stock').doc('m
 
 class InvoiceProductOptionRow extends StatelessWidget {
   final String name;
+  final bool saleScreen;
   final num? unitCost;
   final Stream<int?>? quantityStream;
-  const InvoiceProductOptionRow({super.key,required this.name,this.unitCost,this.quantityStream});
+  const InvoiceProductOptionRow({super.key,required this.name,this.unitCost,this.quantityStream,this.saleScreen=false});
   @override Widget build(BuildContext context) => Row(crossAxisAlignment:CrossAxisAlignment.center,children:[
     Expanded(flex:5,child:Text(name,softWrap:true,style:TextStyle(fontSize:14,color:staffApp ? Colors.lightBlueAccent : null))),
     const SizedBox(width:8),
@@ -137,9 +138,8 @@ class InvoiceProductOptionRow extends StatelessWidget {
       StreamBuilder<int?>(stream:quantityStream,builder:(context,snapshot)=>Text(
         'المتاح: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.connectionState == ConnectionState.waiting ? 'جارٍ التحميل' : snapshot.data == null ? 'غير متاح' : snapshot.data}',
         softWrap:true,style:TextStyle(fontSize:12,color:staffApp ? Colors.redAccent : gold))),
-      const SizedBox(height:3),
-      Text('تكلفة الوحدة: ${unitCost == null ? 'غير مسجلة' : '${unitCost!.toStringAsFixed(2)} ج.م'}',
-        softWrap:true,style:TextStyle(fontSize:12,color:staffApp ? Colors.greenAccent : null)),
+      ValueListenableBuilder<bool>(valueListenable:saleCostVisible,builder:(context,visible,_)=>!saleScreen || visible ? Text('تكلفة الوحدة: ${unitCost == null ? 'غير مسجلة' : '${unitCost!.toStringAsFixed(2)} ج.م'}',
+        softWrap:true,style:TextStyle(fontSize:12,color:staffApp ? Colors.greenAccent : null)) : const SizedBox.shrink()),
     ])),
   ]);
 }
@@ -149,13 +149,14 @@ Future<String?> showInvoiceProductChoices(BuildContext context, {
   required List<({String id,String name})> products,
   required Set<String> excluded,
   Map<String,num?> unitCosts = const {},
+  bool saleScreen=false,
   Stream<int?> Function(String)? stockStreamFor,
 }) => showModalBottomSheet<String>(
   context:context,isScrollControlled:true,useSafeArea:true,
   constraints:const BoxConstraints(maxWidth:650),backgroundColor:const Color(0xFF111015),
   shape:const RoundedRectangleBorder(borderRadius:BorderRadius.vertical(top:Radius.circular(16))),
   builder:(sheet)=>Directionality(textDirection:TextDirection.rtl,child:InvoiceProductSearchList(
-    products:products,excluded:excluded,unitCosts:unitCosts,stockStreamFor:stockStreamFor,
+    products:products,excluded:excluded,unitCosts:unitCosts,stockStreamFor:stockStreamFor,saleScreen:saleScreen,
     onSelect:(id)=>Navigator.pop(sheet,id),onClose:()=>Navigator.pop(sheet),
   )),
 );
@@ -163,12 +164,13 @@ Future<String?> showInvoiceProductChoices(BuildContext context, {
 class InvoiceProductSearchList extends StatefulWidget {
   final List<({String id,String name})> products;
   final Set<String> excluded;
+  final bool saleScreen;
   final Map<String,num?> unitCosts;
   final Stream<int?> Function(String)? stockStreamFor;
   final ValueChanged<String> onSelect;
   final VoidCallback onClose;
   const InvoiceProductSearchList({super.key,required this.products,required this.excluded,
-    required this.onSelect,required this.onClose,this.unitCosts=const {},this.stockStreamFor});
+    required this.onSelect,required this.onClose,this.unitCosts=const {},this.stockStreamFor,this.saleScreen=false});
   @override State<InvoiceProductSearchList> createState()=>_InvoiceProductSearchListState();
 }
 
@@ -190,7 +192,7 @@ class _InvoiceProductSearchListState extends State<InvoiceProductSearchList> {
             final product=rows[index];
             return InkWell(key:ValueKey('product-choice-${product.id}'),onTap:()=>widget.onSelect(product.id),
               child:Padding(padding:const EdgeInsets.symmetric(vertical:14,horizontal:4),child:InvoiceProductOptionRow(
-                name:product.name,unitCost:widget.unitCosts[product.id],quantityStream:widget.stockStreamFor?.call(product.id),
+                saleScreen:widget.saleScreen,name:product.name,unitCost:widget.unitCosts[product.id],quantityStream:widget.stockStreamFor?.call(product.id),
               )));
           },
         )),
@@ -248,12 +250,12 @@ class _InvoiceLineEditorResult {
 Future<InvoiceLineEditAction?> showInvoiceLineEditor(BuildContext context, {
   required String name,required TextEditingController price,required TextEditingController quantity,
   required PurchaseDiscountDraft discount, bool priceEditable=true,bool allowDelete=false,
-  num? unitCost,Stream<int?>? stockStream,
+  num? unitCost,Stream<int?>? stockStream,bool saleScreen=false,
 }) async {
   final result=await showDialog<_InvoiceLineEditorResult>(context:context,barrierDismissible:false,
     builder:(_)=>_InvoiceLineEditorDialog(name:name,initialPrice:price.text,initialQuantity:quantity.text,
       baseCost:discount.baseCost,percent:discount.percent,priceEditable:priceEditable,
-      allowDelete:allowDelete,unitCost:unitCost,stockStream:stockStream));
+      allowDelete:allowDelete,unitCost:unitCost,stockStream:stockStream,saleScreen:saleScreen));
   if(result?.action==InvoiceLineEditAction.apply) {
     quantity.text=result!.quantity;price.text=result.price;
     discount.baseCost=result.baseCost;discount.percent=result.percent;
@@ -265,11 +267,11 @@ class _InvoiceLineEditorDialog extends StatefulWidget {
   final String name,initialPrice,initialQuantity;
   final double? baseCost;
   final double percent;
-  final bool priceEditable,allowDelete;
+  final bool priceEditable,allowDelete,saleScreen;
   final num? unitCost;
   final Stream<int?>? stockStream;
   const _InvoiceLineEditorDialog({required this.name,required this.initialPrice,required this.initialQuantity,
-    required this.baseCost,required this.percent,required this.priceEditable,required this.allowDelete,this.unitCost,this.stockStream});
+    required this.baseCost,required this.percent,required this.priceEditable,required this.allowDelete,this.unitCost,this.stockStream,this.saleScreen=false});
   @override State<_InvoiceLineEditorDialog> createState()=>_InvoiceLineEditorDialogState();
 }
 
@@ -292,7 +294,7 @@ class _InvoiceLineEditorDialogState extends State<_InvoiceLineEditorDialog> {
         onChoose:() {},onDelete:() {},onChanged:()=>setState(() {})),
       if(widget.stockStream!=null) StreamBuilder<int?>(stream:widget.stockStream,builder:(context,snapshot)=>Text(
         'الكمية المتوفرة: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.data ?? 'جارٍ التحميل'}',style:TextStyle(color:staffApp ? Colors.redAccent : gold))),
-      if(widget.unitCost!=null) Text('سعر التكلفة: ${widget.unitCost!.toStringAsFixed(2)} ج.م',style:TextStyle(color:staffApp ? Colors.greenAccent : gold)),
+      if(widget.unitCost!=null) ValueListenableBuilder<bool>(valueListenable:saleCostVisible,builder:(context,visible,_)=>!widget.saleScreen || visible ? Text('سعر التكلفة: ${widget.unitCost!.toStringAsFixed(2)} ج.م',style:TextStyle(color:staffApp ? Colors.greenAccent : gold)) : const SizedBox.shrink()),
     ]))),
     actions:[
       if(widget.allowDelete) TextButton.icon(icon:const Icon(Icons.delete_outline,color:Colors.redAccent),label:const Text('حذف الصنف'),

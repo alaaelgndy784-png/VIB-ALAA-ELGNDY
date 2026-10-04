@@ -101,6 +101,18 @@ void main() {
     await tester.runAsync(() async {final image=await (boundary.currentContext!.findRenderObject() as RenderRepaintBoundary).toImage(pixelRatio:1);
       final bytes=await image.toByteData(format:ui.ImageByteFormat.png);Directory('dist').createSync(recursive:true);File('dist/VIB-EMPLOYEE-COLOURS.png').writeAsBytesSync(bytes!.buffer.asUint8List());image.dispose();});
   });
+  testWidgets('manager cost visibility changes live in sale chooser and item dialog',(tester) async {
+    saleCostVisible.value=false;addTearDown(()=>saleCostVisible.value=false);
+    final price=TextEditingController(text:'250'),qty=TextEditingController(text:'1');addTearDown(price.dispose);addTearDown(qty.dispose);
+    late BuildContext page;
+    await tester.pumpWidget(MaterialApp(home:Builder(builder:(context){page=context;return const Scaffold(body:InvoiceProductOptionRow(saleScreen:true,name:'صنف بيع',unitCost:200));})));
+    expect(find.textContaining('تكلفة الوحدة'),findsNothing);
+    saleCostVisible.value=true;await tester.pump();expect(find.textContaining('تكلفة الوحدة'),findsOneWidget);
+    final dialog=showInvoiceLineEditor(page,name:'صنف بيع',price:price,quantity:qty,discount:PurchaseDiscountDraft(),unitCost:200,saleScreen:true);
+    await tester.pumpAndSettle();expect(find.textContaining('سعر التكلفة'),findsOneWidget);
+    saleCostVisible.value=false;await tester.pump();expect(find.textContaining('تكلفة الوحدة'),findsNothing);expect(find.textContaining('سعر التكلفة'),findsNothing);
+    await tester.tap(find.text('تراجع'));await tester.pumpAndSettle();await dialog;expect(tester.takeException(),isNull);
+  });
   test('generate account statements and trace PDFs',() async {
     final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
     final from=DateTime(2026,10,1),to=DateTime(2026,10,3);
