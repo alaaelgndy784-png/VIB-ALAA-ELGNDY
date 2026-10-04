@@ -184,8 +184,7 @@ Future<void> replacePurchaseLocally(String id, int revision, String requestId,
     final debtDelta = due - cents(old['due']);
     final cashDelta = purchaseEditCashDelta(old,paid);
     final cashBefore = cents((cash?['balance'] as num?) ?? 0), balanceBefore = cents((customer?['balance'] as num?) ?? 0);
-    if(cashBefore+cashDelta<0) throw StateError('رصيد الصندوق لا يكفي لفارق المدفوع');
-    if (customer != null && balanceBefore + debtDelta < 0) throw Exception('التعديل يتعارض مع سداد المورد');
+    if(cashDelta<0 && cashBefore+cashDelta<0) throw StateError('رصيد الصندوق لا يكفي لفارق المدفوع');
     for (final p in ids) {
       final before = (stocks[p]!.data()?['quantity'] as num?)?.toInt() ?? 0;
       final delta = purchaseEditStockDelta(oldQuantities[p] ?? 0,newQuantities[p] ?? 0), after = before + delta;
