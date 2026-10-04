@@ -43,6 +43,7 @@ part 'invoice_history.dart';
 part 'invoice_serials.dart';
 part 'invoice_a4.dart';
 part 'invoice_parties.dart';
+part 'business_reports.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1232,23 +1233,20 @@ class _SalesState extends State<Sales> {
           if (date != null && mounted) setState(() => selectedDate = date);
         }),
         TextButton(onPressed: () => setState(() => selectedDate = DateTime.now()), child: const Text('فواتير اليوم')),
+        if (owner) OutlinedButton.icon(icon: const Icon(Icons.summarize_outlined), label: const Text('تقرير حركة المبيعات'),
+          onPressed: () => openVibReport(context, 'تقرير حركة المبيعات', const InvoiceMovementReportPage(type: 'sales'))),
         if (owner) OutlinedButton.icon(icon: const Icon(Icons.edit_note), label: const Text('تعديل فاتورة مبيعات'), onPressed: () => editSaleByNumber(context)),
       ])),
       Padding(padding: const EdgeInsets.all(8), child: Text('فواتير ${selectedDate.day}/${selectedDate.month}/${selectedDate.year} • العدد: ${rows.length}')),
       Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد فواتير في هذا التاريخ')) : ListView(children: rows.map((d) {
         final sale = d.data();
-        final rawItems = (sale['items'] as List?) ?? const [];
-        final itemCount = rawItems.isNotEmpty ? rawItems.length : 1;
-        final itemText = rawItems.isNotEmpty
-            ? rawItems.take(3).map((e) => '${(e as Map)['productName'] ?? ''} × ${e['quantity'] ?? 0}').join(' • ')
-            : '${sale['productName'] ?? ''} × ${sale['quantity'] ?? 0}';
         final paymentText = sale.containsKey('paid') ? ' • مدفوع ${sale['paid'] ?? 0} • باقي ${sale['due'] ?? 0}' : '';
         return Card(child: ListTile(
+          leading: const Icon(Icons.receipt_long_outlined, color: gold),
           title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('رقم الفاتورة: ${invoiceDisplayNumber('sales',d.id,sale)}'),
             Text('${sale['customerName'] ?? ''}'.trim().isEmpty ? 'بدون عميل مسجل' : '${sale['customerName']}',
               style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
-            Text('$itemText${itemCount > 3 ? ' • +${itemCount - 3} أصناف' : ''}'),
+            Text('رقم الفاتورة: ${invoiceDisplayNumber('sales',d.id,sale)}'),
           ]),
           subtitle: Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجع' : ''}'),
           trailing: Text('${sale['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
@@ -1654,6 +1652,8 @@ class _PurchasesState extends State<Purchases>{
   Widget build(BuildContext context) => Column(children: [
     if (owner) Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, children: [
       FilledButton.icon(onPressed: () => purchaseDialog(context), icon: const Icon(Icons.add), label: const Text('فاتورة مشتريات جديدة')),
+      OutlinedButton.icon(onPressed: () => openVibReport(context, 'تقرير حركة المشتريات', const InvoiceMovementReportPage(type: 'purchases')),
+        icon: const Icon(Icons.summarize_outlined), label: const Text('تقرير حركة المشتريات')),
       OutlinedButton.icon(onPressed: () => scannedPurchaseDialog(context), icon: const Icon(Icons.camera_alt), label: const Text('تصوير فاتورة مشتريات')),
     ])),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -1680,19 +1680,14 @@ class _PurchasesState extends State<Purchases>{
           }
           final d = rows[index];
           final p = d.data();
-          final rawItems = (p['items'] as List?) ?? const [];
-          final itemCount = rawItems.isNotEmpty ? rawItems.length : 1;
-          final itemText = rawItems.isNotEmpty
-              ? rawItems.take(3).map((e) => '${(e as Map)['productName'] ?? ''} × ${e['quantity'] ?? 0}').join(' • ')
-              : '${p['productName'] ?? ''} × ${p['quantity'] ?? 0}';
           return Card(child: ListTile(
+            leading: const Icon(Icons.receipt_long_outlined, color: gold),
             title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('فاتورة ${invoiceDisplayNumber('purchases',d.id,p)}'),
               Text('${p['supplierName'] ?? ''}'.trim().isEmpty ? 'مورد غير مسمى' : '${p['supplierName']}',
                 style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+              Text('رقم الفاتورة: ${invoiceDisplayNumber('purchases',d.id,p)}'),
             ]),
-            subtitle: Text('$itemText${itemCount > 3 ? ' • +${itemCount - 3} أصناف' : ''}\n${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),
-            isThreeLine: true,
+            subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),
             trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
             onTap: () => invoiceActions(context, 'purchases', d.id, p, canReturn: owner),
           ));
@@ -2930,6 +2925,9 @@ class _AccountsState extends State<Accounts> {
       Padding(padding: const EdgeInsets.all(12), child: Column(children: [SegmentedButton<bool>(
         segments: const [ButtonSegment(value: false, label: Text('العملاء')), ButtonSegment(value: true, label: Text('الموردون'))],
         selected: {suppliers}, onSelectionChanged: (values) => setState(() => suppliers = values.first)),
+        Padding(padding: const EdgeInsets.only(top:8), child: OutlinedButton.icon(
+          onPressed: () => openVibReport(context, suppliers ? 'تقرير ذمم الموردين' : 'تقرير ذمم العملاء', DebtReportPage(suppliers:suppliers)),
+          icon: const Icon(Icons.summarize_outlined), label: Text(suppliers ? 'تقرير ذمم الموردين — إجمالي الدين' : 'تقرير ذمم العملاء — إجمالي الدين'))),
         if (suppliers) Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Directionality(textDirection: TextDirection.rtl, child: Scaffold(appBar: AppBar(title: const Text('سندات صرف الموردين')), body: const SafeArea(child: SupplierPaymentVouchers()))))), icon: const Icon(Icons.receipt_long), label: const Text('سندات صرف الموردين'))),
         const SizedBox(height: 8), FilledButton.icon(onPressed: () => createAccountDialog(context, collection, suppliers), icon: const Icon(Icons.person_add), label: Text(suppliers ? 'إضافة مورد' : 'إضافة عميل')),
       ])),

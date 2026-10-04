@@ -31,6 +31,8 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> {
   }
   @override Widget build(BuildContext context) => Column(children: [
     Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, runSpacing: 8, children: [
+      OutlinedButton.icon(onPressed: () => openVibReport(context, sales ? 'تقرير حركة المبيعات' : 'تقرير حركة المشتريات',
+        InvoiceMovementReportPage(type:widget.type)), icon:const Icon(Icons.summarize_outlined),label:Text(sales ? 'تقرير حركة المبيعات' : 'تقرير حركة المشتريات')),
       OutlinedButton.icon(onPressed: pickDate, icon: const Icon(Icons.calendar_month), label: const Text('اختيار التاريخ')),
       TextButton.icon(onPressed: () => setState(() => selectDay(DateTime.now())),
         icon: const Icon(Icons.today), label: const Text('فواتير اليوم')),
@@ -57,9 +59,9 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> {
           return Card(margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), child: ListTile(
             leading: const Icon(Icons.receipt_long_outlined,color:gold),
             title: FutureBuilder<Map<String,dynamic>>(future: data['internalNumber'] is int || invoiceSerialCache.containsKey(serialKey(widget.type,row.id)) ? null : ensureInvoiceSerial(widget.type,row.id),builder:(context,serial)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-              Text('فاتورة ${invoiceDisplayNumber(widget.type,row.id,data)}'),
               Text(party.isEmpty ? (sales ? 'بدون عميل مسجل' : 'مورد غير مسمى') : party,
                 style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold,fontSize:16)),
+              Text('رقم الفاتورة: ${invoiceDisplayNumber(widget.type,row.id,data)}'),
             ])),
             subtitle: Text('${formatDate(data['createdAt'])}${sales ? ' • فرع: ${data['branchId'] ?? ''}' : ''}${returned ? '\nفاتورة مرتجعة' : ''}'),
             trailing: Text('$total ج.م', style: TextStyle(color: returned ? Colors.redAccent : gold, fontWeight: FontWeight.bold)),
