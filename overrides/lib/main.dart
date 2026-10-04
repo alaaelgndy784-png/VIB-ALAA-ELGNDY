@@ -1666,7 +1666,7 @@ class _PurchasesState extends State<Purchases>{
           if (index == rows.length) {
             return Padding(padding: const EdgeInsets.all(16), child: Column(children: [
               Text('المعروض: ${rows.length} فاتورة مشتريات'),
-              if (hasOlder) OutlinedButton.icon(
+              if (hasOlder || loading) OutlinedButton.icon(
                 onPressed: loading ? null : _showOlderPurchases,
                 icon: loading ? const SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2)) : const Icon(Icons.expand_more),
                 label: Text(loading ? 'جاري تحميل الفواتير…' : 'عرض فواتير أقدم'),
