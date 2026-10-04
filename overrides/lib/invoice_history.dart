@@ -56,7 +56,11 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> {
           final returned = data['status'] == 'returned';
           return Card(margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4), child: ListTile(
             leading: const Icon(Icons.receipt_long_outlined,color:gold),
-            title: FutureBuilder<Map<String,dynamic>>(future: data['internalNumber'] is int || invoiceSerialCache.containsKey(serialKey(widget.type,row.id)) ? null : ensureInvoiceSerial(widget.type,row.id),builder:(context,serial)=>Text('فاتورة ${invoiceDisplayNumber(widget.type,row.id,data)}${party.isEmpty ? '' : '\n$party'}')),
+            title: FutureBuilder<Map<String,dynamic>>(future: data['internalNumber'] is int || invoiceSerialCache.containsKey(serialKey(widget.type,row.id)) ? null : ensureInvoiceSerial(widget.type,row.id),builder:(context,serial)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+              Text('فاتورة ${invoiceDisplayNumber(widget.type,row.id,data)}'),
+              Text(party.isEmpty ? (sales ? 'بدون عميل مسجل' : 'مورد غير مسمى') : party,
+                style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold,fontSize:16)),
+            ])),
             subtitle: Text('${formatDate(data['createdAt'])}${sales ? ' • فرع: ${data['branchId'] ?? ''}' : ''}${returned ? '\nفاتورة مرتجعة' : ''}'),
             trailing: Text('$total ج.م', style: TextStyle(color: returned ? Colors.redAccent : gold, fontWeight: FontWeight.bold)),
             onTap: () => invoiceActions(context, widget.type, row.id, data),
