@@ -3,14 +3,14 @@ import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show rootBundle, FontLoader;
 import 'package:flutter/material.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../lib/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  setUpAll(initializeChequeTimeZones);
+  setUpAll(() async { initializeChequeTimeZones(); final loader=FontLoader('VIBQA')..addFont(rootBundle.load('assets/fonts/DejaVuSans.ttf'));await loader.load(); });
   final day=DateTime(2026,10,4);
   Map<String,dynamic> invoice(String id,num total,{num? paid,num? due,num receipts=0,String status='completed',DateTime? at}) => {
     'id':id,'displayNumber':id,'customerName':'عميل $id','supplierName':'مورد $id',
@@ -25,7 +25,7 @@ void main() {
         final search=TextEditingController();addTearDown(search.dispose);
         final boundary=GlobalKey();
         const party='محل الراشد البنفسج 10';
-        await tester.pumpWidget(RepaintBoundary(key:boundary,child:MaterialApp(theme:ThemeData.dark(),
+        await tester.pumpWidget(RepaintBoundary(key:boundary,child:MaterialApp(theme:ThemeData.dark().copyWith(textTheme:ThemeData.dark().textTheme.apply(fontFamily:'VIBQA')),
           builder:(context,child)=>MediaQuery(data:MediaQuery.of(context).copyWith(
             viewInsets:EdgeInsets.only(bottom:keyboard),textScaler:TextScaler.linear(1.5)),child:Directionality(textDirection:TextDirection.rtl,child:child!)),
           home:Scaffold(resizeToAvoidBottomInset:false,body:InvoiceEditSearchFrame(type:'purchases',search:search,onChanged:(_){},
