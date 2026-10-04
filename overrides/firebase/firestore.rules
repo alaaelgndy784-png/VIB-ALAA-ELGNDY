@@ -191,7 +191,7 @@ service cloud.firestore {
     function purchase(id) { return getAfter(/databases/$(database)/documents/purchases/$(id)).data; }
     function newStaffPurchase(id) {
       let p = purchase(id);
-      return purchasingStaff() && p.actorId == request.auth.uid && p.source == 'employee'
+      return p.actorId == request.auth.uid && p.source == 'employee'
         && p.createdAt == request.time && p.status == 'completed';
     }
     function purchaseLine(s, i) {
@@ -353,7 +353,7 @@ service cloud.firestore {
       allow get: if employee() && id.matches('main_.*');
       allow delete: if false;
       allow create, update: if owner() && request.resource.data.keys().hasOnly(['branchId', 'productId', 'quantity', 'lastSaleId', 'lastPurchaseId']) && whole(request.resource.data.quantity) && id == request.resource.data.branchId + '_' + request.resource.data.productId;
-      allow update: if employee() && staffStock(id);
+      allow update: if employee() && request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastSaleId']) && staffStock(id);
       allow create: if purchasingStaff() && staffPurchaseStock(id, 0);
       allow update: if purchasingStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity','lastPurchaseId']) && staffPurchaseStock(id, resource.data.quantity);
     }
@@ -441,7 +441,7 @@ service cloud.firestore {
         && id == request.resource.data.referenceId + '_' + request.resource.data.productId
         && request.resource.data.keys().hasOnly(['productId','productName','branchId','kind','quantity','balanceAfter','referenceId','actorId','createdAt']);
       allow read, create: if owner();
-      allow create: if employee() && staffStockMovement(id);
+      allow create: if employee() && request.resource.data.kind == 'sale' && staffStockMovement(id);
       allow update: if false;
       allow delete: if false;
     }
