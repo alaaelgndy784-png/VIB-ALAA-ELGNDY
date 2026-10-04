@@ -3616,6 +3616,8 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
   if (!context.mounted) return;
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
+    ListTile(leading: const Icon(Icons.receipt_long_outlined, color: gold), title: const Text('عرض تفاصيل الفاتورة'),
+      onTap: () { Navigator.pop(c); showInvoiceOverview(context, type, id); }),
     ListTile(leading: const Icon(Icons.picture_as_pdf, color: gold), title: const Text('حفظ أو مشاركة الفاتورة PDF'), onTap: () { Navigator.pop(c); exportInvoicePdf(context, type, id, data); }),
     if (type == 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.credit_card, color: gold), title: const Text('رابط دفع بالكارت — جيديا'), onTap: () { Navigator.pop(c); openGeideaPayments(context, invoiceId:id); }),
     if (type == 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.edit_note, color: gold),

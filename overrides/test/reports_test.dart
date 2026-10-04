@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/material.dart';
 import 'package:pdf/widgets.dart' as pw;
 import '../lib/main.dart';
 
@@ -74,6 +75,24 @@ void main() {
       expect(()=>summarizeDebts([{'name':'bad','balance':balance}]),throwsStateError);
     }
     expect(summarizeDebts([]).debtCents,0);
+  });
+
+  testWidgets('read only invoice overview shows numbered products and account on a narrow phone', (tester) async {
+    tester.view.physicalSize=const Size(360,700);tester.view.devicePixelRatio=1;
+    addTearDown(() {tester.view.resetPhysicalSize();tester.view.resetDevicePixelRatio();});
+    await tester.pumpWidget(MaterialApp(builder:(context,child)=>Directionality(textDirection:TextDirection.rtl,child:child!),
+      home:Scaffold(body:InvoiceOverviewContent(type:'sales',id:'X1',data:{
+        'internalNumber':42,'customerName':'عميل الاختبار','createdAt':Timestamp.fromDate(movementReportBoundary(day)),
+        'total':150,'paid':50,'due':100,'items':[
+          {'productName':'صنف الاختبار الأول ذو الاسم الطويل','quantity':2,'unitPrice':50,'lineTotal':100},
+          {'productName':'صنف الاختبار الثاني','quantity':1,'unitPrice':50,'lineTotal':50},
+        ]}))));
+    await tester.pumpAndSettle();
+    expect(find.text('عميل الاختبار'),findsOneWidget);
+    expect(find.textContaining('1. صنف الاختبار الأول'),findsOneWidget);
+    expect(find.textContaining('2. صنف الاختبار الثاني'),findsOneWidget);
+    expect(find.text('باقي الفاتورة: 100.00 ج.م'),findsOneWidget);
+    expect(tester.takeException(),isNull);
   });
   test('generate actual short and multipage Arabic movement and debt PDFs',() async {
     final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));

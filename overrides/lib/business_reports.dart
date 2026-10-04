@@ -212,7 +212,7 @@ class _InvoiceMovementReportPageState extends State<InvoiceMovementReportPage> {
               Text('الإجمالي: ${movementReportMoney(row.totalCents)}'),
               Text('المدفوع: ${movementReportMoney(row.paidCents)} • الباقي: ${movementReportMoney(row.dueCents)}'),
               Wrap(spacing: 8, children: [
-                TextButton.icon(onPressed: enabled ? () => invoiceActions(context, widget.type, row.id, row.data) : null,
+                TextButton.icon(onPressed: enabled ? () => showInvoiceOverview(context, widget.type, row.id) : null,
                   icon: const Icon(Icons.receipt_long), label: const Text('عرض الفاتورة')),
                 TextButton.icon(onPressed: enabled ? () => output(report, row: row) : null,
                   icon: const Icon(Icons.share), label: const Text('إرسال هذه الفاتورة PDF')),
@@ -394,4 +394,52 @@ Future<Uint8List> createDebtReportPdf(DebtReport report,pw.Font font,{required b
       pw.SizedBox(height:10),pw.Text('الأرصدة الدائنة معروضة منفصلة ولا تخصم من إجمالي الدين. يشمل التقرير الحسابات غير النشطة ذات الرصيد القائم.'),
     ]));
   return pdf.save();
+}
+
+class InvoiceOverviewContent extends StatelessWidget {
+  final String type, id;
+  final Map<String,dynamic> data;
+  const InvoiceOverviewContent({super.key,required this.type,required this.id,required this.data});
+  @override Widget build(BuildContext context) {
+    final sales=type=='sales';
+    final name='${data[sales ? 'customerName' : 'supplierName'] ?? ''}'.trim();
+    final items=((data['items'] as List?) ?? []).map((x)=>Map<String,dynamic>.from(x as Map)).toList();
+    if(items.isEmpty)items.add({'productName':data['productName'] ?? '', 'quantity':data['quantity'] ?? 0,
+      sales ? 'unitPrice' : 'unitCost':data[sales ? 'unitPrice' : 'unitCost'] ?? 0,'lineTotal':data['total'] ?? 0});
+    String money(dynamic v)=>((v as num?) ?? 0).toStringAsFixed(2);
+    final paid=(data['paid'] as num?) ?? (sales ? (data['total'] as num?) ?? 0 : 0);
+    final receipt=(data['receiptPaid'] as num?) ?? 0;
+    final due=(data['due'] as num?) ?? ((data['total'] as num?) ?? 0)-paid;
+    return ListView(shrinkWrap:true,children:[
+      Text(name.isEmpty ? (sales ? 'بدون عميل مسجل' : 'مورد غير مسمى') : name,
+        style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold,fontSize:18)),
+      Text('رقم الفاتورة: ${invoiceDisplayNumber(type,id,data)}'),
+      Text(formatDate(data['createdAt'])),
+      for(var i=0;i<items.length;i++)Card(child:Padding(padding:const EdgeInsets.all(10),
+        child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+          Text('${i+1}. ${items[i]['productName'] ?? ''}',style:const TextStyle(fontWeight:FontWeight.bold)),
+          Text('العدد: ${items[i]['quantity'] ?? 0} • السعر: ${money(items[i][sales ? 'unitPrice' : 'unitCost'])}'),
+          Text('إجمالي البند: ${money(items[i]['lineTotal'] ?? (((items[i]['quantity'] as num?) ?? 0) * ((items[i][sales ? 'unitPrice' : 'unitCost'] as num?) ?? 0)))} ج.م'),
+        ]))),
+      Text('الإجمالي: ${money(data['total'])} ج.م',style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
+      Text('المدفوع مع السداد المرتبط: ${money(paid+receipt)} ج.م'),
+      Text(data['status']=='returned' ? 'الفاتورة مرتجعة بالكامل' : 'باقي الفاتورة: ${money(due-receipt)} ج.م'),
+    ]);
+  }
+}
+Future<void> showInvoiceOverview(BuildContext context,String type,String id) async {
+  try {
+    final row=await db.collection(type).doc(id).get(const GetOptions(source:Source.server));
+    if(!row.exists || !visibleAfterReset(row.data()!))throw StateError('الفاتورة غير متاحة');
+    if(row.metadata.hasPendingWrites)throw StateError('انتظر تأكيد الفاتورة من الخادم');
+    final data=await numberedInvoiceData(type,id,row.data()!);
+    if(!context.mounted)return;
+    final choice=await showDialog<String>(context:context,builder:(c)=>Directionality(textDirection:TextDirection.rtl,
+      child:AlertDialog(title:Text(type=='sales' ? 'تفاصيل فاتورة المبيعات' : 'تفاصيل فاتورة المشتريات'),
+        content:SizedBox(width:540,height:MediaQuery.sizeOf(c).height*.55,
+          child:InvoiceOverviewContent(type:type,id:id,data:data)),
+        actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إغلاق')),
+          FilledButton.icon(onPressed:()=>Navigator.pop(c,'share'),icon:const Icon(Icons.share),label:const Text('إرسال PDF'))])));
+    if(choice=='share' && context.mounted)await exportInvoicePdf(context,type,id,data);
+  } catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'$e',title:'تعذر عرض الفاتورة',button:'رجوع');}
 }
