@@ -1,4 +1,4 @@
-name: Publish VIB invoice history and green party names
+name: Publish VIB dated movement and debt reports
 on:
   workflow_dispatch:
   push:
@@ -15,35 +15,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37226743004 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
-          test "$(cat source-run.txt)" = "8cf1b14d4332dbd430822324ea91d9fdd38ec504 success"
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37235456280 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "e6dab2a8fc60fc02280aff4729c90d099b484a92 success"
       - name: Download tested staff APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37226743004
+          run-id: 37235456280
           github-token: ${{ github.token }}
           path: download
       - name: Download tested manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37226743004
+          run-id: 37235456280
           github-token: ${{ github.token }}
           path: download
-      - name: Verify and publish purchase history APKs
+      - name: Verify and publish reports APKs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mv download/VIB-SALES-MANAGER.apk download/VIB-Manager-History.apk
-          mv download/VIB-SALES-STAFF.apk download/VIB-Staff-History.apk
+          mv download/VIB-SALES-MANAGER.apk download/VIB-Manager-Reports.apk
+          mv download/VIB-SALES-STAFF.apk download/VIB-Staff-Reports.apk
           python3 - <<'PY'
           import zipfile
-          for path in ['download/VIB-Manager-History.apk', 'download/VIB-Staff-History.apk']:
+          for path in ['download/VIB-Manager-Reports.apk', 'download/VIB-Staff-Reports.apk']:
               with zipfile.ZipFile(path) as apk:
                   assert apk.testzip() is None, path
                   assert 'AndroidManifest.xml' in apk.namelist(), path
           PY
-          sha256sum download/VIB-Manager-History.apk download/VIB-Staff-History.apk > download/SHA256SUMS.txt
-          gh release view vib-purchase-history-20261004 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-purchase-history-20261004 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB purchase history update — 4 October 2026' --notes 'Customer and supplier names appear in bright green on sales and purchase invoice lists and dated history. Purchase history starts with 100 invoices and provides Show older invoices to increase the visible history by 100 at a time, continuing beyond the former 300 invoice cap. Rows render lazily; the active query persists across ordinary rebuilds. Existing invoices and accounting remain unchanged. Install over the matching existing app as an update.'
-          gh release upload vib-purchase-history-20261004 download/VIB-Staff-History.apk download/VIB-Manager-History.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+          sha256sum download/VIB-Manager-Reports.apk download/VIB-Staff-Reports.apk > download/SHA256SUMS.txt
+          gh release view vib-business-reports-20261004 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-business-reports-20261004 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB sales, purchases and debts reports — 4 October 2026' --notes 'Dated sales and purchase movement reports show invoice totals, dated returns and net movement. Customer and supplier debt reports show total debt and credit balances separately. Invoice cards show the green party name and invoice number with a receipt icon; full item details open on demand. Reports and individual invoices support PDF sharing. Calculation tests and Arabic PDF previews passed. Install over the matching existing app as an update.'
+          gh release upload vib-business-reports-20261004 download/VIB-Staff-Reports.apk download/VIB-Manager-Reports.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
