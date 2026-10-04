@@ -90,7 +90,7 @@ class _InvoiceEditSearchDialogState extends State<_InvoiceEditSearchDialog> {
           return ListTile(leading:Icon(blocked ? Icons.lock_outline : Icons.receipt_long_outlined),
             title:Text('${data[sales ? 'customerName' : 'supplierName'] ?? ''}',style:const TextStyle(color:Colors.greenAccent)),
             subtitle:Text('رقم الفاتورة: ${invoiceDisplayNumber(widget.type,row.id,data)}\n${formatDate(data['createdAt'])}${blocked ? '\nمرتبطة بسند — التعديل ممنوع' : ''}'),
-            trailing:Text('${money((data['total'] as num?) ?? 0)} ج.م'),enabled:!blocked,
+            trailing:Text('${((data['total'] as num?) ?? 0).toStringAsFixed(2)} ج.م'),enabled:!blocked,
             onTap:blocked ? null : ()=>Navigator.pop(context,row.id));
         });
       })),
