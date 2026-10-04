@@ -1,4 +1,4 @@
-name: Publish VIB compact invoice fields
+name: Publish VIB repayment periods and invoice correction
 on:
   workflow_dispatch:
   push:
@@ -15,20 +15,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37239980961 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
-          test "$(cat source-run.txt)" = "4ecebc4e4efc09aff5929edb55be339037fb13e0 success"
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37241911538 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "3944c56ef1af8f15ac03a18c58fda39ea9412375 success"
       - name: Download tested staff APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37239980961
+          run-id: 37241911538
           github-token: ${{ github.token }}
           path: download
       - name: Download tested manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37239980961
+          run-id: 37241911538
           github-token: ${{ github.token }}
           path: download
       - name: Verify and publish reports APKs
@@ -45,5 +45,5 @@ jobs:
                   assert 'AndroidManifest.xml' in apk.namelist(), path
           PY
           sha256sum download/VIB-Manager-Reports.apk download/VIB-Staff-Reports.apk > download/SHA256SUMS.txt
-          gh release view vib-compact-invoice-fields-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-compact-invoice-fields-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB compact invoice lookup and field selection — 5 October 2026' --notes 'Sales and purchase invoice lookup uses compact full-width cards with horizontal party names, invoice numbers, amounts and dates. The dialog adjusts to keyboard space and results scroll. Tapping editable quantity, unit price, total or discount selects the entire value, including repeated taps, so typing directly replaces it. Protected price fields remain disabled. Layout tests cover 320, 360 and 564 pixel widths with enlarged Arabic text and keyboard insets; screenshots were reviewed. Numeric replacement and existing accounting tests passed. Install over the matching existing app as an update.'
-          gh release upload vib-compact-invoice-fields-20261005 download/VIB-Staff-Reports.apk download/VIB-Manager-Reports.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+          gh release view vib-repayment-period-customer-correction-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-repayment-period-customer-correction-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB dated repayments and invoice correction — 5 October 2026' --notes 'Customer repayment reports use explicit From, To and Confirm controls, inclusive Cairo dates, per-customer totals, dated voucher details, A4 and 80mm printing. Printing refreshes confirmed server data. Switching a cash invoice to credit resets paid to zero and supports partial payment. Invoice correction includes choosing the correct registered customer, atomic transfer of only the invoice debt between accounts, preserved invoice identity, audit records, and receipt guards. Customer reassignment requires deployment of the included Firestore rules; automatic deployment is currently blocked by missing Firebase repository credentials. Install as an update over the matching existing app.'
+          gh release upload vib-repayment-period-customer-correction-20261005 download/VIB-Staff-Reports.apk download/VIB-Manager-Reports.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
