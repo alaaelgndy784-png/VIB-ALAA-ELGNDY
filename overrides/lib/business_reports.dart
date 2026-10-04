@@ -235,8 +235,8 @@ Future<Uint8List> createInvoiceMovementReportPdf(InvoiceMovementReport report, p
     theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
     footer: (context) => pw.Text('${context.pageNumber} / ${context.pagesCount}', textAlign: pw.TextAlign.center),
     build: (_) => [
-      pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 22, color: navy)),
-      pw.SizedBox(height: 8), pw.Text(report.type == 'sales' ? 'تقرير حركة المبيعات' : 'تقرير حركة المشتريات', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 18)),
+      pw.Center(child: pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 22, color: navy))),
+      pw.SizedBox(height: 8), pw.Center(child: pw.Text(report.type == 'sales' ? 'تقرير حركة المبيعات' : 'تقرير حركة المشتريات', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 18))),
       pw.Text('من ${DateFormat('yyyy/MM/dd').format(report.from)} إلى ${DateFormat('yyyy/MM/dd').format(report.to)} • توقيت القاهرة'),
       pw.Text('عدد الفواتير: ${report.rows.length} • مرتجعات الفترة: ${report.returnedCount}'),
       pw.SizedBox(height: 8),
@@ -245,7 +245,7 @@ Future<Uint8List> createInvoiceMovementReportPdf(InvoiceMovementReport report, p
       pw.SizedBox(height: 12),
       pw.Table(border: pw.TableBorder.all(color: accent, width: .5), columnWidths: {
         0: const pw.FlexColumnWidth(1.2), 1: const pw.FlexColumnWidth(1.2), 2: const pw.FlexColumnWidth(1.2),
-        3: const pw.FlexColumnWidth(1), 4: const pw.FlexColumnWidth(2.6), 5: const pw.FlexColumnWidth(1.4), 6: const pw.FlexColumnWidth(.5)},
+        3: const pw.FlexColumnWidth(1.6), 4: const pw.FlexColumnWidth(2.2), 5: const pw.FlexColumnWidth(1.2), 6: const pw.FlexColumnWidth(.5)},
         children: [
           pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
             children: ['الباقي', 'المدفوع', 'الإجمالي', 'التاريخ', report.type == 'sales' ? 'العميل / الحالة' : 'المورد / الحالة', 'رقم الفاتورة', 'م'].map((v) => cell(v, header: true)).toList()),
@@ -381,8 +381,8 @@ Future<Uint8List> createDebtReportPdf(DebtReport report,pw.Font font,{required b
     theme:pw.ThemeData.withFont(base:font,bold:font),textDirection:pw.TextDirection.rtl,
     footer:(c)=>pw.Text('${c.pageNumber} / ${c.pagesCount}',textAlign:pw.TextAlign.center),
     build:(_)=>[
-      pw.Text('VIB للتجارة والتوزيع',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:22,color:navy)),
-      pw.SizedBox(height:10),pw.Text(suppliers ? 'تقرير ذمم الموردين' : 'تقرير ذمم العملاء',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:18)),
+      pw.Center(child:pw.Text('VIB للتجارة والتوزيع',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:22,color:navy))),
+      pw.SizedBox(height:10),pw.Center(child:pw.Text(suppliers ? 'تقرير ذمم الموردين' : 'تقرير ذمم العملاء',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:18))),
       pw.Text('الأرصدة الحالية حتى ${movementReportDate(asOf)} • توقيت القاهرة'),
       pw.Text('${suppliers ? 'إجمالي الدين عليك للموردين' : 'إجمالي الدين على العملاء'}: ${movementReportMoney(report.debtCents)}',
         style:pw.TextStyle(fontWeight:pw.FontWeight.bold,fontSize:14)),
