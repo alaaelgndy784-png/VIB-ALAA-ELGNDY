@@ -3806,7 +3806,9 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
     if (replacing) {
       for (final item in originalItems) {
         if (!products.any((p) => p.id == item['productId'])) throw Exception('صنف الفاتورة غير موجود');
-        lines.add(SaleLine(productId: '${item['productId']}', unitPrice: (item[purchase ? 'unitCost' : 'unitPrice'] as num).toDouble())..quantity.text = '${item['quantity']}');
+        final line=SaleLine(productId: '${item['productId']}', unitPrice: (item[purchase ? 'unitCost' : 'unitPrice'] as num).toDouble())..quantity.text = '${item['quantity']}';
+        if(purchase) line.price.text='${item['unitCost']}';
+        lines.add(line);
       }
       paid.text = '${data['paid']}';
     } else if (!purchase) {

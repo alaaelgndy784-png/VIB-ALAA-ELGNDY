@@ -171,13 +171,15 @@ Future<void> replacePurchaseLocally(String id, int revision, String requestId,
     var total = 0;
     for (final line in replacements) {
       final p = '${line['productId']}', product = products[p]!.data();
-      final q = line['quantity'] as int, price = cents(line['unitPrice']);
-      if (product == null || q <= 0 || q > 1000000 || price < 0 || newQuantities.containsKey(p)) throw Exception('راجع الأصناف والأسعار والكميات');
+      final q = line['quantity'] as int;
+      final price = (line['unitPrice'] as num).toDouble();
+      if (product == null || q <= 0 || q > 1000000 || !price.isFinite || price < 0 || newQuantities.containsKey(p)) throw Exception('راجع الأصناف والأسعار والكميات');
       if (product['active'] != true && !oldQuantities.containsKey(p)) throw Exception('الصنف غير نشط');
-      newQuantities[p] = q; total += q * price;
-      items.add({'productId': p, 'productName': product['name'], 'quantity': q, 'unitCost': price / 100,
-        'lineTotal': q * price / 100});
+      newQuantities[p] = q;
+      items.add({'productId': p, 'productName': product['name'], 'quantity': q, 'unitCost': price,
+        'lineTotal': q * price});
     }
+    total = purchaseEditTotalCents(items);
     final paid = cents(payment), due = total - paid;
     if (items.isEmpty || items.length > 50 || total > 1000000000000 || !payment.isFinite || paid < 0 || due < 0) throw Exception('راجع المدفوع وبنود الفاتورة');
     if (due > 0 && (customer == null || customer['active'] == false)) throw Exception('الفاتورة الآجلة تحتاج موردًا نشطًا');
@@ -220,3 +222,14 @@ Future<void> replacePurchaseLocally(String id, int revision, String requestId,
   });
 }
 
+
+int purchaseEditTotalCents(List<Map<String,dynamic>> items) {
+  var total=0.0;
+  for(final item in items) {
+    final value=(item['lineTotal'] as num).toDouble();
+    if(!value.isFinite || value<0)throw StateError('إجمالي البند غير صحيح');
+    total+=value;
+  }
+  if(!total.isFinite || total>10000000000)throw StateError('إجمالي الفاتورة غير صحيح');
+  return (total*100).round();
+}

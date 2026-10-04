@@ -48,6 +48,9 @@ void main() {
     invoiceSerialCache.remove(serialKey('sales','legacy'));
   });
   test('purchase correction reverses stock and cash directions and blocks relevant vouchers',(){
+    expect(purchaseEditTotalCents([{'lineTotal':3*(10/3)}]),1000);
+    expect(purchaseEditTotalCents([{'lineTotal':10.005},{'lineTotal':10.005}]),2001);
+    expect(()=>purchaseEditTotalCents([{'lineTotal':double.nan}]),throwsStateError);
     expect(purchaseEditStockDelta(10,7),-3);
     expect(purchaseEditStockDelta(10,15),5);
     expect(purchaseEditCashDelta({'paid':50,'cashPosted':true},7000),-2000);
