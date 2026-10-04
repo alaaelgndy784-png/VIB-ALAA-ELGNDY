@@ -111,12 +111,6 @@ class _InvoiceMovementReportPageState extends State<InvoiceMovementReportPage> {
       .where('createdAt', isLessThan: Timestamp.fromDate(movementReportBoundary(to, next: true)))
       .orderBy('createdAt', descending: true).snapshots(includeMetadataChanges: true);
   }
-  Future<void> pickRange() async {
-    final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
-    final picked = await showDateRangePicker(context: context, firstDate: DateTime(2000),
-      lastDate: DateTime(now.year, now.month, now.day), initialDateRange: DateTimeRange(start: from, end: to));
-    if (picked != null && mounted) setState(() => selectRange(picked.start, picked.end));
-  }
   Future<void> output(InvoiceMovementReport report, {InvoiceMovementReportRow? row}) async {
     if (exporting) return;
     setState(() => exporting = true);
@@ -160,14 +154,8 @@ class _InvoiceMovementReportPageState extends State<InvoiceMovementReportPage> {
     }
   }
   @override Widget build(BuildContext context) => Column(children: [
-    Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, runSpacing: 8, children: [
-      OutlinedButton.icon(onPressed: exporting ? null : pickRange, icon: const Icon(Icons.date_range),
-        label: const Text('من تاريخ إلى تاريخ')),
-      TextButton.icon(onPressed: exporting ? null : () => setState(() {
-        final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
-        final day = DateTime(now.year, now.month, now.day); selectRange(day, day);
-      }), icon: const Icon(Icons.today), label: const Text('اليوم')),
-    ])),
+    MovementPeriodControls(from: from, to: to, enabled: !exporting,
+      onConfirm: (start, end) => setState(() => selectRange(start, end))),
     Text('${DateFormat('yyyy/MM/dd').format(from)} - ${DateFormat('yyyy/MM/dd').format(to)}'),
     if (numbering) const LinearProgressIndicator(),
     if (numberError.isNotEmpty) TextButton(onPressed: exporting ? null : prepareNumbers, child: Text('$numberError — إعادة المحاولة')),
@@ -443,3 +431,4 @@ Future<void> showInvoiceOverview(BuildContext context,String type,String id) asy
     if(choice=='share' && context.mounted)await exportInvoicePdf(context,type,id,data);
   } catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'$e',title:'تعذر عرض الفاتورة',button:'رجوع');}
 }
+

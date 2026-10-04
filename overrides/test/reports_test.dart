@@ -15,6 +15,48 @@ void main() {
     'total':total,if(paid!=null)'paid':paid,if(due!=null)'due':due,'receiptPaid':receipts,
     'status':status,'createdAt':Timestamp.fromDate(at ?? movementReportBoundary(day)),
   };
+  testWidgets('period waits for explicit approval and supports inclusive multi-day range',(tester) async {
+    DateTime? selectedStart,selectedEnd;
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:MovementPeriodControls(
+      from:DateTime(2026,10,1),to:DateTime(2026,10,3),enabled:true,
+      onConfirm:(a,b){selectedStart=a;selectedEnd=b;}))));
+    expect(selectedStart,isNull);
+    expect(find.text('من: 01/10/2026'),findsOneWidget);
+    expect(find.text('إلى: 03/10/2026'),findsOneWidget);
+    await tester.tap(find.text('موافق'));await tester.pump();
+    expect(selectedStart,DateTime(2026,10,1));expect(selectedEnd,DateTime(2026,10,3));
+    final report=summarizeInvoiceMovement([
+      invoice('first',10,at:movementReportBoundary(selectedStart!)),
+      invoice('middle',20,at:movementReportBoundary(DateTime(2026,10,2))),
+      invoice('last',30,at:movementReportBoundary(selectedEnd!,next:true).subtract(const Duration(microseconds:1))),
+      invoice('outside',40,at:movementReportBoundary(DateTime(2026,10,4))),
+    ],selectedStart!,selectedEnd!);
+    expect(report.rows.length,3);expect(report.totalCents,6000);
+    expect(tester.takeException(),isNull);
+  });
+  test('invoice lookup matches party names and Arabic invoice digits with voucher guard',(){
+    final data={'customerName':'أحمد علي','supplierName':'الجندي للنحاسات','internalNumber':12};
+    expect(invoiceMatchesEditSearch('sales','a',data,'احمد'),isTrue);
+    expect(invoiceMatchesEditSearch('purchases','a',data,'الجندي'),isTrue);
+    expect(invoiceMatchesEditSearch('sales','a',data,'١٢'),isTrue);
+    expect(invoiceMatchesEditSearch('sales','a',data,'2'),isFalse);
+    expect(invoiceHasLinkedVoucher({...data,'receiptId':'receipt'}),isTrue);
+    expect(invoiceHasLinkedVoucher({...data,'receiptPaid':1}),isTrue);
+    expect(invoiceHasLinkedVoucher(data),isFalse);
+  });
+  test('purchase correction reverses stock and cash directions and blocks relevant vouchers',(){
+    expect(purchaseEditStockDelta(10,7),-3);
+    expect(purchaseEditStockDelta(10,15),5);
+    expect(purchaseEditCashDelta({'paid':50,'cashPosted':true},7000),-2000);
+    expect(purchaseEditCashDelta({'paid':50,'cashPosted':true},3000),2000);
+    expect(purchaseEditCashDelta({'paid':50,'cashPaidPosted':20},3000),-1000);
+    final data={'id':'purchase1','createdAt':Timestamp.fromDate(day)};
+    final voucher={'accountType':'suppliers','kind':'payment','createdAt':Timestamp.fromDate(day)};
+    expect(purchaseVoucherBlocksEdit(data,{...voucher,'invoiceId':'purchase1'}),isTrue);
+    expect(purchaseVoucherBlocksEdit(data,{...voucher,'invoiceId':'purchase2'}),isFalse);
+    expect(purchaseVoucherBlocksEdit(data,voucher),isTrue);
+    expect(purchaseVoucherBlocksEdit(data,{...voucher,'createdAt':Timestamp.fromDate(day.subtract(const Duration(days:1)))}),isFalse);
+  });
   test('Cairo period includes midnight and end day but excludes next day with DST calendar boundaries',() {
     final start=movementReportBoundary(day),end=movementReportBoundary(day,next:true);
     final report=summarizeInvoiceMovement([
@@ -115,3 +157,4 @@ void main() {
     }
   });
 }
+

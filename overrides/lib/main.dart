@@ -44,6 +44,7 @@ part 'invoice_serials.dart';
 part 'invoice_a4.dart';
 part 'invoice_parties.dart';
 part 'business_reports.dart';
+part 'invoice_lookup.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1654,6 +1655,7 @@ class _PurchasesState extends State<Purchases>{
       FilledButton.icon(onPressed: () => purchaseDialog(context), icon: const Icon(Icons.add), label: const Text('فاتورة مشتريات جديدة')),
       OutlinedButton.icon(onPressed: () => openVibReport(context, 'تقرير حركة المشتريات', const InvoiceMovementReportPage(type: 'purchases')),
         icon: const Icon(Icons.summarize_outlined), label: const Text('تقرير حركة المشتريات')),
+      OutlinedButton.icon(onPressed: () => findInvoiceForEdit(context, 'purchases'), icon: const Icon(Icons.edit_note), label: const Text('تعديل فاتورة مشتريات')),
       OutlinedButton.icon(onPressed: () => scannedPurchaseDialog(context), icon: const Icon(Icons.camera_alt), label: const Text('تصوير فاتورة مشتريات')),
     ])),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -2434,7 +2436,7 @@ class AccountMovements extends StatelessWidget {
   );
 }
 
-String movementName(String kind) => switch (kind) { 'purchase' => 'مشتريات', 'payment' => 'سداد مورد', 'collection' => 'تحصيل عميل', 'sale' => 'مبيعات', 'sales_return' => 'مرتجع مبيعات', 'purchase_return' => 'مرتجع مشتريات', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر', 'adjustment' => 'تسوية مخزون', 'saleCorrection' => 'تعديل فاتورة بيع', 'purchasePayment' => 'سداد فاتورة مشتريات', 'supplierPayment' => 'سداد مورد', 'customerCollection' => 'تحصيل عميل', 'deposit' => 'إيداع بالصندوق', 'withdrawal' => 'سحب من الصندوق', 'expense' => 'مصروف', 'opening' => 'رصيد افتتاحي', _ => kind };
+String movementName(String kind) => switch (kind) { 'purchase' => 'مشتريات', 'payment' => 'سداد مورد', 'collection' => 'تحصيل عميل', 'sale' => 'مبيعات', 'sales_return' => 'مرتجع مبيعات', 'purchase_return' => 'مرتجع مشتريات', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر', 'adjustment' => 'تسوية مخزون', 'saleCorrection' => 'تعديل فاتورة بيع', 'purchaseCorrection' => 'تعديل فاتورة مشتريات', 'purchasePayment' => 'سداد فاتورة مشتريات', 'supplierPayment' => 'سداد مورد', 'customerCollection' => 'تحصيل عميل', 'deposit' => 'إيداع بالصندوق', 'withdrawal' => 'سحب من الصندوق', 'expense' => 'مصروف', 'opening' => 'رصيد افتتاحي', _ => kind };
 
 Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynamic> data) async {
   final name = TextEditingController(text: '${data['name'] ?? ''}');
@@ -3623,7 +3625,7 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
     if (type == 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.edit_note, color: gold),
       title: const Text('تعديل فاتورة مبيعات — إضافة أو تعديل أصناف'),
       onTap: () { Navigator.pop(c); appendInvoiceDialog(context, type, id, replaceSale:true); }),
-    if (type != 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.playlist_add, color: gold), title: const Text('إضافة بند جديد لنفس الفاتورة'), onTap: () { Navigator.pop(c); appendInvoiceDialog(context, type, id); }),
+    if (type != 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.playlist_add, color: gold), title: const Text('تعديل فاتورة مشتريات — إضافة أو تعديل أصناف'), onTap: () { Navigator.pop(c); appendInvoiceDialog(context, type, id, replacePurchase: true); }),
     if(canPrint && data['internalNumber'] is int)ListTile(leading:const Icon(Icons.qr_code,color:gold),title:const Text('طباعة باركود الفاتورة'),onTap:(){Navigator.pop(c);printInvoiceBarcode(context,type,id,data);}),
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
     if (type == 'sales' && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال للزبون على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
@@ -3772,7 +3774,8 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
   });
 }
 
-Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {bool replaceSale = false}) async {
+Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {bool replaceSale = false, bool replacePurchase = false}) async {
+  final replacing = replaceSale || replacePurchase;
   final List<SaleLine> lines = [];
   final paid = TextEditingController(text: '0');
   final search = TextEditingController();
@@ -3786,11 +3789,12 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
       return;
     }
     if (replaceSale) await assertSaleEditable({...data, 'id': id});
+    if (replacePurchase) await assertPurchaseEditable({...data, 'id': id});
     if (!context.mounted) return;
     final purchase = type == 'purchases';
     final revision = (data['revision'] as num?)?.toInt() ?? 0;
     final requestId = db.collection('invoiceEdits').doc().id;
-    final originalItems = replaceSale ? saleItems(data) : (data['items'] as List?) ?? const [];
+    final originalItems = replacing ? purchase ? purchaseItems(data) : saleItems(data) : (data['items'] as List?) ?? const [];
     double priceFor(QueryDocumentSnapshot<Map<String, dynamic>> product) {
       for (final item in originalItems) {
         if (item is Map && item['productId'] == product.id) {
@@ -3799,16 +3803,16 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
       }
       return (product.data()[purchase ? 'purchasePrice' : 'price'] as num?)?.toDouble() ?? 0;
     }
-    if (replaceSale) {
+    if (replacing) {
       for (final item in originalItems) {
         if (!products.any((p) => p.id == item['productId'])) throw Exception('صنف الفاتورة غير موجود');
-        lines.add(SaleLine(productId: '${item['productId']}', unitPrice: (item['unitPrice'] as num).toDouble())..quantity.text = '${item['quantity']}');
+        lines.add(SaleLine(productId: '${item['productId']}', unitPrice: (item[purchase ? 'unitCost' : 'unitPrice'] as num).toDouble())..quantity.text = '${item['quantity']}');
       }
       paid.text = '${data['paid']}';
     } else if (!purchase) {
       lines.add(SaleLine(productId: products.first.id, unitPrice: priceFor(products.first)));
     }
-    bool saving = false, cash = replaceSale ? data['paymentStatus'] == 'cash' :
+    bool saving = false, cash = replacing ? data['paymentStatus'] == 'cash' :
       purchase ? ((data['due'] as num?)?.toDouble() ?? 0) == 0 : true;
     await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(
       builder: (c, update) {
@@ -3816,12 +3820,12 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
           (int.tryParse(line.quantity.text) ?? 0) * (double.tryParse(line.price.text.replaceAll(',', '.')) ?? 0));
         final extraPaid = cash ? addedTotal : (double.tryParse(paid.text.replaceAll(',', '.')) ?? 0);
         return AlertDialog(
-          title: Text(replaceSale ? 'تعديل فاتورة المبيعات' : 'إضافة بنود لنفس فاتورة ${purchase ? 'المشتريات' : 'المبيعات'}'),
+          title: Text(replacing ? purchase ? 'تعديل فاتورة المشتريات' : 'تعديل فاتورة المبيعات' : 'إضافة بنود لنفس فاتورة ${purchase ? 'المشتريات' : 'المبيعات'}'),
           content: SizedBox(width: 620, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
             Text('رقم الفاتورة: ${invoiceDisplayNumber(type,id,data)}'),
             Text('الإجمالي السابق: ${data['total'] ?? 0} • المدفوع: ${data['paid'] ?? 0} • الباقي: ${data['due'] ?? 0}'),
             const SizedBox(height: 10),
-            Text(replaceSale ? 'عدّل الأصناف والكميات والأسعار والمدفوع. يحفظ سجل التعديل وتُحدّث فروق المخزون والحسابات.' : 'البنود السابقة محفوظة؛ أضف البنود أو الكميات الإضافية هنا.'),
+            Text(replacing ? 'عدّل الأصناف والكميات والأسعار والمدفوع. يحفظ سجل التعديل وتُحدّث فروق المخزون والحسابات.' : 'البنود السابقة محفوظة؛ أضف البنود أو الكميات الإضافية هنا.'),
             const Text('لتغيير الصنف اضغط على اسمه، ولزيادة الفاتورة اضغط إضافة بند.'),
             for (var i = 0; i < lines.length; i++)
               if (purchase) PurchaseInvoiceLine(
@@ -3859,13 +3863,13 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
               update(() => lines.add(SaleLine(productId: selected,
                 unitPrice: priceFor(products.firstWhere((p) => p.id == selected)))));
             }, icon: const Icon(Icons.add), label: Text(purchase ? 'إضافة بند جديد' : 'إضافة بند')),
-            SwitchListTile(title: Text(replaceSale ? 'مدفوع بالكامل' : 'دفع قيمة البنود المضافة بالكامل'), value: cash,
+            SwitchListTile(title: Text(replacing ? 'مدفوع بالكامل' : 'دفع قيمة البنود المضافة بالكامل'), value: cash,
               onChanged: saving ? null : (value) => update(() => cash = value)),
             if (!cash) TextField(controller: paid, enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(labelText: replaceSale ? 'إجمالي المدفوع في الفاتورة' : 'المدفوع عن البنود المضافة'), onChanged: (_) => update(() {})),
-            Text('الإجمالي الجديد: ${((replaceSale ? 0 : (data['total'] as num?)?.toDouble() ?? 0) + addedTotal).toStringAsFixed(2)} ج.م'),
-            Text('المدفوع الجديد: ${((replaceSale ? 0 : (data['paid'] as num?)?.toDouble() ?? 0) + extraPaid).toStringAsFixed(2)} ج.م'),
-            Text('الباقي الجديد: ${((replaceSale ? 0 : (data['due'] as num?)?.toDouble() ?? 0) + addedTotal - extraPaid).toStringAsFixed(2)} ج.م'),
+              decoration: InputDecoration(labelText: replacing ? 'إجمالي المدفوع في الفاتورة' : 'المدفوع عن البنود المضافة'), onChanged: (_) => update(() {})),
+            Text('الإجمالي الجديد: ${((replacing ? 0 : (data['total'] as num?)?.toDouble() ?? 0) + addedTotal).toStringAsFixed(2)} ج.م'),
+            Text('المدفوع الجديد: ${((replacing ? 0 : (data['paid'] as num?)?.toDouble() ?? 0) + extraPaid).toStringAsFixed(2)} ج.م'),
+            Text('الباقي الجديد: ${((replacing ? 0 : (data['due'] as num?)?.toDouble() ?? 0) + addedTotal - extraPaid).toStringAsFixed(2)} ج.م'),
           ]))),
           actions: [
             TextButton(onPressed: saving ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
@@ -3890,12 +3894,14 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
               try {
                 if (replaceSale) {
                   await replaceSaleLocally(id, revision, requestId, items, extraPaid);
+                } else if (replacePurchase) {
+                  await replacePurchaseLocally(id, revision, requestId, items, extraPaid);
                 } else {
                   await appendInvoiceLocally(type, id, revision, requestId, items, extraPaid);
                 }
                 if (c.mounted) Navigator.pop(c);
                 if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('تمت إضافة البنود وتحديث نفس الفاتورة والمخزون والحسابات')));
+                  const SnackBar(content: Text('تم تعديل نفس الفاتورة وتحديث المخزون والحسابات')));
               } catch (e) {
                 if (c.mounted) {
                   update(() => saving = false);
@@ -5160,28 +5166,14 @@ List<Map<String, dynamic>> saleItems(Map<String, dynamic> sale) =>
     : [{'productId': sale['productId'], 'productName': sale['productName'], 'quantity': sale['quantity'],
         'unitPrice': sale['unitPrice'], 'lineTotal': sale['total'], 'purchasePriceAtSale': sale['purchasePriceAtSale'] ?? 0}];
 
-Future<void> editSaleByNumber(BuildContext context) async {
-  final number = TextEditingController();
-  final id = await showDialog<String>(context: context, builder: (c) => AlertDialog(
-    title: const Text('تعديل فاتورة'),
-    content: TextField(controller: number, autofocus: true, decoration: const InputDecoration(labelText: 'رقم فاتورة المبيعات'),
-      onSubmitted: (value) { if (value.trim().isNotEmpty) Navigator.pop(c, value.trim()); }),
-    actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')),
-      FilledButton(onPressed: () { if (number.text.trim().isNotEmpty) Navigator.pop(c, number.text.trim()); }, child: const Text('فتح الفاتورة'))]));
-  number.dispose();
-  if (id == null || !context.mounted) return;
-  if (id.contains('/')) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('رقم الفاتورة غير صحيح'))); return;
-  }
-  try{final resolved=await resolveInvoiceNumber('sales',id);if(context.mounted)await appendInvoiceDialog(context,'sales',resolved,replaceSale:true);}catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر فتح الفاتورة: $e');}
-}
+Future<void> editSaleByNumber(BuildContext context) => findInvoiceForEdit(context, 'sales');
 
 Future<void> assertSaleEditable(Map<String, dynamic> data) async {
   if(data['onlinePaymentEver']==true)throw StateError('الفاتورة لها سداد بالكارت؛ أنشئ فاتورة جديدة');
-  if ('${data['receiptId'] ?? ''}'.isNotEmpty) throw Exception('الفاتورة مرتبطة بسند قبض ولا يمكن تعديلها');
+  if (invoiceHasLinkedVoucher(data)) throw Exception('الفاتورة مرتبطة بسند قبض ولا يمكن تعديلها');
   final customerId = '${data['customerId'] ?? ''}';
   if (customerId.isEmpty) return;
-  final receipts = await db.collection('receipts').where('customerId', isEqualTo: customerId).get();
+  final receipts = await db.collection('receipts').where('customerId', isEqualTo: customerId).get(const GetOptions(source:Source.server));
   final date = data['createdAt'] as Timestamp?;
   for (final receipt in receipts.docs) {
     final r = receipt.data(), receiptDate = receipt.data()['createdAt'] as Timestamp?;
@@ -5212,7 +5204,7 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
     final old = (await tx.get(ref)).data();
     if (old == null || old['status'] != 'completed' || (old['revision'] ?? 0) != revision) throw Exception('الفاتورة غير متاحة أو اتعدلت؛ افتحها من جديد');
     if(old['onlinePaymentEver']==true)throw StateError('الفاتورة لها سداد بالكارت؛ أنشئ فاتورة جديدة');
-    if ('${old['receiptId'] ?? ''}'.isNotEmpty) throw Exception('الفاتورة مرتبطة بسند قبض');
+    if (invoiceHasLinkedVoucher(old)) throw Exception('الفاتورة مرتبطة بسند قبض');
     if (old['paid'] is! num || old['due'] is! num || cents(old['total']) - cents(old['paid']) != cents(old['due'])) throw Exception('الفاتورة القديمة تحتاج مراجعة المدفوع والباقي');
     final customerId = '${old['customerId'] ?? ''}';
     final customerRef = customerId.isEmpty ? null : db.collection('customers').doc(customerId);
@@ -5320,3 +5312,4 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
 }
+
