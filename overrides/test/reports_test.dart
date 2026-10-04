@@ -17,6 +17,52 @@ void main() {
     'total':total,if(paid!=null)'paid':paid,if(due!=null)'due':due,'receiptPaid':receipts,
     'status':status,'createdAt':Timestamp.fromDate(at ?? movementReportBoundary(day)),
   };
+  test('receipt period includes both Cairo date boundaries and groups actual customers',() {
+    final from=DateTime(2026,10,1),to=DateTime(2026,10,3);
+    final start=movementReportBoundary(from),end=movementReportBoundary(to,next:true);
+    Map<String,dynamic> row(String id,String customer,num amount,DateTime at)=>{'id':id,'customerId':customer,
+      'customerName':'عميل بنفس الاسم','amount':amount,'createdAt':Timestamp.fromDate(at)};
+    final report=summarizeReceiptPeriod([
+      row('before','a',999,start.subtract(const Duration(milliseconds:1))),
+      row('first','a',.1,start),row('middle','a',.2,movementReportBoundary(DateTime(2026,10,2))),
+      row('last','b',50.25,end.subtract(const Duration(milliseconds:1))),row('after','b',999,end),
+    ],from,to);
+    expect(report.totalCents,5055);expect(report.receiptCount,3);expect(report.customers.length,2);
+    expect(report.customers.firstWhere((c)=>c.id=='a').amountCents,30);
+    expect(()=>summarizeReceiptPeriod([],to,from),throwsStateError);
+    expect(summarizeReceiptPeriod([],from,to).totalCents,0);
+  });
+  test('receipt period spans Cairo daylight saving boundary',() {
+    final from=DateTime(2026,10,29),to=DateTime(2026,10,30);
+    final start=movementReportBoundary(from),end=movementReportBoundary(to,next:true);
+    expect(end.difference(start).inHours,49);
+    final report=summarizeReceiptPeriod([{'id':'end','customerId':'a','customerName':'عميل','amount':1,
+      'createdAt':Timestamp.fromDate(end.subtract(const Duration(milliseconds:1)))}],from,to);
+    expect(report.totalCents,100);
+  });
+  test('customer correction removes this invoice debt and applies it once to the correct account',() {
+    expect(saleCorrectionAccountDeltas('old','new',6000,6000),{'old':-6000,'new':6000});
+    expect(saleCorrectionAccountDeltas('old','new',6000,3000),{'old':-6000,'new':3000});
+    expect(saleCorrectionAccountDeltas('same','same',6000,3000),{'same':-3000});
+    expect(saleCorrectionAccountDeltas('same','same',0,10000),{'same':10000});
+    expect(saleCorrectionAccountDeltas('same','same',10000,0),{'same':-10000});
+    expect(saleCorrectionAccountDeltas('old','new',0,0),{'old':0,'new':0});
+    expect(saleCorrectionAccountDeltas('','new',0,10000),{'new':10000});
+    expect(()=>saleCorrectionAccountDeltas('old','',100,100),throwsStateError);
+  });
+  test('generate dated customer repayment reports on A4 and 80mm',() async {
+    final from=DateTime(2026,10,1),to=DateTime(2026,10,3);
+    final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final report=summarizeReceiptPeriod(List.generate(9,(i)=>{'id':'RC-${10001+i}','customerId':'${i%3}',
+      'customerName':'عميل الاختبار رقم ${i%3+1}','actorName':i%2==0 ? 'المدير' : 'موظف التحصيل',
+      'amount':100.25+i,'createdAt':Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,i%3+1)).add(Duration(hours:10+i)))}),from,to);
+    Directory('dist').createSync(recursive:true);
+    for(final thermal in [false,true]) {
+      final bytes=await createCustomerPaymentReportPdf(from,report,font,owner:true,thermal:thermal,to:to);
+      expect(bytes.length,greaterThan(1000));
+      File('dist/VIB-REPAYMENTS-PERIOD-${thermal ? '80MM' : 'A4'}.pdf').writeAsBytesSync(bytes);
+    }
+  });
   for(final size in [const Size(320,700),const Size(360,740),const Size(564,900)]) {
     for(final keyboard in [0.0,280.0]) {
       testWidgets('compact invoice results at ${size.width} with keyboard $keyboard',(tester) async {
@@ -217,5 +263,6 @@ void main() {
     }
   });
 }
+
 
 

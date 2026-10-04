@@ -286,3 +286,41 @@ test('payment requests, provider transactions and clearing totals cannot be fabr
  for(const path of ['paymentRequests/fake','geideaIntents/fake','geideaTransactions/fake','settings/geideaClearing'])
    await assertFails(setDoc(doc(db,path),{balance:100,state:'paid'}));
 });
+
+
+async function transferSale(db,{customerId='newcustomer',name='New Customer',phone='011',due=30}={}){
+ const b=writeBatch(db);
+ b.update(doc(db,'sales/editable'),{customerId,customerName:name,customerPhone:phone,customerBalanceAfter:20+due,
+   total:30,paid:30-due,due,paymentStatus:due>0?'credit':'cash',revision:1,lastEditedBy:'owner',updatedAt:serverTimestamp()});
+ b.update(doc(db,'customers/customer'),{balance:70,updatedAt:serverTimestamp()});
+ b.update(doc(db,'customers/newcustomer'),{balance:20+due,updatedAt:serverTimestamp()});
+ b.set(doc(db,'invoiceEdits/transfer'),{invoiceId:'editable',invoiceType:'sales',customerIdBefore:'customer',customerIdAfter:customerId,actorId:'owner'});
+ return b.commit();
+}
+async function seedTransfer(options={}){
+ await seedEditableSale(options);
+ await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),'customers/newcustomer'),{name:'New Customer',phone:'011',balance:20,active:true}));
+}
+test('owner transfers unlinked invoice to real customer atomically without changing identity',async()=>{
+ await seedTransfer();const db=env.authenticatedContext('owner').firestore();
+ await assertSucceeds(transferSale(db));
+ const invoice=(await getDoc(doc(db,'sales/editable'))).data();
+ assert.equal(invoice.id,'editable');assert.equal(invoice.customerId,'newcustomer');assert.equal(invoice.createdAt.toDate().getTime(),new Date('2026-01-01').getTime());
+ assert.equal((await getDoc(doc(db,'customers/customer'))).data().balance,70);
+ assert.equal((await getDoc(doc(db,'customers/newcustomer'))).data().balance,50);
+});
+for(const options of [{receiptId:'r'},{latestReceipt:true}])test('receipt blocks customer transfer and all balances remain unchanged '+JSON.stringify(options),async()=>{
+ await seedTransfer(options);const db=env.authenticatedContext('owner').firestore();
+ await assertFails(transferSale(db));
+ assert.equal((await getDoc(doc(db,'customers/customer'))).data().balance,100);
+ assert.equal((await getDoc(doc(db,'customers/newcustomer'))).data().balance,20);
+});
+for(const options of [{customerId:'missing'},{name:'Fake Customer'},{phone:'Fake Phone'}])test('customer correction rejects invalid target '+JSON.stringify(options),async()=>{
+ await seedTransfer();await assertFails(transferSale(env.authenticatedContext('owner').firestore(),options));
+});
+test('inactive target and staff cannot reassign customer',async()=>{
+ await seedTransfer();const owner=env.authenticatedContext('owner').firestore();
+ await assertFails(transferSale(env.authenticatedContext('staff').firestore()));
+ await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),'customers/newcustomer'),{active:false},{merge:true}));
+ await assertFails(transferSale(owner));
+});

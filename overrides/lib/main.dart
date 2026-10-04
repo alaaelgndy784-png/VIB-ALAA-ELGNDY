@@ -2588,6 +2588,15 @@ class ReceiptDayReport {
 ReceiptDayReport summarizeReceiptDay(List<Map<String, dynamic>> receipts, DateTime day) {
   final start = DateTime(day.year, day.month, day.day);
   final end = DateTime(day.year, day.month, day.day + 1);
+  return summarizeReceiptBetween(receipts,start,end);
+}
+
+ReceiptDayReport summarizeReceiptPeriod(List<Map<String,dynamic>> receipts,DateTime from,DateTime to) {
+  if(to.isBefore(from))throw StateError('راجع بداية ونهاية الفترة');
+  return summarizeReceiptBetween(receipts,movementReportBoundary(from),movementReportBoundary(to,next:true));
+}
+
+ReceiptDayReport summarizeReceiptBetween(List<Map<String,dynamic>> receipts,DateTime start,DateTime end) {
   final groups = <String, List<Map<String, dynamic>>>{};
   var totalCents = 0, count = 0;
   for (final receipt in receipts) {
@@ -2631,28 +2640,24 @@ class CustomerPaymentReport extends StatefulWidget {
 }
 
 class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
-  DateTime day = DateTime.now();
+  late DateTime day, endDay;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> receipts;
   @override
   void initState() {
     super.initState();
+    final now=tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
+    day=endDay=DateTime(now.year,now.month,now.day);
     Query<Map<String, dynamic>> query = db.collection('receipts');
     if (!widget.owner) query = query.where('actorId', isEqualTo: FirebaseAuth.instance.currentUser!.uid);
-    receipts = query.snapshots();
+    receipts = query.snapshots(includeMetadataChanges:true);
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
     appBar: AppBar(title: const Text('حركة سداد العملاء')),
     body: Column(children: [
-      Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity,
-        child: OutlinedButton.icon(icon: const Icon(Icons.calendar_month),
-          label: Text('يوم السداد: ${DateFormat('yyyy/MM/dd').format(day)}'),
-          onPressed: () async {
-            final picked = await showDatePicker(context: context, initialDate: day,
-              firstDate: DateTime(2000), lastDate: DateTime.now());
-            if (picked != null && mounted) setState(() => day = picked);
-          }))),
+      MovementPeriodControls(from:day,to:endDay,enabled:true,onConfirm:(from,to)=>setState(() {day=from;endDay=to;})),
+      Text('الفترة المعروضة: ${DateFormat('dd/MM/yyyy').format(day)} - ${DateFormat('dd/MM/yyyy').format(endDay)}'),
       Text(widget.owner ? 'سندات القبض من جميع الموظفين والمدير' : 'سندات القبض التي سجلتها فقط',
         textAlign: TextAlign.center),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: receipts,
@@ -2662,25 +2667,25 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
           final rows = snapshot.data!.docs.where((d) => visibleAfterReset(d.data()))
             .map((d) => <String, dynamic>{...d.data(), 'id': d.id}).toList();
           final ReceiptDayReport report;
-          try { report = summarizeReceiptDay(rows, day); }
+          try { report = summarizeReceiptPeriod(rows, day, endDay); }
           on StateError catch (e) { return Center(child: Text('${e.message}', textAlign: TextAlign.center)); }
           final pending = snapshot.data!.metadata.hasPendingWrites;
           final cached = snapshot.data!.metadata.isFromCache;
           return Column(children: [
             Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(children: [
-              Text('إجمالي سداد اليوم: ${receiptReportMoney(report.totalCents)}',
+              Text('إجمالي سداد الفترة: ${receiptReportMoney(report.totalCents)}',
                 textAlign: TextAlign.center, style: const TextStyle(color: gold, fontSize: 20, fontWeight: FontWeight.bold)),
               Text('عدد التجار: ${report.customers.length} • عدد سندات القبض: ${report.receiptCount}'),
               if (cached || pending) const Text('البيانات لم تُؤكد من الخادم بعد؛ انتظر اكتمال المزامنة', textAlign: TextAlign.center),
             ]))),
             Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Row(children: [
               Expanded(child: OutlinedButton.icon(icon: const Icon(Icons.picture_as_pdf), label: const Text('طباعة A4'),
-                onPressed: report.receiptCount == 0 || cached || pending ? null : () => printCustomerPaymentReport(context, day, report, owner: widget.owner))),
+                onPressed: report.receiptCount == 0 || cached || pending ? null : () => printCustomerPaymentReport(context, day, report, owner: widget.owner,to:endDay))),
               const SizedBox(width: 8),
               Expanded(child: OutlinedButton.icon(icon: const Icon(Icons.receipt_long), label: const Text('طباعة 80 مللي'),
-                onPressed: report.receiptCount == 0 || cached || pending ? null : () => printCustomerPaymentReport(context, day, report, owner: widget.owner, thermal: true))),
+                onPressed: report.receiptCount == 0 || cached || pending ? null : () => printCustomerPaymentReport(context, day, report, owner: widget.owner, thermal: true, to:endDay))),
             ])),
-            Expanded(child: report.customers.isEmpty ? const Center(child: Text('لا توجد سدادات مسجلة بسندات قبض في هذا اليوم'))
+            Expanded(child: report.customers.isEmpty ? const Center(child: Text('لا توجد سدادات مسجلة بسندات قبض في الفترة المختارة'))
               : ListView.builder(itemCount: report.customers.length, itemBuilder: (context, index) {
                 final customer = report.customers[index];
                 return Card(child: ExpansionTile(
@@ -2688,7 +2693,7 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                   title: Text(customer.name),
                   subtitle: Text('إجمالي السداد: ${receiptReportMoney(customer.amountCents)} • ${customer.receipts.length} سند'),
                   children: customer.receipts.map((row) => ListTile(
-                    title: Text('${DateFormat('HH:mm').format((row['createdAt'] as Timestamp).toDate().toLocal())} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
+                    title: Text('${DateFormat('dd/MM/yyyy HH:mm').format(tz.TZDateTime.from((row['createdAt'] as Timestamp).toDate(),tz.getLocation('Africa/Cairo')))} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
                     subtitle: Text('سند: ${row['id']}\nالمحصّل: ${row['actorName'] ?? ''}${'${row['note'] ?? ''}'.isEmpty ? '' : '\n${row['note']}'}'),
                   )).toList(),
                 ));
@@ -2699,8 +2704,14 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
   );
 }
 
-Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport report, pw.Font font, {required bool owner, bool thermal = false}) async {
+String receiptReportStamp(Map<String,dynamic> row,DateTime? to) {
+  final at=(row['createdAt'] as Timestamp).toDate();
+  return to==null ? DateFormat('HH:mm').format(at.toLocal()) : DateFormat('dd/MM/yyyy HH:mm').format(tz.TZDateTime.from(at,tz.getLocation('Africa/Cairo')));
+}
+
+Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport report, pw.Font font, {required bool owner, bool thermal = false,DateTime? to}) async {
   final pdf = pw.Document();
+  final period=to==null ? 'اليوم: ${DateFormat('yyyy/MM/dd').format(day)}' : 'من ${DateFormat('dd/MM/yyyy').format(day)} إلى ${DateFormat('dd/MM/yyyy').format(to)} (شامل اليوم الأخير)';
   if (thermal) {
     pw.Widget line(String value, {bool bold = false}) => pw.Text(value, textAlign: pw.TextAlign.right,
       style: pw.TextStyle(fontSize: bold ? 10 : 8, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal));
@@ -2708,18 +2719,18 @@ Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport 
       theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
       build: (_) => pw.Column(mainAxisSize: pw.MainAxisSize.min, crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
         line('VIB للتجارة والتوزيع', bold: true), line('حركة سداد العملاء', bold: true),
-        line('اليوم: ${DateFormat('yyyy/MM/dd').format(day)}'),
+        line(period),
         line(owner ? 'تحصيلات المدير وجميع الموظفين' : 'تحصيلاتي فقط'),
         line('عدد التجار: ${report.customers.length} • السندات: ${report.receiptCount}'), pw.Divider(),
         for (var i = 0; i < report.customers.length; i++) ...[
           line('${i + 1}. ${report.customers[i].name}', bold: true),
           line('إجمالي السداد: ${receiptReportMoney(report.customers[i].amountCents)}', bold: true),
           for (final row in report.customers[i].receipts) ...[
-            line('${DateFormat('HH:mm').format((row['createdAt'] as Timestamp).toDate().toLocal())} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
+            line('${receiptReportStamp(row,to)} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
             line('سند: ${row['id']}'), line('المحصّل: ${row['actorName'] ?? ''}'),
           ], pw.Divider(),
         ],
-        line('إجمالي تحصيل اليوم', bold: true), line(receiptReportMoney(report.totalCents), bold: true),
+        line(to==null ? 'إجمالي تحصيل اليوم' : 'إجمالي تحصيل الفترة', bold: true), line(receiptReportMoney(report.totalCents), bold: true),
       ])));
     return pdf.save();
   }
@@ -2734,7 +2745,7 @@ Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport 
     build: (_) => [
       pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 22, color: navy)),
       pw.SizedBox(height: 12), pw.Text('تقرير حركة سداد العملاء', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 18)),
-      pw.Text('يوم السداد: ${DateFormat('yyyy/MM/dd').format(day)}'),
+      pw.Text(period),
       pw.Text(owner ? 'سندات القبض من جميع الموظفين والمدير' : 'سندات القبض التي سجلتها فقط'),
       pw.Text('عدد التجار: ${report.customers.length} • عدد السندات: ${report.receiptCount}'),
       pw.SizedBox(height: 12),
@@ -2747,28 +2758,34 @@ Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport 
             cell(receiptReportMoney(report.customers[i].amountCents)), cell('${report.customers[i].receipts.length}'),
             cell(report.customers[i].name), cell('${i + 1}')]),
         ]),
-      pw.SizedBox(height: 10), pw.Text('إجمالي المبالغ المحصّلة لليوم: ${receiptReportMoney(report.totalCents)}',
+      pw.SizedBox(height: 10), pw.Text('إجمالي المبالغ المحصّلة للفترة: ${receiptReportMoney(report.totalCents)}',
         style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
       pw.SizedBox(height: 16), pw.Text('تفاصيل حركة السداد'), pw.SizedBox(height: 6),
       pw.Table(border: pw.TableBorder.all(color: accent, width: .5), columnWidths: {
         0: const pw.FlexColumnWidth(1.5), 1: const pw.FlexColumnWidth(2), 2: const pw.FlexColumnWidth(2.5),
-        3: const pw.FlexColumnWidth(3), 4: const pw.FlexColumnWidth(1)}, children: [
+        3: const pw.FlexColumnWidth(3), 4: const pw.FlexColumnWidth(2)}, children: [
           pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
-            children: ['المبلغ', 'المحصّل', 'رقم السند', 'العميل', 'الوقت'].map((v) => cell(v, header: true)).toList()),
+            children: ['المبلغ', 'المحصّل', 'رقم السند', 'العميل', to==null ? 'الوقت' : 'التاريخ / الوقت'].map((v) => cell(v, header: true)).toList()),
           for (final row in movements) pw.TableRow(children: [
             cell(receiptReportMoney(((row['amount'] as num) * 100).round())), cell('${row['actorName'] ?? ''}'),
             cell('${row['id']}'), cell('${row['customerName'] ?? ''}'),
-            cell(DateFormat('HH:mm').format((row['createdAt'] as Timestamp).toDate().toLocal()))]),
+            cell(receiptReportStamp(row,to))]),
         ]),
     ]));
   return pdf.save();
 }
 
-Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, ReceiptDayReport report, {required bool owner, bool thermal = false}) async {
+Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, ReceiptDayReport report, {required bool owner, bool thermal = false,DateTime? to}) async {
   try {
+    final query=owner ? db.collection('receipts') : db.collection('receipts').where('actorId',isEqualTo:FirebaseAuth.instance.currentUser!.uid);
+    final snapshot=await query.get(const GetOptions(source:Source.server));
+    if(snapshot.metadata.isFromCache || snapshot.metadata.hasPendingWrites) throw StateError('انتظر تأكيد السداد من السيرفر');
+    final rows=snapshot.docs.where((d)=>visibleAfterReset(d.data())).map((d)=>{...d.data(),'id':d.id}).toList();
+    final confirmed=to==null ? summarizeReceiptDay(rows,day) : summarizeReceiptPeriod(rows,day,to);
+    if(confirmed.receiptCount==0) throw StateError('لا توجد سندات قبض في الفترة المحددة');
     final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-    final bytes = await createCustomerPaymentReportPdf(day, report, font, owner: owner, thermal: thermal);
-    await Printing.layoutPdf(name: 'VIB-CUSTOMER-PAYMENTS-${DateFormat('yyyy-MM-dd').format(day)}-${thermal ? '80MM' : 'A4'}.pdf', onLayout: (_) async => bytes);
+    final bytes = await createCustomerPaymentReportPdf(day, confirmed, font, owner: owner, thermal: thermal,to:to);
+    await Printing.layoutPdf(name: 'VIB-CUSTOMER-PAYMENTS-${DateFormat('yyyy-MM-dd').format(day)}-${DateFormat('yyyy-MM-dd').format(to ?? day)}-${thermal ? '80MM' : 'A4'}.pdf', onLayout: (_) async => bytes);
   } catch (e) {
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر طباعة تقرير السداد: $e')));
   }
@@ -3795,6 +3812,8 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
     if (replacePurchase) await assertPurchaseEditable({...data, 'id': id});
     if (!context.mounted) return;
     final purchase = type == 'purchases';
+    String selectedCustomerId='${data['customerId'] ?? ''}';
+    String selectedCustomerName='${data['customerName'] ?? ''}';
     final revision = (data['revision'] as num?)?.toInt() ?? 0;
     final requestId = db.collection('invoiceEdits').doc().id;
     final originalItems = replacing ? purchase ? purchaseItems(data) : saleItems(data) : (data['items'] as List?) ?? const [];
@@ -3828,6 +3847,19 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
           title: Text(replacing ? purchase ? 'تعديل فاتورة المشتريات' : 'تعديل فاتورة المبيعات' : 'إضافة بنود لنفس فاتورة ${purchase ? 'المشتريات' : 'المبيعات'}'),
           content: SizedBox(width: 620, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
             Text('رقم الفاتورة: ${invoiceDisplayNumber(type,id,data)}'),
+            if(replaceSale) OutlinedButton.icon(icon:const Icon(Icons.person_search),
+              label:Text(selectedCustomerName.isEmpty ? 'اختيار العميل الصحيح' : 'العميل: $selectedCustomerName — تغيير العميل',softWrap:true),
+              onPressed:saving ? null : () async {
+                final selected=await selectRegisteredCustomer(c);
+                if(selected==null || !c.mounted) return;
+                try {
+                  final customer=(await db.collection('customers').doc(selected).get(const GetOptions(source:Source.server))).data();
+                  if(customer==null || customer['active']==false) throw StateError('العميل غير متاح');
+                  if(c.mounted) update(() {selectedCustomerId=selected;selectedCustomerName='${customer['name'] ?? ''}';});
+                } catch(e) {if(c.mounted) await showInvoiceSaveProblem(c,'تعذر اختيار العميل: $e');}
+              }) else Text('${purchase ? 'المورد' : 'العميل'}: ${data[purchase ? 'supplierName' : 'customerName'] ?? 'غير محدد'}'),
+            if(replaceSale && selectedCustomerId!='${data['customerId'] ?? ''}')
+              const Text('عند الحفظ ينتقل باقي هذه الفاتورة من حساب العميل القديم إلى العميل المختار.',style:TextStyle(color:Colors.greenAccent)),
             Text('الإجمالي السابق: ${data['total'] ?? 0} • المدفوع: ${data['paid'] ?? 0} • الباقي: ${data['due'] ?? 0}'),
             const SizedBox(height: 10),
             Text(replacing ? 'عدّل الأصناف والكميات والأسعار والمدفوع. يحفظ سجل التعديل وتُحدّث فروق المخزون والحسابات.' : 'البنود السابقة محفوظة؛ أضف البنود أو الكميات الإضافية هنا.'),
@@ -3868,9 +3900,14 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
               update(() => lines.add(SaleLine(productId: selected,
                 unitPrice: priceFor(products.firstWhere((p) => p.id == selected)))));
             }, icon: const Icon(Icons.add), label: Text(purchase ? 'إضافة بند جديد' : 'إضافة بند')),
-            SwitchListTile(title: Text(replacing ? 'مدفوع بالكامل' : 'دفع قيمة البنود المضافة بالكامل'), value: cash,
-              onChanged: saving ? null : (value) => update(() => cash = value)),
+            SwitchListTile(title: Text(replacing ? 'نقدي — مدفوع بالكامل' : 'دفع قيمة البنود المضافة بالكامل'), value: cash,
+              onChanged: saving ? null : (value) => update(() {
+                if(cash && !value) paid.text='0';
+                cash=value;
+              })),
+            if(replacing && !cash) const Text('دين / آجل — المدفوع صفر للدين الكامل، أو اكتب الدفعة الجزئية.'),
             if (!cash) TextField(controller: paid, enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              onTapAlwaysCalled:true,onTap:()=>selectInvoiceNumberText(paid),
               decoration: InputDecoration(labelText: replacing ? 'إجمالي المدفوع في الفاتورة' : 'المدفوع عن البنود المضافة'), onChanged: (_) => update(() {})),
             Text('الإجمالي الجديد: ${((replacing ? 0 : (data['total'] as num?)?.toDouble() ?? 0) + addedTotal).toStringAsFixed(2)} ج.م'),
             Text('المدفوع الجديد: ${((replacing ? 0 : (data['paid'] as num?)?.toDouble() ?? 0) + extraPaid).toStringAsFixed(2)} ج.م'),
@@ -3898,7 +3935,7 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
               update(() => saving = true);
               try {
                 if (replaceSale) {
-                  await replaceSaleLocally(id, revision, requestId, items, extraPaid);
+                  await replaceSaleLocally(id, revision, requestId, items, extraPaid, correctedCustomerId:selectedCustomerId);
                 } else if (replacePurchase) {
                   await replacePurchaseLocally(id, revision, requestId, items, extraPaid);
                 } else {
@@ -3910,7 +3947,9 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
               } catch (e) {
                 if (c.mounted) {
                   update(() => saving = false);
-                  final message = 'تعذر حفظ التعديل: $e';
+                  final message = replaceSale && selectedCustomerId!='${data['customerId'] ?? ''}' && e is FirebaseException && e.code=='permission-denied'
+                    ? 'السيرفر لم يسمح بتغيير العميل؛ يلزم تفعيل قواعد تعديل العميل أولًا. لم تتغير الفاتورة ولا أرصدة العملاء.'
+                    : 'تعذر حفظ التعديل: $e';
                   await showInvoiceSaveProblem(c, message);
                 }
               }
@@ -5189,12 +5228,22 @@ Future<void> assertSaleEditable(Map<String, dynamic> data) async {
   }
 }
 
+// Amounts are integer cents. Remove only this invoice's old debt, then apply its new debt.
+Map<String,int> saleCorrectionAccountDeltas(String oldCustomer,String newCustomer,int oldDue,int newDue) {
+  if(oldDue<0 || newDue<0 || (oldDue>0 && oldCustomer.isEmpty) || (newDue>0 && newCustomer.isEmpty))
+    throw StateError('الفاتورة الآجلة تحتاج حساب عميل');
+  final result=<String,int>{};
+  if(oldCustomer.isNotEmpty) result[oldCustomer]=-oldDue;
+  if(newCustomer.isNotEmpty) result[newCustomer]=(result[newCustomer] ?? 0)+newDue;
+  return result;
+}
+
 Future<void> replaceSaleLocally(String id, int revision, String requestId,
-    List<Map<String, dynamic>> replacements, double payment) async {
+    List<Map<String, dynamic>> replacements, double payment, {String? correctedCustomerId}) async {
   int cents(num value) => (value * 100).round();
   final actor = FirebaseAuth.instance.currentUser!.uid;
   final ref = db.collection('sales').doc(id), edit = db.collection('invoiceEdits').doc(requestId);
-  final key = jsonEncode({'id': id, 'revision': revision, 'items': replacements, 'paid': payment});
+  final key = jsonEncode({'id': id, 'revision': revision, 'items': replacements, 'paid': payment, 'customerId':correctedCustomerId});
   final preflight = (await ref.get()).data();
   if (preflight == null) throw Exception('رقم الفاتورة غير موجود');
   await assertSaleEditable({...preflight, 'id': id});
@@ -5211,10 +5260,15 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
     if(old['onlinePaymentEver']==true)throw StateError('الفاتورة لها سداد بالكارت؛ أنشئ فاتورة جديدة');
     if (invoiceHasLinkedVoucher(old)) throw Exception('الفاتورة مرتبطة بسند قبض');
     if (old['paid'] is! num || old['due'] is! num || cents(old['total']) - cents(old['paid']) != cents(old['due'])) throw Exception('الفاتورة القديمة تحتاج مراجعة المدفوع والباقي');
-    final customerId = '${old['customerId'] ?? ''}';
+    final oldCustomerId = '${old['customerId'] ?? ''}';
+    final customerId=correctedCustomerId ?? oldCustomerId;
+    final partyChanged=customerId!=oldCustomerId;
+    final oldCustomerRef=oldCustomerId.isEmpty ? null : db.collection('customers').doc(oldCustomerId);
+    final oldCustomer=oldCustomerRef==null ? null : (await tx.get(oldCustomerRef)).data();
     final customerRef = customerId.isEmpty ? null : db.collection('customers').doc(customerId);
-    final customer = customerRef == null ? null : (await tx.get(customerRef)).data();
-    final latestReceiptId = '${customer?['lastReceiptId'] ?? ''}';
+    final customer = partyChanged ? (customerRef == null ? null : (await tx.get(customerRef)).data()) : oldCustomer;
+    if(partyChanged && (customer==null || customer['active']==false)) throw StateError('اختر عميلًا مسجلًا ونشطًا');
+    final latestReceiptId = '${oldCustomer?['lastReceiptId'] ?? ''}';
     if (latestReceiptId.isNotEmpty) {
       final receipt = (await tx.get(db.collection('receipts').doc(latestReceiptId))).data();
       final at = receipt?['createdAt'] as Timestamp?, created = old['createdAt'] as Timestamp?;
@@ -5242,34 +5296,40 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
       final q = line['quantity'] as int, price = cents(line['unitPrice']);
       if (product == null || q <= 0 || q > 1000000 || price < 0 || newQuantities.containsKey(p)) throw Exception('راجع الأصناف والأسعار والكميات');
       if (product['active'] != true && !oldQuantities.containsKey(p)) throw Exception('الصنف غير نشط');
-      if (price < cents((product['purchasePrice'] as num?) ?? 0)) throw Exception('سعر البيع أقل من التكلفة');
-      newQuantities[p] = q; total += q * price;
       final prior = original.where((x) => x['productId'] == p).toList();
+      final unchangedPrice=prior.isNotEmpty && prior.every((x)=>cents(x['unitPrice'])==price);
+      if (!unchangedPrice && price < cents((product['purchasePrice'] as num?) ?? 0)) throw Exception('سعر البيع أقل من التكلفة');
+      newQuantities[p] = q; total += q * price;
       items.add({'productId': p, 'productName': product['name'], 'quantity': q, 'unitPrice': price / 100,
         'lineTotal': q * price / 100, 'purchasePriceAtSale': prior.isEmpty ? product['purchasePrice'] ?? 0 : prior.first['purchasePriceAtSale'] ?? 0});
     }
     final paid = cents(payment), due = total - paid;
     if (items.isEmpty || items.length > 50 || total > 1000000000000 || !payment.isFinite || paid < 0 || due < 0) throw Exception('راجع المدفوع وبنود الفاتورة');
     if (due > 0 && (customer == null || customer['active'] == false)) throw Exception('الفاتورة الآجلة تحتاج عميلًا نشطًا');
-    final debtDelta = due - cents(old['due']), cashDelta = paid - cents(old['paid']);
+    final deltas=saleCorrectionAccountDeltas(oldCustomerId,customerId,cents(old['due']),due);
+    final debtDelta = deltas[customerId] ?? 0, cashDelta = paid - cents(old['paid']);
     final cashBefore = cents((cash?['balance'] as num?) ?? 0), balanceBefore = cents((customer?['balance'] as num?) ?? 0);
-    if (customer != null && balanceBefore + debtDelta < 0) throw Exception('التعديل يتعارض مع تحصيلات العميل');
+    if(cents(old['due'])>0 && oldCustomer==null) throw StateError('حساب العميل السابق غير موجود؛ راجع الفاتورة');
     for (final p in ids) {
       final before = (stocks[p]!.data()?['quantity'] as num?)?.toInt() ?? 0;
       final delta = (oldQuantities[p] ?? 0) - (newQuantities[p] ?? 0), after = before + delta;
-      if (after < 0) throw Exception('المخزون غير كافٍ للصنف ${products[p]!.data()?['name']}');
+      if (delta < 0 && after < 0) throw Exception('المخزون غير كافٍ للصنف ${products[p]!.data()?['name']}');
       if (delta == 0) continue;
       tx.set(stocks[p]!.reference, {'branchId': stockBranch, 'productId': p, 'quantity': after, 'lastSaleId': id}, SetOptions(merge: true));
       tx.set(db.collection('stockMovements').doc('${requestId}_$p'), {'productId': p, 'productName': products[p]!.data()?['name'],
         'branchId': stockBranch, 'kind': 'saleCorrection', 'quantity': delta, 'balanceAfter': after,
         'referenceId': id, 'editId': requestId, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
     }
-    if (customerRef != null && debtDelta != 0) {
-      tx.update(customerRef, {'balance': (balanceBefore + debtDelta) / 100, 'updatedAt': FieldValue.serverTimestamp()});
-      tx.set(db.collection('accountMovements').doc('${requestId}_customer'), {'accountType': 'customers', 'accountId': customerId,
-        'accountName': customer?['name'] ?? '', 'kind': 'saleCorrection', 'amount': debtDelta / 100,
-        'balanceBefore': balanceBefore / 100, 'balanceAfter': (balanceBefore + debtDelta) / 100,
-        'referenceId': id, 'editId': requestId, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+    for(final entry in deltas.entries) {
+      if(entry.value==0) continue;
+      final account=entry.key==customerId ? customer : oldCustomer;
+      final before=cents((account?['balance'] as num?) ?? 0);
+      tx.update(db.collection('customers').doc(entry.key), {'balance':(before+entry.value)/100,'updatedAt':FieldValue.serverTimestamp()});
+      tx.set(db.collection('accountMovements').doc('${requestId}_${entry.key==customerId ? 'customer' : 'previousCustomer'}'), {
+        'accountType':'customers','accountId':entry.key,'accountName':account?['name'] ?? '',
+        'kind':'saleCorrection','amount':entry.value/100,'balanceBefore':before/100,'balanceAfter':(before+entry.value)/100,
+        'referenceId':id,'editId':requestId,'reason':partyChanged ? 'تصحيح عميل فاتورة المبيعات' : 'تصحيح فاتورة مبيعات',
+        'actorId':actor,'createdAt':FieldValue.serverTimestamp()});
     }
     if (cashDelta != 0) {
       tx.set(cashRef, {'balance': (cashBefore + cashDelta) / 100, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
@@ -5281,10 +5341,15 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
     tx.update(ref, {'items': items, 'itemCount': items.length, 'stockIndex': {for (var i = 0; i < items.length; i++) '${items[i]['productId']}': i},
       'total': total / 100, 'paid': paid / 100, 'due': due / 100, 'paymentStatus': due > 0 ? 'credit' : 'cash',
       'revision': revision + 1, 'updatedAt': FieldValue.serverTimestamp(), 'lastEditedBy': actor,
+      if(partyChanged) 'customerId':customerId,
+      if(partyChanged) 'customerName':customer?['name'] ?? '',
+      if(partyChanged) 'customerPhone':customer?['phone'] ?? '',
       'customerBalanceAfter': customer == null ? 0 : (balanceBefore + debtDelta) / 100,
       'productId': items.length == 1 ? items.first['productId'] : '', 'productName': items.length == 1 ? items.first['productName'] : '',
       'quantity': items.length == 1 ? items.first['quantity'] : 0, 'unitPrice': items.length == 1 ? items.first['unitPrice'] : 0});
     tx.set(edit, {'invoiceId': id, 'invoiceType': 'sales', 'beforeItems': original, 'afterItems': items,
+      'customerIdBefore':oldCustomerId,'customerIdAfter':customerId,
+      'customerNameBefore':old['customerName'] ?? '', 'customerNameAfter':customer?['name'] ?? '',
       'totalBefore': old['total'], 'totalAfter': total / 100, 'paidBefore': old['paid'], 'paidAfter': paid / 100,
       'revision': revision + 1, 'requestKey': key, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
   });
@@ -5317,5 +5382,6 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
 }
+
 
 
