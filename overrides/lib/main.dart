@@ -5344,6 +5344,7 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
       if(partyChanged) 'customerId':customerId,
       if(partyChanged) 'customerName':customer?['name'] ?? '',
       if(partyChanged) 'customerPhone':customer?['phone'] ?? '',
+      if(partyChanged) 'customerPreviousBalance':balanceBefore/100,
       'customerBalanceAfter': customer == null ? 0 : (balanceBefore + debtDelta) / 100,
       'productId': items.length == 1 ? items.first['productId'] : '', 'productName': items.length == 1 ? items.first['productName'] : '',
       'quantity': items.length == 1 ? items.first['quantity'] : 0, 'unitPrice': items.length == 1 ? items.first['unitPrice'] : 0});

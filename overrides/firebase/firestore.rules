@@ -378,7 +378,7 @@ service cloud.firestore {
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy'])
         && (resource.data.get('onlinePaid', 0) == 0 || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy']));
-      allow update: if owner() && saleHasNoReceipt(resource.data) && validCorrectedCustomer(resource.data,request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customerId','customerName','customerPhone','stockIndex','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
+      allow update: if owner() && saleHasNoReceipt(resource.data) && validCorrectedCustomer(resource.data,request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customerId','customerName','customerPhone','customerPreviousBalance','stockIndex','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
         && resource.data.status == 'completed' && request.resource.data.revision == resource.data.get('revision', 0) + 1
         && request.resource.data.lastEditedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
       allow update: if (owner() || (employee() && resource.data.branchId == branch())) && linkedReceiptUpdate(id);
