@@ -1,4 +1,4 @@
-name: Publish VIB video invoice workflow updates
+name: Publish VIB invoice history and green party names
 on:
   workflow_dispatch:
   push:
@@ -15,30 +15,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37151995105 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
-          test "$(cat source-run.txt)" = "bb7a0951df5671798aa8d894487eb93d8ae3825f success"
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37226743004 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "8cf1b14d4332dbd430822324ea91d9fdd38ec504 success"
       - name: Download tested staff APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37151995105
+          run-id: 37226743004
           github-token: ${{ github.token }}
           path: download
       - name: Download tested manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37151995105
+          run-id: 37226743004
           github-token: ${{ github.token }}
           path: download
-      - name: Verify and publish video-style invoice APKs
+      - name: Verify and publish purchase history APKs
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          mv download/VIB-SALES-MANAGER.apk download/VIB-Manager-Invoice-Video.apk
-          echo 'a149dcd6c0ec331336ecb326b20e5b888b99af3e526e0a91089679f1c1df2273  download/VIB-Manager-Invoice-Video.apk' | sha256sum --check
-          mv download/VIB-SALES-STAFF.apk download/VIB-Staff-Invoice-Video.apk
-          echo '751284bce5c20f7b37dfe5858763fd64d6fb6d3058026d90fc02fca9f6556d33  download/VIB-Staff-Invoice-Video.apk' | sha256sum --check
-          gh release view vib-invoice-video-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-invoice-video-20261003 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB video-style invoices — 3 October 2026' --notes 'Sales and manual purchase creation now share a compact numbered RTL table, inline product search, item quantity/price/discount dialog with live available stock and cost, and a payment step with cash/credit and account balances. Cancel leaves the original line untouched; applying edits updates totals; deleting renumbers remaining rows. Price permissions, stock checks and existing grouped accounting are preserved. Draft invoice number is explicitly provisional until atomic allocation on save. Manager invoice notes print on A4 and thermal receipts. Install as an update over the corresponding app.'
-          gh release upload vib-invoice-video-20261003 download/VIB-Staff-Invoice-Video.apk download/VIB-Manager-Invoice-Video.apk --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
-
+          mv download/VIB-SALES-MANAGER.apk download/VIB-Manager-History.apk
+          mv download/VIB-SALES-STAFF.apk download/VIB-Staff-History.apk
+          python3 - <<'PY'
+          import zipfile
+          for path in ['download/VIB-Manager-History.apk', 'download/VIB-Staff-History.apk']:
+              with zipfile.ZipFile(path) as apk:
+                  assert apk.testzip() is None, path
+                  assert 'AndroidManifest.xml' in apk.namelist(), path
+          PY
+          sha256sum download/VIB-Manager-History.apk download/VIB-Staff-History.apk > download/SHA256SUMS.txt
+          gh release view vib-purchase-history-20261004 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-purchase-history-20261004 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target 8cf1b14d4332dbd430822324ea91d9fdd38ec504 --title 'VIB purchase history update — 4 October 2026' --notes 'Customer and supplier names appear in bright green on sales and purchase invoice lists and dated history. Purchase history starts with 100 invoices and provides Show older invoices to increase the visible history by 100 at a time, continuing beyond the former 300 invoice cap. Rows render lazily; the active query persists across ordinary rebuilds. Existing invoices and accounting remain unchanged. Install over the matching existing app as an update.'
+          gh release upload vib-purchase-history-20261004 download/VIB-Staff-History.apk download/VIB-Manager-History.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
