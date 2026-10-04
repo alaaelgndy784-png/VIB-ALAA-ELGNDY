@@ -1634,6 +1634,15 @@ class Purchases extends StatefulWidget {
   @override State<Purchases> createState()=>_PurchasesState();
 }
 class _PurchasesState extends State<Purchases>{
+  int _visibleLimit = 100;
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _purchaseStream =
+      db.collection('purchases').orderBy('createdAt', descending: true).limit(_visibleLimit).snapshots();
+  void _showOlderPurchases() {
+    setState(() {
+      _visibleLimit += 100;
+      _purchaseStream = db.collection('purchases').orderBy('createdAt', descending: true).limit(_visibleLimit).snapshots();
+    });
+  }
   bool get owner=>widget.owner;
   @override void initState(){super.initState();if(owner)prepareInvoiceSerials('purchases').then((_){if(mounted)setState((){});}).catchError((Object e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر تجهيز أرقام المشتريات: $e')));});}
   @override
@@ -1643,13 +1652,28 @@ class _PurchasesState extends State<Purchases>{
       OutlinedButton.icon(onPressed: () => scannedPurchaseDialog(context), icon: const Icon(Icons.camera_alt), label: const Text('تصوير فاتورة مشتريات')),
     ])),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: db.collection('purchases').orderBy('createdAt', descending: true).limit(300).snapshots(),
+      stream: _purchaseStream,
       builder: (context, snap) {
         if (snap.hasError) return const Center(child: Text('تعذر تحميل المشتريات'));
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final rows = snap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
-        if (rows.isEmpty) return const Center(child: Text('لا توجد فواتير مشتريات بعد'));
-        return ListView(children: rows.map((d) {
+        final hasOlder = snap.data!.docs.length >= _visibleLimit;
+        final loading = snap.connectionState == ConnectionState.waiting;
+        if (rows.isEmpty && !hasOlder) return const Center(child: Text('لا توجد فواتير مشتريات بعد'));
+        return ListView.builder(
+          itemCount: rows.length + 1,
+          itemBuilder: (context, index) {
+          if (index == rows.length) {
+            return Padding(padding: const EdgeInsets.all(16), child: Column(children: [
+              Text('المعروض: ${rows.length} فاتورة مشتريات'),
+              if (hasOlder) OutlinedButton.icon(
+                onPressed: loading ? null : _showOlderPurchases,
+                icon: loading ? const SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2)) : const Icon(Icons.expand_more),
+                label: Text(loading ? 'جاري تحميل الفواتير…' : 'عرض فواتير أقدم'),
+              ) else const Text('نهاية فواتير المشتريات'),
+            ]));
+          }
+          final d = rows[index];
           final p = d.data();
           final rawItems = (p['items'] as List?) ?? const [];
           final itemCount = rawItems.isNotEmpty ? rawItems.length : 1;
@@ -1663,7 +1687,7 @@ class _PurchasesState extends State<Purchases>{
             trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
             onTap: () => invoiceActions(context, 'purchases', d.id, p, canReturn: owner),
           ));
-        }).toList());
+        });
       },
     )),
   ]);
