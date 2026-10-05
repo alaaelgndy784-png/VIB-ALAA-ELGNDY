@@ -1,5 +1,5 @@
 from pathlib import Path
-import json, shutil, sys
+import shutil, sys
 root=Path(sys.argv[1])
 p=root/'lib/main.dart'
 s=p.read_text()
@@ -28,6 +28,8 @@ s=s.replace('          final dir = await getTemporaryDirectory();\n          aud
 s=s.replace('          await audioFile!.writeAsBytes(base64Decode(widget.encoded));', '          await audioFile!.writeAsBytes(base64Decode(widget.encoded));\n          }',1)
 s=s.replace('await player!.play(DeviceFileSource(audioFile!.path));', "await player!.play(kIsWeb ? UrlSource('data:audio/mp4;base64,${widget.encoded}') : DeviceFileSource(audioFile!.path));")
 s=s.replace("const SizedBox(width: 4), IconButton(tooltip: recording", "const SizedBox(width: 4), if (!kIsWeb) IconButton(tooltip: recording")
+s=s.replace('Widget build(BuildContext context) => Scaffold(body: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420)', 'Widget build(BuildContext context) => Scaffold(body: Center(child: SingleChildScrollView(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420)')
+s=s.replace('  ))));\n}\n\nconst managerNavy', '  )))));\n}\n\nconst managerNavy')
 s=s.replace('      TextButton.icon(onPressed: busy ? null : recoverPasswordByBiometric', '      if (!kIsWeb) TextButton.icon(onPressed: busy ? null : recoverPasswordByBiometric')
 s=s.replace("      const Text('استرجاع كلمة السر بالبصمة يعمل مجانًا على نفس الموبايل بعد أول تسجيل دخول ناجح. المدير يفعّل حساب الموظف ويحدد فرعه.'),", "      Text(kIsWeb ? 'ادخل بنفس رقمك ورقمك السري في برنامج الموظف. المدير يفعّل حسابك ويحدد فرعك.' : 'استرجاع كلمة السر بالبصمة يعمل مجانًا على نفس الموبايل بعد أول تسجيل دخول ناجح. المدير يفعّل حساب الموظف ويحدد فرعه.'),")
 p.write_text(s)
@@ -39,6 +41,6 @@ web=root/'web'
 shutil.copyfile('web-staff/index.html',web/'index.html')
 shutil.copyfile('web-staff/manifest.json',web/'manifest.json')
 (web/'icons').mkdir(exist_ok=True)
-for size in (192,512):
+for size in (512,):
     shutil.copyfile('overrides/assets/staff-icon.png',web/f'icons/Icon-{size}.png')
 shutil.copyfile('overrides/assets/staff-icon.png',web/'favicon.png')
