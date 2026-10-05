@@ -119,9 +119,9 @@ void main() {
         InvoiceCompactTableLine(number:1,name:'محول الفاتورة',price:price,quantity:qty),
       ])))));
     await tester.pumpAndSettle();expect(tester.takeException(),isNull);
-    expect(tester.widget<Text>(find.text('محول البحث')).style!.color,Colors.lightBlueAccent);
-    expect(tester.widget<Text>(find.text('المتاح: 12').last).style!.color,Colors.redAccent);
-    expect(tester.widget<Text>(find.text('تكلفة الوحدة: 200.00 ج.م')).style!.color,Colors.greenAccent);
+    expect(tester.widget<Text>(find.text('محول البحث')).style!.color,vibBlue);
+    expect(tester.widget<Text>(find.text('المتاح: 12').last).style!.color,vibRed);
+    expect(tester.widget<Text>(find.text('تكلفة الوحدة: 200.00 ج.م')).style!.color,vibNeon);
     await tester.runAsync(() async {final image=await (boundary.currentContext!.findRenderObject() as RenderRepaintBoundary).toImage(pixelRatio:1);
       final bytes=await image.toByteData(format:ui.ImageByteFormat.png);Directory('dist').createSync(recursive:true);File('dist/VIB-EMPLOYEE-COLOURS.png').writeAsBytesSync(bytes!.buffer.asUint8List());image.dispose();});
   });
