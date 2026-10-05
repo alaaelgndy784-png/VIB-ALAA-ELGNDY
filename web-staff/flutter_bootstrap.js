@@ -4,6 +4,7 @@
 _flutter.loader.load({
   config: {
     canvasKitBaseUrl: new URL('canvaskit/', document.baseURI).href,
-    canvasKitVariant: 'full'
+    canvasKitVariant: 'full',
+    canvasKitForceCpuOnly: true
   }
 }).catch(function () { window.vibStartupFailed?.(); });
