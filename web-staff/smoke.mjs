@@ -20,7 +20,7 @@ try{
       const page=await browser.newPage({viewport:{width:390,height:844},deviceScaleFactor:2,isMobile:true,hasTouch:true});
       const errors=[];page.on('pageerror',e=>errors.push(e.message));
       await page.goto('http://127.0.0.1:8085');
-      await page.locator('flt-semantics-placeholder').click({force:true,timeout:120000});
+      await page.locator('flt-semantics-placeholder').dispatchEvent('click',{}, {timeout:120000});
       await page.getByText('دخول',{exact:true}).waitFor({timeout:60000});
       await page.screenshot({path:`web-project/smoke/${name}.png`});
       if(errors.length) throw new Error(`${name}: ${errors.join('; ')}`);
