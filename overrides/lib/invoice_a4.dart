@@ -366,6 +366,17 @@ Future<Uint8List> createStyledA4InvoicePdf({
           ],
         ),
       );
+  bool hasSavedDiscount(Map<String, dynamic> item) =>
+      isSale &&
+      item['basePrice'] is num &&
+      numValue(item['discountPercent']) > 0;
+  double displayUnit(Map<String, dynamic> item) => hasSavedDiscount(item)
+      ? numValue(item['basePrice'])
+      : numValue(item[isSale ? 'unitPrice' : 'unitCost']);
+  double displayLineTotal(Map<String, dynamic> item) => hasSavedDiscount(item)
+      ? displayUnit(item) * numValue(item['quantity'])
+      : (item['lineTotal'] as num?)?.toDouble() ??
+            displayUnit(item) * numValue(item['quantity']);
   final table = pw.Table(
     columnWidths: {
       0: const pw.FlexColumnWidth(1.6),
@@ -403,16 +414,8 @@ Future<Uint8List> createStyledA4InvoicePdf({
           ),
           children:
               [
-                    money(
-                      (items[i]['lineTotal'] as num?) ??
-                          numValue(items[i]['quantity']) *
-                              numValue(
-                                items[i][isSale ? 'unitPrice' : 'unitCost'],
-                              ),
-                    ),
-                    money(
-                      numValue(items[i][isSale ? 'unitPrice' : 'unitCost']),
-                    ),
+                    money(displayLineTotal(items[i])),
+                    money(displayUnit(items[i])),
                     '${items[i]['quantity'] ?? 0}',
                     '${items[i]['productName'] ?? ''}${numValue(items[i]['discountPercent']) > 0 ? '\nخصم ${items[i]['discountPercent']}%' : ''}',
                     '${i + 1}',
