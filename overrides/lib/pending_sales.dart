@@ -273,7 +273,7 @@ class PendingSalesPage extends StatelessWidget {
           Card(child:ListTile(leading:Icon(row.data()['status']=='approved'?Icons.check_circle:row.data()['status']=='rejected'?Icons.cancel:Icons.hourglass_top,color:gold),
             title:Text('${row.data()['customerName'] ?? ''} • ${row.data()['total'] ?? 0} ج.م'),
             subtitle:Text('${owner ? '${row.data()['employeeName'] ?? ''} • ' : ''}${pendingSaleStatus(row.data()['status'])} • ${formatDate(row.data()['createdAt'])}'),
-            onTap:()=>reviewPendingSale(context,row.reference,owner))))])),
+            onTap:()=>reviewPendingSale(context,row.reference,owner)))])),
       ]);
     });
 }
