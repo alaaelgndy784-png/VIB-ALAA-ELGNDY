@@ -146,7 +146,7 @@ service cloud.firestore {
         && next.productId == resource.data.productId && x.productId == next.productId
         && next.diff(resource.data).affectedKeys().hasOnly(['quantity','lastSaleId'])
         && natural(next.quantity) && next.quantity == resource.data.quantity - x.quantity
-        && p.active == true && x.productName == p.name && (profile().get('canEditSalePrice', false) == true || (x.get('basePrice', p.price) == p.price && moneyEqual(x.unitPrice, p.price * (1 - x.get('discountPercent', 0) / 100))))
+        && p.active == true && x.productName == p.name && (profile().get('canEditSalePrice', false) == true || (x.get('basePrice', p.price) == p.price && moneyEqual(x.unitPrice, p.price * (1 - x.get('discountPercent', 0) / 100.0))))
         && x.get('discountPercent', 0) is number && x.get('discountPercent', 0) >= 0 && x.get('discountPercent', 0) <= 100
         && x.purchasePriceAtSale == p.get('purchasePrice', 0) && x.unitPrice >= p.get('purchasePrice', 0)
         && movement.actorId == request.auth.uid && movement.referenceId == next.lastSaleId
