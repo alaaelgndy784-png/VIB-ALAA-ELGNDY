@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -29,6 +31,27 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
   val adminWhatsAppNumber: StateFlow<String> = repository.adminPhone
   val isFirebaseConnected: StateFlow<Boolean> = repository.isFirebaseConnected
   val isSyncing: StateFlow<Boolean> = repository.isSyncing
+
+  val customerUpdate = repository.customerUpdate
+  val newProductAnnouncement = repository.newProductAnnouncement
+  private val _publishingUpdate = MutableStateFlow(false)
+  val publishingUpdate = _publishingUpdate.asStateFlow()
+  private val _updatePublicationMessage = MutableStateFlow<String?>(null)
+  val updatePublicationMessage = _updatePublicationMessage.asStateFlow()
+
+  fun announceCustomerUpdate(context: Context) {
+    if (!com.example.BuildConfig.ADMIN_FEATURES_ENABLED || !_isAdminLoggedIn.value || _publishingUpdate.value) return
+    viewModelScope.launch {
+      _publishingUpdate.value = true
+      try {
+        val latest = com.example.update.CatalogUpdateService(context.applicationContext).latest()
+        if (repository.announceCustomerUpdate(latest)) {
+          _updatePublicationMessage.value = "تم إرسال تحديث ${latest.versionName}. سيظهر عند فتح تطبيق التاجر إذا كانت نسخته أقدم."
+        } else _updatePublicationMessage.value = "تعذر إرسال التحديث. تأكد من الاتصال بالسحابة وحاول مرة أخرى."
+      } catch (_: Exception) { _updatePublicationMessage.value = "التحديث غير متاح حاليًا. حاول مرة أخرى بعد تجهيز النسخة الجديدة." }
+      finally { _publishingUpdate.value = false }
+    }
+  }
 
   private val _selectedCategory = MutableStateFlow(SanitaryCategory.ALL)
   val selectedCategory: StateFlow<String> = _selectedCategory.asStateFlow()
@@ -112,6 +135,16 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
 
   private val _statusMessage = MutableStateFlow<String?>(null)
   val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
+
+  fun openProductWhenAvailable(id: String?) {
+    if (id.isNullOrBlank()) return
+    viewModelScope.launch {
+      val product = kotlinx.coroutines.withTimeoutOrNull(30000L) {
+        allProducts.map { products -> products.find { it.id == id } }.filterNotNull().first()
+      }
+      if (product != null) openProductDetail(product)
+    }
+  }
 
   fun selectCategory(category: String) {
     _selectedCategory.value = category

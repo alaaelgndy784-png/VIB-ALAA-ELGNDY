@@ -7,6 +7,10 @@ on:
       - main
       - feat/catalog-gallery-20261005
 
+concurrency:
+  group: catalog-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -30,6 +34,7 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Preserve catalog development signing key
+        id: catalog-signing
         uses: actions/cache@v4
         with:
           path: ~/.android/debug.keystore
@@ -70,9 +75,29 @@ jobs:
           path: app/build/gallery-preview.png
 
       - name: Prepare Public APKs
+        env:
+          CATALOG_RELEASE_TAG: catalog-1.1-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           cp app/build/outputs/apk/customer/debug/app-customer-debug.apk VIB-CUSTOMER.apk
           cp app/build/outputs/apk/admin/debug/app-admin-debug.apk VIB-ADMIN.apk
+          python3 - <<'PYMANIFEST'
+          import hashlib, json, os, re
+          from pathlib import Path
+          config = Path('app/build.gradle.kts').read_text()
+          code = int(re.search(r'versionCode = (\d+)', config).group(1))
+          version = re.search(r'versionName = "([^"]+)"', config).group(1)
+          tag = os.environ['CATALOG_RELEASE_TAG']
+          manifest = {'versionCode': code, 'versionName': version, 'packageName': 'com.aistudio.sanitaryware.vibalaaelgndy', 'apkUrl': 'https://github.com/alaaelgndy784-png/VIB-ALAA-ELGNDY/releases/download/' + tag + '/VIB-CUSTOMER.apk', 'sha256': hashlib.sha256(Path('VIB-CUSTOMER.apk').read_bytes()).hexdigest()}
+          Path('VIB-CATALOG-UPDATE.json').write_text(json.dumps(manifest, indent=2))
+          PYMANIFEST
+
+      - name: Publish immutable catalog update
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CATALOG_RELEASE_TAG: catalog-1.1-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          gh release create "$CATALOG_RELEASE_TAG" VIB-CUSTOMER.apk VIB-ADMIN.apk VIB-CATALOG-UPDATE.json --target "$GITHUB_SHA" --title "VIB Catalog 1.1" --notes "صور متعددة وأزرار أصغر وتحديثات من المدير وإشعارات المنتجات الجديدة. يلزم تثبيت هذه النسخة مرة أولى لتفعيل التحديثات داخل التطبيق."
 
       - name: Publish Permanent Customer Download
         if: github.ref == 'refs/heads/main'
@@ -80,7 +105,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release view customer-latest >/dev/null 2>&1 || gh release create customer-latest --title "VIB Customer" --notes "نسخة العملاء الرسمية من تطبيق VIB"
-          gh release upload customer-latest VIB-CUSTOMER.apk --clobber
+          gh release upload customer-latest VIB-CUSTOMER.apk VIB-CATALOG-UPDATE.json --clobber
 
       - name: Publish Permanent Admin Download
         if: github.ref == 'refs/heads/main'

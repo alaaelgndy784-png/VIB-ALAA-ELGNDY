@@ -99,6 +99,9 @@ fun AdminPanelDialog(
   biometricNotice: String? = null,
   onRetryBiometric: (() -> Unit)? = null,
   onUpdateAdminPassword: ((String) -> Boolean)? = null,
+  onAnnounceCustomerUpdate: () -> Unit = {},
+  publishingUpdate: Boolean = false,
+  updatePublicationMessage: String? = null,
   modifier: Modifier = Modifier
 ) {
   var pinInput by remember { mutableStateOf("") }
@@ -331,6 +334,11 @@ fun AdminPanelDialog(
             .fillMaxWidth()
             .padding(16.dp)
         ) {
+          Button(onClick = onAnnounceCustomerUpdate, enabled = !publishingUpdate, modifier = Modifier.fillMaxWidth().testTag("announce_customer_update"), colors = ButtonDefaults.buttonColors(containerColor = GoldPrimary)) {
+            Text(if (publishingUpdate) "جاري إرسال التحديث..." else "إرسال تحديث للتجار", color = Color.Black)
+          }
+          updatePublicationMessage?.let { Text(it, color = GoldLight, fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp)) }
+          Spacer(Modifier.height(8.dp))
           // Top Bar
           Row(
             modifier = Modifier.fillMaxWidth(),

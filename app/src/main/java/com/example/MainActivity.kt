@@ -26,12 +26,19 @@ class MainActivity : FragmentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
+    viewModel.openProductWhenAvailable(intent.getStringExtra("product_id"))
     setContent {
       MyApplicationTheme {
         VibMainScreen(viewModel = viewModel)
       }
     }
   }
+  override fun onNewIntent(intent: android.content.Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    viewModel.openProductWhenAvailable(intent.getStringExtra("product_id"))
+  }
+
 }
 
 @Composable

@@ -31,7 +31,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
 
-class FirebaseRepository(val context: Context) {
+class FirebaseRepository(val context: Context, private val startListeners: Boolean = true) {
 
   companion object {
     // Default VIB Firebase project. Keeping these defaults in the app means a
@@ -53,6 +53,12 @@ class FirebaseRepository(val context: Context) {
   private val _currentCustomer = MutableStateFlow<Customer?>(null)
   val currentCustomer: StateFlow<Customer?> = _currentCustomer.asStateFlow()
 
+  private val _newProductAnnouncement = MutableStateFlow<com.example.notifications.NewProductAnnouncement?>(null)
+  val newProductAnnouncement = _newProductAnnouncement.asStateFlow()
+
+  private val _customerUpdate = MutableStateFlow<com.example.update.CatalogUpdate?>(null)
+  val customerUpdate: StateFlow<com.example.update.CatalogUpdate?> = _customerUpdate.asStateFlow()
+
   private val _adminPhone = MutableStateFlow(DEFAULT_ADMIN_WHATSAPP)
   val adminPhone: StateFlow<String> = _adminPhone.asStateFlow()
 
@@ -69,7 +75,7 @@ class FirebaseRepository(val context: Context) {
   init {
     // Immediately set default in memory so UI renders first frame with zero lag
     _products.value = InitialProducts.defaultCatalog
-    scope.launch {
+    if (startListeners) scope.launch {
       try {
         loadSavedCustomer()
         loadSavedAdminPhone()
@@ -215,6 +221,27 @@ class FirebaseRepository(val context: Context) {
     }
   }
 
+  suspend fun announceCustomerUpdate(update: com.example.update.CatalogUpdate): Boolean = withContext(Dispatchers.IO) {
+    if (!com.example.BuildConfig.ADMIN_FEATURES_ENABLED || !ensureFirebaseApp()) return@withContext false
+    try {
+      withTimeoutOrNull(15000L) {
+        FirebaseFirestore.getInstance().collection("settings").document("app")
+          .set(mapOf("customerUpdate" to update.toMap()), com.google.firebase.firestore.SetOptions.merge()).await()
+        true
+      } ?: false
+    } catch (_: Exception) { false }
+  }
+
+  suspend fun fetchNewProductAnnouncement(): com.example.notifications.NewProductAnnouncement? {
+    if (!ensureFirebaseApp()) return null
+    val snapshot = kotlinx.coroutines.withTimeout(12000L) {
+      FirebaseFirestore.getInstance().collection("settings").document("app").get(com.google.firebase.firestore.Source.SERVER).await()
+    }
+    @Suppress("UNCHECKED_CAST")
+    val map = snapshot.get("newProductAnnouncement") as? Map<String, Any?>
+    return map?.let { com.example.notifications.NewProductAnnouncement.fromMap(it) }
+  }
+
   private suspend fun loadCachedProducts() = withContext(Dispatchers.IO) {
     val jsonString = prefs.getString("cached_products_json", null)
     if (!jsonString.isNullOrBlank()) {
@@ -331,6 +358,12 @@ class FirebaseRepository(val context: Context) {
                 Log.w(TAG, "Settings listen error: ${error.message}")
                 return@addSnapshotListener
               }
+              @Suppress("UNCHECKED_CAST")
+              val updateMap = snapshot?.get("customerUpdate") as? Map<String, Any?>
+              @Suppress("UNCHECKED_CAST")
+              val announcementMap = snapshot?.get("newProductAnnouncement") as? Map<String, Any?>
+              _newProductAnnouncement.value = announcementMap?.let { com.example.notifications.NewProductAnnouncement.fromMap(it) }
+              _customerUpdate.value = updateMap?.let { com.example.update.CatalogUpdate.fromMap(it) }
               val cloudPhone = snapshot?.getString("adminWhatsApp")
               val normalized = normalizeEgyptianWhatsApp(cloudPhone ?: DEFAULT_ADMIN_WHATSAPP)
               _adminPhone.value = normalized
@@ -540,7 +573,11 @@ class FirebaseRepository(val context: Context) {
     if (isFirebaseConfigured()) {
       try {
         val saved = withTimeoutOrNull(30000L) {
-          FirebaseFirestore.getInstance().collection("products").document(id).set(newProduct.toMap()).await()
+          val db = FirebaseFirestore.getInstance()
+          val batch = db.batch()
+          batch.set(db.collection("products").document(id), newProduct.toMap())
+          batch.set(db.collection("settings").document("app"), mapOf("newProductAnnouncement" to mapOf("id" to id, "name" to newProduct.name.take(120), "createdAt" to newProduct.createdAt)), com.google.firebase.firestore.SetOptions.merge())
+          batch.commit().await()
           true
         } ?: false
         if (!saved) return@withContext false
