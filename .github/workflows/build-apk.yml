@@ -40,6 +40,21 @@ jobs:
           path: ~/.android/debug.keystore
           key: vib-catalog-debug-signing-v1
 
+      - name: Restore durable catalog signing key when configured
+        env:
+          CATALOG_KEYSTORE_BASE64: ${{ secrets.CATALOG_KEYSTORE_BASE64 }}
+        run: |
+          python3 - <<'PYKEY'
+          import base64, os
+          from pathlib import Path
+          value = os.environ.get('CATALOG_KEYSTORE_BASE64', '')
+          if value:
+              key = Path.home() / '.android' / 'debug.keystore'
+              key.parent.mkdir(parents=True, exist_ok=True)
+              key.write_bytes(base64.b64decode(value, validate=True))
+              key.chmod(0o600)
+          PYKEY
+
       - name: Test catalog
         run: |
           gradle testAdminDebugUnitTest testCustomerDebugUnitTest || {
@@ -76,28 +91,45 @@ jobs:
 
       - name: Prepare Public APKs
         env:
-          CATALOG_RELEASE_TAG: catalog-1.1-${{ github.run_id }}-${{ github.run_attempt }}
+          CATALOG_RELEASE_TAG: catalog-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           cp app/build/outputs/apk/customer/debug/app-customer-debug.apk VIB-CUSTOMER.apk
           cp app/build/outputs/apk/admin/debug/app-admin-debug.apk VIB-ADMIN.apk
-          python3 - <<'PYMANIFEST'
-          import hashlib, json, os, re
+          python3 scripts/catalog_release_manifest.py
+          openssl cms -encrypt -binary -outform DER -aes256 -in "$HOME/.android/debug.keystore" -out VIB-CATALOG-SIGNING-BACKUP.p7m signing/catalog-backup-cert.pem
+
+      - name: Preserve encrypted signing backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-CATALOG-ENCRYPTED-SIGNING-BACKUP
+          path: VIB-CATALOG-SIGNING-BACKUP.p7m
+
+      - name: Verify signing continuity before publishing
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir previous-catalog-update
+          if gh release download customer-latest --pattern VIB-CATALOG-UPDATE.json --dir previous-catalog-update; then
+            python3 - <<'PYSIGN'
+          import json
           from pathlib import Path
-          config = Path('app/build.gradle.kts').read_text()
-          code = int(re.search(r'versionCode = (\d+)', config).group(1))
-          version = re.search(r'versionName = "([^"]+)"', config).group(1)
-          tag = os.environ['CATALOG_RELEASE_TAG']
-          manifest = {'versionCode': code, 'versionName': version, 'packageName': 'com.aistudio.sanitaryware.vibalaaelgndy', 'apkUrl': 'https://github.com/alaaelgndy784-png/VIB-ALAA-ELGNDY/releases/download/' + tag + '/VIB-CUSTOMER.apk', 'sha256': hashlib.sha256(Path('VIB-CUSTOMER.apk').read_bytes()).hexdigest()}
-          Path('VIB-CATALOG-UPDATE.json').write_text(json.dumps(manifest, indent=2))
-          PYMANIFEST
+          old = json.loads(Path('previous-catalog-update/VIB-CATALOG-UPDATE.json').read_text())
+          new = json.loads(Path('VIB-CATALOG-UPDATE.json').read_text())
+          if old.get('signingSha256') and old['signingSha256'] != new['signingSha256']:
+              raise SystemExit('Signing key changed. Restore the original catalog keystore before publishing.')
+          if new['versionCode'] <= old['versionCode']:
+              raise SystemExit('Increase catalog versionCode before publishing a new update.')
+          PYSIGN
+          fi
 
       - name: Publish immutable catalog update
         if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CATALOG_RELEASE_TAG: catalog-1.1-${{ github.run_id }}-${{ github.run_attempt }}
+          CATALOG_RELEASE_TAG: catalog-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          gh release create "$CATALOG_RELEASE_TAG" VIB-CUSTOMER.apk VIB-ADMIN.apk VIB-CATALOG-UPDATE.json --target "$GITHUB_SHA" --title "VIB Catalog 1.1" --notes "صور متعددة وأزرار أصغر وتحديثات من المدير وإشعارات المنتجات الجديدة. يلزم تثبيت هذه النسخة مرة أولى لتفعيل التحديثات داخل التطبيق."
+          gh release create "$CATALOG_RELEASE_TAG" VIB-CUSTOMER.apk VIB-ADMIN.apk VIB-CATALOG-UPDATE.json --target "$GITHUB_SHA" --title "VIB Catalog" --notes "صور متعددة وأزرار أصغر وتحديثات من المدير وإشعارات المنتجات الجديدة. يلزم تثبيت هذه النسخة مرة أولى لتفعيل التحديثات داخل التطبيق."
 
       - name: Publish Permanent Customer Download
         if: github.ref == 'refs/heads/main'
