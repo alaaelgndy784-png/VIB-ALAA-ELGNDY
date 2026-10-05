@@ -158,6 +158,27 @@ fun VibMainScreen(
   val isLoading by viewModel.isLoading.collectAsState()
   val statusMessage by viewModel.statusMessage.collectAsState()
 
+  val newProductAnnouncement by viewModel.newProductAnnouncement.collectAsState()
+  val notificationPermission = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) {}
+  LaunchedEffect(Unit) {
+    if (!adminFeaturesEnabled) {
+      com.example.notifications.CatalogNotifications.schedule(context.applicationContext)
+      val preferences = context.getSharedPreferences("catalog_notifications", android.content.Context.MODE_PRIVATE)
+      if (android.os.Build.VERSION.SDK_INT >= 33 && !preferences.getBoolean("permission_requested", false)) {
+        preferences.edit().putBoolean("permission_requested", true).apply()
+        notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+      }
+    }
+  }
+  LaunchedEffect(newProductAnnouncement) {
+    if (!adminFeaturesEnabled) newProductAnnouncement?.let { com.example.notifications.CatalogNotifications.show(context.applicationContext, it) }
+  }
+
+  val customerUpdate by viewModel.customerUpdate.collectAsState()
+  val publishingUpdate by viewModel.publishingUpdate.collectAsState()
+  val updatePublicationMessage by viewModel.updatePublicationMessage.collectAsState()
+  var dismissedUpdate by remember { mutableStateOf<Int?>(null) }
+
   LaunchedEffect(statusMessage) {
     statusMessage?.let { msg ->
       snackbarHostState.showSnackbar(msg)
@@ -262,7 +283,7 @@ fun VibMainScreen(
       containerColor = BlackBackground
     ) { innerPadding ->
       LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 165.dp),
+        columns = GridCells.Adaptive(minSize = 300.dp),
         modifier = Modifier
           .fillMaxSize()
           .padding(innerPadding)
@@ -512,7 +533,8 @@ fun VibMainScreen(
       OrderConfirmationDialog(
         savedCustomer = currentCustomer,
         totalAmount = cartTotal,
-        itemCount = cartCount,
+        itemCount = cartItems.size,
+        isLoading = isLoading,
         onDismiss = { viewModel.toggleOrderConfirmation(false) },
         onConfirmOrder = { name, phone, address, notes ->
           viewModel.submitOrderAndSendWhatsApp(
@@ -567,8 +589,17 @@ fun VibMainScreen(
         },
         biometricNotice = biometricNotice,
         onRetryBiometric = { triggerBiometricAuth() },
-        onUpdateAdminPassword = { newPass -> viewModel.updateAdminPassword(newPass) }
+        onUpdateAdminPassword = { newPass -> viewModel.updateAdminPassword(newPass) },
+        onAnnounceCustomerUpdate = { viewModel.announceCustomerUpdate(context) },
+        publishingUpdate = publishingUpdate,
+        updatePublicationMessage = updatePublicationMessage
       )
+    }
+
+    if (!adminFeaturesEnabled) {
+      customerUpdate?.takeIf { it.isNewerThan(BuildConfig.VERSION_CODE) && it.versionCode != dismissedUpdate }?.let { update ->
+        CatalogUpdateDialog(update = update, onDismiss = { dismissedUpdate = update.versionCode })
+      }
     }
 
     // Add / Edit Product Dialog (Admin)
@@ -581,8 +612,8 @@ fun VibMainScreen(
         
       
         
-        onSaveProduct = { name, price, category, description, imageUri, customImageUrl, inStock, stockQuantity ->
-          viewModel.saveProduct(name, price, category, description, imageUri, customImageUrl, inStock, stockQuantity)
+        onSaveProduct = { name, price, category, description, images, inStock, stockQuantity ->
+          viewModel.saveProduct(name, price, category, description, null, null, inStock, stockQuantity, images)
         }
       )
     }
@@ -601,7 +632,8 @@ fun VibMainScreen(
       QuickImageDialog(
         product = prod,
         onDismiss = { viewModel.closeQuickImage() },
-        onConfirmImage = { uri, customUrl -> viewModel.updateProductImage(prod.id, uri, customUrl) }
+        isLoading = isLoading,
+        onConfirmImage = { images -> viewModel.updateProductGallery(prod.id, images) }
       )
     }
 

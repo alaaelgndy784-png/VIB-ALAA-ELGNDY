@@ -62,6 +62,7 @@ fun OrderConfirmationDialog(
   itemCount: Int,
   onDismiss: () -> Unit,
   onConfirmOrder: (name: String, phone: String, address: String, notes: String) -> Unit,
+  isLoading: Boolean = false,
   modifier: Modifier = Modifier
 ) {
   var name by remember { mutableStateOf(savedCustomer?.name ?: "") }
@@ -70,7 +71,7 @@ fun OrderConfirmationDialog(
   var notes by remember { mutableStateOf("") }
   var errorText by remember { mutableStateOf<String?>(null) }
 
-  Dialog(onDismissRequest = onDismiss) {
+  Dialog(onDismissRequest = { if (!isLoading) onDismiss() }) {
     Surface(
       modifier = modifier.fillMaxWidth(),
       shape = RoundedCornerShape(20.dp),
@@ -96,7 +97,7 @@ fun OrderConfirmationDialog(
               fontWeight = FontWeight.Bold
             )
             Text(
-              text = "سيتم إرسال الفاتورة مباشرة لمحادثة واتساب VIB",
+              text = "فاتورة PDF جاهزة للإرسال إلى VIB عبر واتساب",
               color = GoldLight,
               fontSize = 12.sp
             )
@@ -237,6 +238,7 @@ fun OrderConfirmationDialog(
               onConfirmOrder(name.trim(), phone.trim(), address.trim(), notes.trim())
             }
           },
+          enabled = !isLoading,
           modifier = Modifier
             .fillMaxWidth()
             .height(50.dp)
@@ -252,7 +254,7 @@ fun OrderConfirmationDialog(
           )
           Spacer(modifier = Modifier.width(8.dp))
           Text(
-            text = "تأكيد وإرسال إلى واتساب",
+            text = if (isLoading) "جاري تجهيز الفاتورة..." else "إرسال فاتورة الطلب",
             color = Color.White,
             fontSize = 15.sp,
             fontWeight = FontWeight.Bold

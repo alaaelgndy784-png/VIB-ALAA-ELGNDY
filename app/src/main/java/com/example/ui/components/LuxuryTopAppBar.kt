@@ -70,7 +70,7 @@ fun LuxuryTopAppBar(
       modifier = Modifier
         .fillMaxWidth()
         .statusBarsPadding()
-        .padding(horizontal = 16.dp, vertical = 10.dp)
+        .padding(horizontal = 16.dp, vertical = 6.dp)
     ) {
       Row(
         modifier = Modifier.fillMaxWidth(),
@@ -86,12 +86,12 @@ fun LuxuryTopAppBar(
             painter = painterResource(id = R.drawable.vib_logo),
             contentDescription = "شعار VIB ALAA ELGNDY",
             modifier = Modifier
-              .size(42.dp)
+              .size(34.dp)
               .clip(CircleShape)
               .border(1.2.dp, GoldPrimary, CircleShape)
           )
 
-          Spacer(modifier = Modifier.width(10.dp))
+          Spacer(modifier = Modifier.width(6.dp))
 
           Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -99,7 +99,7 @@ fun LuxuryTopAppBar(
                 text = "VIB ALAA ELGNDY",
                 color = GoldPrimary,
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = 16.sp,
+                fontSize = 13.sp,
                 letterSpacing = 0.5.sp
               )
               if (isAdminLoggedIn) {
@@ -131,14 +131,14 @@ fun LuxuryTopAppBar(
         // Action Buttons: Admin, Profile/Login, Cart
         Row(
           verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(6.dp)
+          horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
           // Admin Panel Button (admin build only)
           if (showAdminButton) {
             IconButton(
             onClick = onAdminClick,
             modifier = Modifier
-              .size(38.dp)
+              .size(32.dp)
               .clip(CircleShape)
               .background(if (isAdminLoggedIn) GoldPrimary.copy(alpha = 0.2f) else BlackSurfaceElevated)
               .border(0.8.dp, if (isAdminLoggedIn) GoldPrimary else GoldBorder, CircleShape)
@@ -148,7 +148,7 @@ fun LuxuryTopAppBar(
               imageVector = Icons.Default.AdminPanelSettings,
               contentDescription = "لوحة التحكم",
               tint = if (isAdminLoggedIn) GoldPrimary else WhitePrimary,
-              modifier = Modifier.size(20.dp)
+              modifier = Modifier.size(17.dp)
             )
             }
           }
@@ -157,7 +157,7 @@ fun LuxuryTopAppBar(
           IconButton(
             onClick = onProfileClick,
             modifier = Modifier
-              .size(38.dp)
+              .size(32.dp)
               .clip(CircleShape)
               .background(BlackSurfaceElevated)
               .border(0.8.dp, GoldBorder, CircleShape)
@@ -167,7 +167,7 @@ fun LuxuryTopAppBar(
               imageVector = Icons.Default.Person,
               contentDescription = "الملف الشخصي",
               tint = if (currentCustomer != null) GoldLight else WhitePrimary,
-              modifier = Modifier.size(20.dp)
+              modifier = Modifier.size(17.dp)
             )
           }
 
@@ -175,7 +175,7 @@ fun LuxuryTopAppBar(
           IconButton(
             onClick = onCartClick,
             modifier = Modifier
-              .size(38.dp)
+              .size(32.dp)
               .clip(CircleShape)
               .background(GoldPrimary)
               .testTag("cart_button")
@@ -200,7 +200,7 @@ fun LuxuryTopAppBar(
                 imageVector = Icons.Default.ShoppingCart,
                 contentDescription = "سلة المشتريات",
                 tint = Color.Black,
-                modifier = Modifier.size(20.dp)
+                modifier = Modifier.size(17.dp)
               )
             }
           }

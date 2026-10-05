@@ -104,12 +104,12 @@ fun ProductDetailDialog(
         Box(
           modifier = Modifier
             .fillMaxWidth()
-            .height(230.dp)
+            .height(300.dp)
             .clip(RoundedCornerShape(14.dp))
         ) {
-          ProductImageDisplay(
+          ProductImageGallery(
             product = product,
-            modifier = Modifier.fillMaxWidth().height(230.dp)
+            modifier = Modifier.fillMaxWidth().height(300.dp)
           )
         }
 

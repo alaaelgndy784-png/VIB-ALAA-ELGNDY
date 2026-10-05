@@ -5,6 +5,11 @@ on:
   push:
     branches:
       - main
+      - feat/catalog-gallery-20261005
+
+concurrency:
+  group: catalog-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
@@ -21,12 +26,47 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '17'
+          java-version: '21'
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '9.3.1'
+
+      - name: Preserve catalog development signing key
+        id: catalog-signing
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: vib-catalog-debug-signing-v1
+
+      - name: Restore durable catalog signing key when configured
+        env:
+          CATALOG_KEYSTORE_BASE64: ${{ secrets.CATALOG_KEYSTORE_BASE64 }}
+        run: |
+          python3 - <<'PYKEY'
+          import base64, os
+          from pathlib import Path
+          value = os.environ.get('CATALOG_KEYSTORE_BASE64', '')
+          if value:
+              key = Path.home() / '.android' / 'debug.keystore'
+              key.parent.mkdir(parents=True, exist_ok=True)
+              key.write_bytes(base64.b64decode(value, validate=True))
+              key.chmod(0o600)
+          PYKEY
+
+      - name: Test catalog
+        run: |
+          gradle testAdminDebugUnitTest testCustomerDebugUnitTest || {
+            python3 - <<'PYREPORT'
+          import glob, xml.etree.ElementTree as ET
+          for path in glob.glob('app/build/test-results/*/*.xml'):
+              for case in ET.parse(path).iter('testcase'):
+                  for failure in case.findall('failure'):
+                      print(case.attrib.get('classname'), case.attrib.get('name'), (failure.text or '')[:3500])
+          PYREPORT
+            exit 1
+          }
 
       - name: Build Admin and Customer APKs
         run: gradle assembleAdminDebug assembleCustomerDebug
@@ -43,19 +83,66 @@ jobs:
           name: VIB-CUSTOMER-APK
           path: app/build/outputs/apk/customer/debug/app-customer-debug.apk
 
+      - name: Upload gallery preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-CATALOG-PREVIEW
+          path: |
+            app/build/gallery-preview.png
+            app/build/order-invoice-*.pdf
+
       - name: Prepare Public APKs
+        env:
+          CATALOG_RELEASE_TAG: catalog-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           cp app/build/outputs/apk/customer/debug/app-customer-debug.apk VIB-CUSTOMER.apk
           cp app/build/outputs/apk/admin/debug/app-admin-debug.apk VIB-ADMIN.apk
+          python3 scripts/catalog_release_manifest.py
+          openssl cms -encrypt -binary -outform DER -aes256 -in "$HOME/.android/debug.keystore" -out VIB-CATALOG-SIGNING-BACKUP.p7m signing/catalog-backup-cert.pem
+
+      - name: Preserve encrypted signing backup
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-CATALOG-ENCRYPTED-SIGNING-BACKUP
+          path: VIB-CATALOG-SIGNING-BACKUP.p7m
+
+      - name: Verify signing continuity before publishing
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir previous-catalog-update
+          if gh release download customer-latest --pattern VIB-CATALOG-UPDATE.json --dir previous-catalog-update; then
+            python3 - <<'PYSIGN'
+          import json
+          from pathlib import Path
+          old = json.loads(Path('previous-catalog-update/VIB-CATALOG-UPDATE.json').read_text())
+          new = json.loads(Path('VIB-CATALOG-UPDATE.json').read_text())
+          if old.get('signingSha256') and old['signingSha256'] != new['signingSha256']:
+              raise SystemExit('Signing key changed. Restore the original catalog keystore before publishing.')
+          if new['versionCode'] <= old['versionCode']:
+              raise SystemExit('Increase catalog versionCode before publishing a new update.')
+          PYSIGN
+          fi
+
+      - name: Publish immutable catalog update
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CATALOG_RELEASE_TAG: catalog-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          gh release create "$CATALOG_RELEASE_TAG" VIB-CUSTOMER.apk VIB-ADMIN.apk VIB-CATALOG-UPDATE.json --target "$GITHUB_SHA" --title "VIB Catalog" --notes "صور متعددة وأزرار أصغر وتحديثات من المدير وإشعارات المنتجات الجديدة. يلزم تثبيت هذه النسخة مرة أولى لتفعيل التحديثات داخل التطبيق."
 
       - name: Publish Permanent Customer Download
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release view customer-latest >/dev/null 2>&1 || gh release create customer-latest --title "VIB Customer" --notes "نسخة العملاء الرسمية من تطبيق VIB"
-          gh release upload customer-latest VIB-CUSTOMER.apk --clobber
+          gh release upload customer-latest VIB-CUSTOMER.apk VIB-CATALOG-UPDATE.json --clobber
 
       - name: Publish Permanent Admin Download
+        if: github.ref == 'refs/heads/main'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

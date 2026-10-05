@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -29,6 +31,27 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
   val adminWhatsAppNumber: StateFlow<String> = repository.adminPhone
   val isFirebaseConnected: StateFlow<Boolean> = repository.isFirebaseConnected
   val isSyncing: StateFlow<Boolean> = repository.isSyncing
+
+  val customerUpdate = repository.customerUpdate
+  val newProductAnnouncement = repository.newProductAnnouncement
+  private val _publishingUpdate = MutableStateFlow(false)
+  val publishingUpdate = _publishingUpdate.asStateFlow()
+  private val _updatePublicationMessage = MutableStateFlow<String?>(null)
+  val updatePublicationMessage = _updatePublicationMessage.asStateFlow()
+
+  fun announceCustomerUpdate(context: Context) {
+    if (!com.example.BuildConfig.ADMIN_FEATURES_ENABLED || !_isAdminLoggedIn.value || _publishingUpdate.value) return
+    viewModelScope.launch {
+      _publishingUpdate.value = true
+      try {
+        val latest = com.example.update.CatalogUpdateService(context.applicationContext).latest()
+        if (repository.announceCustomerUpdate(latest)) {
+          _updatePublicationMessage.value = "تم إرسال تحديث ${latest.versionName}. سيظهر عند فتح تطبيق التاجر إذا كانت نسخته أقدم."
+        } else _updatePublicationMessage.value = "تعذر إرسال التحديث. تأكد من الاتصال بالسحابة وحاول مرة أخرى."
+      } catch (_: Exception) { _updatePublicationMessage.value = "التحديث غير متاح حاليًا. حاول مرة أخرى بعد تجهيز النسخة الجديدة." }
+      finally { _publishingUpdate.value = false }
+    }
+  }
 
   private val _selectedCategory = MutableStateFlow(SanitaryCategory.ALL)
   val selectedCategory: StateFlow<String> = _selectedCategory.asStateFlow()
@@ -112,6 +135,16 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
 
   private val _statusMessage = MutableStateFlow<String?>(null)
   val statusMessage: StateFlow<String?> = _statusMessage.asStateFlow()
+
+  fun openProductWhenAvailable(id: String?) {
+    if (id.isNullOrBlank()) return
+    viewModelScope.launch {
+      val product = kotlinx.coroutines.withTimeoutOrNull(30000L) {
+        allProducts.map { products -> products.find { it.id == id } }.filterNotNull().first()
+      }
+      if (product != null) openProductDetail(product)
+    }
+  }
 
   fun selectCategory(category: String) {
     _selectedCategory.value = category
@@ -307,6 +340,20 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
     }
   }
 
+  fun updateProductGallery(productId: String, images: List<String>) {
+    if (_isLoading.value) return
+    val product = repository.products.value.find { it.id == productId } ?: return
+    viewModelScope.launch {
+      _isLoading.value = true
+      try {
+        if (repository.updateProduct(product, null, galleryImages = images)) {
+          _statusMessage.value = "تم حفظ صور المنتج"
+          closeQuickImage()
+        } else _statusMessage.value = "تعذر حفظ الصور. تأكد من الإنترنت، أو جرّب صورًا أصغر، ثم أعد الحفظ."
+      } finally { _isLoading.value = false }
+    }
+  }
+
   fun saveProduct(
     name: String,
     price: Double,
@@ -315,8 +362,10 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
     imageUri: Uri?,
     customImageUrl: String? = null,
     inStock: Boolean = true,
-    stockQuantity: Int = 10
+    stockQuantity: Int = 10,
+    galleryImages: List<String>? = null
   ) {
+    if (_isLoading.value) return
     viewModelScope.launch {
       _isLoading.value = true
       val existing = _productBeingEdited.value
@@ -330,8 +379,8 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
           inStock = inStock,
           stockQuantity = stockQuantity
         )
-        repository.updateProduct(updated, imageUri, customImageUrl)
-        _statusMessage.value = "تم حفظ التعديلات في Firebase ومزامنة الصور بنجاح"
+        shouldClose = repository.updateProduct(updated, imageUri, customImageUrl, galleryImages)
+        _statusMessage.value = if (shouldClose) "تم حفظ المنتج والصور" else "تعذر حفظ الصور. تأكد من الإنترنت، أو جرّب صورًا أصغر، ثم أعد الحفظ."
       } else {
         val success = repository.addProduct(
           name = name,
@@ -341,7 +390,8 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
           imageUri = imageUri,
           customImageUrl = customImageUrl,
           inStock = inStock,
-          stockQuantity = stockQuantity
+          stockQuantity = stockQuantity,
+          galleryImages = galleryImages
         )
         if (success) {
           _statusMessage.value = "تم رفع المنتج والصورة بنجاح"
@@ -423,37 +473,30 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
     customerAddress: String,
     notes: String
   ) {
+    if (_isLoading.value || _cartItems.value.isEmpty()) return
     viewModelScope.launch {
-      if (_cartItems.value.isEmpty()) return@launch
-
       _isLoading.value = true
-      val customer = repository.saveCustomer(customerName, customerPhone, customerAddress, notes)
-
-      val order = Order(
-        id = "ORD-${System.currentTimeMillis() % 1000000}",
-        customer = customer,
-        items = _cartItems.value,
-        totalAmount = cartTotal.value,
-        createdAt = System.currentTimeMillis(),
-        status = "تم الإرسال عبر واتساب"
-      )
-
-      // Save to Firestore
-      repository.recordOrderInFirestore(order)
-
-      // Send via WhatsApp
-      WhatsAppHelper.sendOrderViaWhatsApp(
-        context = context,
-        order = order,
-        customer = customer,
-        targetWhatsAppNumber = adminWhatsAppNumber.value
-      )
-
-      _isLoading.value = false
-      _showOrderConfirmation.value = false
-      _showCart.value = false
-      clearCart()
-      _statusMessage.value = "تم تجهيز الطلب وإرساله إلى واتساب بنجاح"
+      try {
+        val items = _cartItems.value.toList()
+        val customer = repository.saveCustomer(customerName, customerPhone, customerAddress, notes)
+        val order = Order(
+          id = "ORD-${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString().take(4)}",
+          customer = customer,
+          items = items,
+          totalAmount = items.sumOf { it.subtotal },
+          createdAt = System.currentTimeMillis(),
+          status = "جاهز للإرسال عبر واتساب"
+        )
+        val pdf = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.example.util.OrderInvoicePdf.create(context.applicationContext, order) }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { repository.recordOrderInFirestore(order) }
+        if (WhatsAppHelper.sendInvoiceViaWhatsApp(context, pdf, order, adminWhatsAppNumber.value)) {
+          _showOrderConfirmation.value = false
+          _showCart.value = false
+          clearCart()
+          _statusMessage.value = "تم تجهيز فاتورة PDF. أكّد الإرسال داخل واتساب."
+        } else _statusMessage.value = "الفاتورة جاهزة، لكن تعذر فتح واتساب. السلة محفوظة لإعادة المحاولة."
+      } catch (_: Exception) { _statusMessage.value = "تعذر تجهيز فاتورة الطلب. السلة محفوظة، حاول مرة أخرى." }
+      finally { _isLoading.value = false }
     }
   }
 

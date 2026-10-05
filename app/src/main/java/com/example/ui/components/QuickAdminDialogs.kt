@@ -204,189 +204,23 @@ fun QuickPriceDialog(
 fun QuickImageDialog(
   product: Product,
   onDismiss: () -> Unit,
-  onConfirmImage: (newImageUri: Uri?, customImageUrl: String?) -> Unit
+  isLoading: Boolean = false,
+  onConfirmImage: (List<String>) -> Unit
 ) {
-  var selectedUri by remember { mutableStateOf<Uri?>(null) }
-  var imageUrlStr by remember { mutableStateOf(product.imageUrl) }
-  var showUrlMode by remember { mutableStateOf(false) }
-
-  val photoPicker = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.PickVisualMedia()
-  ) { uri: Uri? ->
-    if (uri != null) {
-      selectedUri = uri
-    }
-  }
-
-  Dialog(
-    onDismissRequest = onDismiss,
-    properties = DialogProperties(usePlatformDefaultWidth = false)
-  ) {
-    Surface(
-      modifier = Modifier
-        .fillMaxWidth(0.92f)
-        .clip(RoundedCornerShape(18.dp)),
-      shape = RoundedCornerShape(18.dp),
-      color = BlackBackground,
-      border = BorderStroke(1.2.dp, GoldBorder)
-    ) {
-      Column(
-        modifier = Modifier
-          .fillMaxWidth()
-          .verticalScroll(rememberScrollState())
-          .padding(20.dp)
-      ) {
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-              imageVector = Icons.Default.AddPhotoAlternate,
-              contentDescription = null,
-              tint = GoldPrimary,
-              modifier = Modifier.size(24.dp)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-              text = "تغيير صورة المنتج",
-              color = GoldLight,
-              fontSize = 17.sp,
-              fontWeight = FontWeight.Bold
-            )
-          }
-          IconButton(onClick = onDismiss) {
-            Icon(Icons.Default.Close, contentDescription = "إلغاء", tint = WhiteMuted)
-          }
+  var images by remember(product.id) { mutableStateOf(product.galleryImages()) }
+  Dialog(onDismissRequest = { if (!isLoading) onDismiss() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+    Surface(modifier = Modifier.fillMaxWidth(0.94f), shape = RoundedCornerShape(18.dp), color = BlackBackground, border = BorderStroke(1.dp, GoldBorder)) {
+      Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+          Text("صور المنتج", color = GoldLight, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+          IconButton(onClick = onDismiss, enabled = !isLoading) { Icon(Icons.Default.Close, "إغلاق", tint = WhiteMuted) }
         }
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        Text(
-          text = product.name,
-          color = WhitePrimary,
-          fontSize = 14.sp,
-          fontWeight = FontWeight.Medium
-        )
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        // Current / Preview Image
-        Box(
-          modifier = Modifier
-            .fillMaxWidth()
-            .height(180.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, GoldBorder, RoundedCornerShape(12.dp))
-            .background(BlackSurfaceCard),
-          contentAlignment = Alignment.Center
-        ) {
-          if (selectedUri != null) {
-            AsyncImage(
-              model = ImageRequest.Builder(LocalContext.current).data(selectedUri).crossfade(true).build(),
-              contentDescription = "صورة جديدة",
-              modifier = Modifier.fillMaxWidth().height(180.dp),
-              contentScale = ContentScale.Crop
-            )
-          } else if (imageUrlStr.isNotBlank()) {
-            AsyncImage(
-              model = ImageRequest.Builder(LocalContext.current).data(imageUrlStr).crossfade(true).build(),
-              contentDescription = product.name,
-              modifier = Modifier.fillMaxWidth().height(180.dp),
-              contentScale = ContentScale.Crop
-            )
-          } else {
-            ProductImageDisplay(product = product, modifier = Modifier.fillMaxWidth().height(180.dp))
-          }
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        // Buttons for picker and URL
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-          Button(
-            onClick = {
-              photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
-            },
-            modifier = Modifier.weight(1f).testTag("quick_pick_image_button"),
-            shape = RoundedCornerShape(10.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = GoldPrimary)
-          ) {
-            Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text("اختيار من المعرض", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-          }
-
-          OutlinedButton(
-            onClick = { showUrlMode = !showUrlMode },
-            modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(1.dp, GoldBorder)
-          ) {
-            Icon(Icons.Default.Link, contentDescription = null, tint = GoldLight, modifier = Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(6.dp))
-            Text(if (showUrlMode) "إخفاء الرابط" else "إدخال رابط", color = WhitePrimary, fontSize = 12.sp)
-          }
-        }
-
-        if (showUrlMode) {
-          Spacer(modifier = Modifier.height(10.dp))
-          OutlinedTextField(
-            value = imageUrlStr,
-            onValueChange = { imageUrlStr = it },
-            label = { Text("رابط الصورة المباشر (URL)", color = WhiteMuted) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-              focusedBorderColor = GoldPrimary,
-              unfocusedBorderColor = GoldBorder,
-              focusedTextColor = WhitePrimary,
-              unfocusedTextColor = WhitePrimary
-            )
-          )
-        }
-
-        Spacer(modifier = Modifier.height(12.dp))
-
-        Text(
-          text = "ملاحظة: سيتم رفع الصورة الجديدة إلى Firebase Storage وحذف الصورة القديمة بأمان لتوفير المساحة.",
-          color = WhiteMuted,
-          fontSize = 11.sp,
-          lineHeight = 16.sp
-        )
-
-        Spacer(modifier = Modifier.height(18.dp))
-
-        Row(
-          modifier = Modifier.fillMaxWidth(),
-          horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-          OutlinedButton(
-            onClick = onDismiss,
-            modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(10.dp),
-            border = BorderStroke(1.dp, GoldBorder)
-          ) {
-            Text("إلغاء", color = WhitePrimary)
-          }
-
-          Button(
-            onClick = {
-              onConfirmImage(
-                selectedUri,
-                if (imageUrlStr.isNotBlank() && imageUrlStr != product.imageUrl) imageUrlStr.trim() else null
-              )
-            },
-            modifier = Modifier.weight(1f).testTag("save_quick_image_button"),
-            shape = RoundedCornerShape(10.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = GoldPrimary)
-          ) {
-            Text("رفع وتحديث", color = Color.Black, fontWeight = FontWeight.Bold)
-          }
+        Text(product.name, color = WhitePrimary, fontSize = 14.sp)
+        Spacer(Modifier.height(12.dp))
+        ProductImagesEditor(images, { images = it }, enabled = !isLoading)
+        Spacer(Modifier.height(12.dp))
+        Button(onClick = { onConfirmImage(images) }, enabled = !isLoading, modifier = Modifier.fillMaxWidth().testTag("save_quick_image_button"), colors = ButtonDefaults.buttonColors(containerColor = GoldPrimary)) {
+          Text(if (isLoading) "جاري حفظ الصور..." else "حفظ الصور", color = Color.Black)
         }
       }
     }

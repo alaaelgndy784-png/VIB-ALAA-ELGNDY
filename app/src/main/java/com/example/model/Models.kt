@@ -33,8 +33,11 @@ data class Product(
   val drawableRes: Int? = null,
   val inStock: Boolean = true,
   val stockQuantity: Int = 10,
-  val createdAt: Long = System.currentTimeMillis()
+  val createdAt: Long = System.currentTimeMillis(),
+  val imageUrls: List<String> = emptyList()
 ) {
+  fun galleryImages(): List<String> = (listOf(imageUrl) + imageUrls).map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+
   fun toMap(): Map<String, Any?> {
     return mapOf(
       "id" to id,
@@ -42,7 +45,8 @@ data class Product(
       "price" to price,
       "category" to category,
       "description" to description,
-      "imageUrl" to imageUrl,
+      "imageUrl" to galleryImages().firstOrNull().orEmpty(),
+      "imageUrls" to galleryImages().drop(1),
       "inStock" to inStock,
       "stockQuantity" to stockQuantity,
       "createdAt" to createdAt
@@ -58,6 +62,7 @@ data class Product(
         category = map["category"] as? String ?: SanitaryCategory.BRASS,
         description = map["description"] as? String ?: "",
         imageUrl = map["imageUrl"] as? String ?: "",
+        imageUrls = (map["imageUrls"] as? List<*>)?.filterIsInstance<String>() ?: emptyList(),
         inStock = map["inStock"] as? Boolean ?: true,
         stockQuantity = (map["stockQuantity"] as? Number)?.toInt() ?: 10,
         createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
