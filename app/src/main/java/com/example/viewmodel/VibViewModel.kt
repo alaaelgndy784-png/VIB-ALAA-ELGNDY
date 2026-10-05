@@ -307,6 +307,20 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
     }
   }
 
+  fun updateProductGallery(productId: String, images: List<String>) {
+    if (_isLoading.value) return
+    val product = repository.products.value.find { it.id == productId } ?: return
+    viewModelScope.launch {
+      _isLoading.value = true
+      try {
+        if (repository.updateProduct(product, null, galleryImages = images)) {
+          _statusMessage.value = "تم حفظ صور المنتج"
+          closeQuickImage()
+        } else _statusMessage.value = "تعذر حفظ الصور. تأكد من الإنترنت، أو جرّب صورًا أصغر، ثم أعد الحفظ."
+      } finally { _isLoading.value = false }
+    }
+  }
+
   fun saveProduct(
     name: String,
     price: Double,
@@ -315,8 +329,10 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
     imageUri: Uri?,
     customImageUrl: String? = null,
     inStock: Boolean = true,
-    stockQuantity: Int = 10
+    stockQuantity: Int = 10,
+    galleryImages: List<String>? = null
   ) {
+    if (_isLoading.value) return
     viewModelScope.launch {
       _isLoading.value = true
       val existing = _productBeingEdited.value
@@ -330,8 +346,8 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
           inStock = inStock,
           stockQuantity = stockQuantity
         )
-        repository.updateProduct(updated, imageUri, customImageUrl)
-        _statusMessage.value = "تم حفظ التعديلات في Firebase ومزامنة الصور بنجاح"
+        shouldClose = repository.updateProduct(updated, imageUri, customImageUrl, galleryImages)
+        _statusMessage.value = if (shouldClose) "تم حفظ المنتج والصور" else "تعذر حفظ الصور. تأكد من الإنترنت، أو جرّب صورًا أصغر، ثم أعد الحفظ."
       } else {
         val success = repository.addProduct(
           name = name,
@@ -341,7 +357,8 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
           imageUri = imageUri,
           customImageUrl = customImageUrl,
           inStock = inStock,
-          stockQuantity = stockQuantity
+          stockQuantity = stockQuantity,
+          galleryImages = galleryImages
         )
         if (success) {
           _statusMessage.value = "تم رفع المنتج والصورة بنجاح"

@@ -82,8 +82,7 @@ fun AddEditProductDialog(
     price: Double,
     category: String,
     description: String,
-    imageUri: Uri?,
-    customImageUrl: String?,
+    images: List<String>,
     inStock: Boolean,
     stockQuantity: Int
   ) -> Unit,
@@ -97,19 +96,8 @@ fun AddEditProductDialog(
   var description by remember { mutableStateOf(productToEdit?.description ?: "") }
   var inStock by remember { mutableStateOf(productToEdit?.inStock ?: true) }
   var stockQuantityStr by remember { mutableStateOf(productToEdit?.stockQuantity?.toString() ?: "10") }
-  var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
-  var customImageUrl by remember { mutableStateOf(productToEdit?.imageUrl ?: "") }
-  var showUrlField by remember { mutableStateOf(false) }
+  var images by remember(productToEdit?.id) { mutableStateOf(productToEdit?.galleryImages() ?: emptyList()) }
   var errorMessage by remember { mutableStateOf<String?>(null) }
-
-  // Modern Android Photo Picker (zero-permission)
-  val photoPickerLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.PickVisualMedia()
-  ) { uri: Uri? ->
-    if (uri != null) {
-      selectedImageUri = uri
-    }
-  }
 
   Dialog(
     onDismissRequest = onDismiss,
@@ -154,111 +142,8 @@ fun AddEditProductDialog(
           modifier = Modifier.padding(vertical = 12.dp)
         )
 
-        // Image Picker Area
-        Box(
-          modifier = Modifier
-            .fillMaxWidth()
-            .height(150.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(BlackSurfaceCard)
-            .border(1.dp, GoldBorder, RoundedCornerShape(12.dp))
-            .clickable {
-              photoPickerLauncher.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-              )
-            }
-            .testTag("admin_pick_image_button"),
-          contentAlignment = Alignment.Center
-        ) {
-          if (selectedImageUri != null) {
-            AsyncImage(
-              model = ImageRequest.Builder(LocalContext.current)
-                .data(selectedImageUri)
-                .crossfade(true)
-                .build(),
-              contentDescription = "صورة المنتج المختارة",
-              modifier = Modifier.fillMaxSize(),
-              contentScale = ContentScale.Crop
-            )
-          } else if (customImageUrl.isNotBlank()) {
-            AsyncImage(
-              model = ImageRequest.Builder(LocalContext.current)
-                .data(customImageUrl)
-                .crossfade(true)
-                .build(),
-              contentDescription = "صورة المنتج عبر الرابط",
-              modifier = Modifier.fillMaxSize(),
-              contentScale = ContentScale.Crop
-            )
-          } else if (productToEdit != null) {
-            ProductImageDisplay(
-              product = productToEdit,
-              modifier = Modifier.fillMaxSize()
-            )
-          } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-              Icon(
-                imageVector = Icons.Default.AddPhotoAlternate,
-                contentDescription = null,
-                tint = GoldPrimary,
-                modifier = Modifier.size(38.dp)
-              )
-              Spacer(modifier = Modifier.height(6.dp))
-              Text(
-                text = "اختر صورة المنتج من المعرض (Photo Picker)",
-                color = GoldLight,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium
-              )
-              Text(
-                text = "سيتم رفعها لـ Firebase Storage لتظهر فوراً لجميع العملاء",
-                color = WhiteMuted,
-                fontSize = 10.sp
-              )
-            }
-          }
-        }
-
-        // Toggle Direct URL Field
-        Row(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp),
-          horizontalArrangement = Arrangement.SpaceBetween,
-          verticalAlignment = Alignment.CenterVertically
-        ) {
-          Text(
-            text = if (showUrlField) "إخفاء رابط الصورة المباشر" else "أو أدخل رابط صورة خارجي (URL)",
-            color = GoldLight,
-            fontSize = 11.sp,
-            modifier = Modifier.clickable { showUrlField = !showUrlField }
-          )
-          Icon(
-            imageVector = Icons.Default.Link,
-            contentDescription = null,
-            tint = GoldLight,
-            modifier = Modifier.size(14.dp)
-          )
-        }
-
-        if (showUrlField) {
-          Spacer(modifier = Modifier.height(6.dp))
-          OutlinedTextField(
-            value = customImageUrl,
-            onValueChange = { customImageUrl = it },
-            label = { Text("رابط الصورة المباشر (https://...)", color = WhiteMuted) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-              focusedBorderColor = GoldPrimary,
-              unfocusedBorderColor = GoldBorder,
-              focusedTextColor = WhitePrimary,
-              unfocusedTextColor = WhitePrimary
-            )
-          )
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
+        ProductImagesEditor(images = images, onImagesChange = { images = it }, enabled = !isLoading)
+        Spacer(modifier = Modifier.height(12.dp))
 
         // Product Name
         OutlinedTextField(
@@ -438,14 +323,13 @@ fun AddEditProductDialog(
                 price,
                 category,
                 description.trim(),
-                selectedImageUri,
-                if (customImageUrl.isNotBlank()) customImageUrl.trim() else null,
+                images,
                 inStock,
                 qty
               )
             }
           },
-          enabled = true,
+          enabled = !isLoading,
           modifier = Modifier
             .fillMaxWidth()
             .height(50.dp)

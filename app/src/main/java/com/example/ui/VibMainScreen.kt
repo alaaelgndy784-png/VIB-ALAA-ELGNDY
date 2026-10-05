@@ -262,7 +262,7 @@ fun VibMainScreen(
       containerColor = BlackBackground
     ) { innerPadding ->
       LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 165.dp),
+        columns = GridCells.Adaptive(minSize = 300.dp),
         modifier = Modifier
           .fillMaxSize()
           .padding(innerPadding)
@@ -581,8 +581,8 @@ fun VibMainScreen(
         
       
         
-        onSaveProduct = { name, price, category, description, imageUri, customImageUrl, inStock, stockQuantity ->
-          viewModel.saveProduct(name, price, category, description, imageUri, customImageUrl, inStock, stockQuantity)
+        onSaveProduct = { name, price, category, description, images, inStock, stockQuantity ->
+          viewModel.saveProduct(name, price, category, description, null, null, inStock, stockQuantity, images)
         }
       )
     }
@@ -601,7 +601,8 @@ fun VibMainScreen(
       QuickImageDialog(
         product = prod,
         onDismiss = { viewModel.closeQuickImage() },
-        onConfirmImage = { uri, customUrl -> viewModel.updateProductImage(prod.id, uri, customUrl) }
+        isLoading = isLoading,
+        onConfirmImage = { images -> viewModel.updateProductGallery(prod.id, images) }
       )
     }
 

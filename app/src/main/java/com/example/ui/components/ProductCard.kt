@@ -83,10 +83,10 @@ fun ProductCard(
       Box(
         modifier = Modifier
           .fillMaxWidth()
-          .height(160.dp)
+          .height(240.dp)
           .clip(RoundedCornerShape(topStart = 14.dp, topEnd = 14.dp))
       ) {
-        ProductImageDisplay(
+        ProductImageGallery(
           product = product,
           modifier = Modifier.fillMaxSize()
         )
@@ -135,7 +135,7 @@ fun ProductCard(
       Column(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(12.dp)
+          .padding(10.dp)
       ) {
         Text(
           text = product.name,
@@ -178,7 +178,7 @@ fun ProductCard(
               shape = RoundedCornerShape(20.dp),
               color = Color.Black,
               border = BorderStroke(1.dp, GoldPrimary),
-              modifier = Modifier.height(36.dp)
+              modifier = Modifier.height(30.dp)
             ) {
               Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -223,13 +223,13 @@ fun ProductCard(
               shape = RoundedCornerShape(20.dp),
               color = GoldPrimary,
               modifier = Modifier
-                .height(36.dp)
+                .height(30.dp)
                 .clickable(onClick = onAddToCart)
                 .testTag("add_to_cart_${product.id}")
             ) {
               Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 12.dp)
+                modifier = Modifier.padding(horizontal = 8.dp)
               ) {
                 Icon(
                   imageVector = Icons.Default.ShoppingCart,
@@ -239,7 +239,7 @@ fun ProductCard(
                 )
                 Spacer(modifier = Modifier.size(4.dp))
                 Text(
-                  text = "أضف للسلة",
+                  text = "للسلة",
                   color = Color.Black,
                   fontSize = 12.sp,
                   fontWeight = FontWeight.Bold
@@ -249,145 +249,28 @@ fun ProductCard(
           }
         }
 
-        // Dedicated Admin Actions Panel when in Admin Mode
         if (isAdmin) {
-          Spacer(modifier = Modifier.height(10.dp))
-          HorizontalDivider(color = GoldBorder.copy(alpha = 0.6f), thickness = 0.8.dp)
-          Spacer(modifier = Modifier.height(8.dp))
-
-          Text(
-            text = "أدوات تحكم المدير:",
-            color = GoldLight,
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Bold
-          )
-
-          Spacer(modifier = Modifier.height(6.dp))
-
-          // Row 1: Full Edit + Delete
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-          ) {
-            // Full Edit Button
-            Surface(
-              shape = RoundedCornerShape(8.dp),
-              color = GoldPrimary,
-              modifier = Modifier
-                .weight(1f)
-                .height(32.dp)
-                .clickable { onEditProduct(product) }
-                .testTag("admin_edit_prod_${product.id}")
-            ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxSize()
-              ) {
-                Icon(Icons.Default.Edit, contentDescription = null, tint = Color.Black, modifier = Modifier.size(13.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text("تعديل شامل", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-              }
-            }
-
-            // Delete Button (with confirmation)
-            Surface(
-              shape = RoundedCornerShape(8.dp),
-              color = Color(0xFFE53935).copy(alpha = 0.15f),
-              border = BorderStroke(1.dp, Color(0xFFE53935)),
-              modifier = Modifier
-                .weight(0.9f)
-                .height(32.dp)
-                .clickable { onDeleteProduct(product) }
-                .testTag("admin_delete_prod_${product.id}")
-            ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxSize()
-              ) {
-                Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFE53935), modifier = Modifier.size(13.dp))
-                Spacer(modifier = Modifier.width(3.dp))
-                Text("حذف", color = Color(0xFFE53935), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-              }
-            }
-          }
-
-          Spacer(modifier = Modifier.height(6.dp))
-
-          // Row 2: Quick price, Quick image, Quick stock
-          Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-          ) {
-            // Quick Price
-            Surface(
-              shape = RoundedCornerShape(6.dp),
-              color = BlackSurfaceElevated,
-              border = BorderStroke(0.8.dp, GoldBorder),
-              modifier = Modifier
-                .weight(1f)
-                .height(28.dp)
-                .clickable { onQuickPrice(product) }
-                .testTag("admin_price_prod_${product.id}")
-            ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxSize()
-              ) {
-                Icon(Icons.Default.PriceChange, contentDescription = null, tint = GoldLight, modifier = Modifier.size(12.dp))
-                Spacer(modifier = Modifier.width(2.dp))
-                Text("السعر", color = WhitePrimary, fontSize = 10.sp)
-              }
-            }
-
-            // Quick Image
-            Surface(
-              shape = RoundedCornerShape(6.dp),
-              color = BlackSurfaceElevated,
-              border = BorderStroke(0.8.dp, GoldBorder),
-              modifier = Modifier
-                .weight(1f)
-                .height(28.dp)
-                .clickable { onQuickImage(product) }
-                .testTag("admin_image_prod_${product.id}")
-            ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxSize()
-              ) {
-                Icon(Icons.Default.AddPhotoAlternate, contentDescription = null, tint = GoldLight, modifier = Modifier.size(12.dp))
-                Spacer(modifier = Modifier.width(2.dp))
-                Text("الصورة", color = WhitePrimary, fontSize = 10.sp)
-              }
-            }
-
-            // Quick Stock
-            Surface(
-              shape = RoundedCornerShape(6.dp),
-              color = BlackSurfaceElevated,
-              border = BorderStroke(0.8.dp, GoldBorder),
-              modifier = Modifier
-                .weight(1f)
-                .height(28.dp)
-                .clickable { onQuickStock(product) }
-                .testTag("admin_stock_prod_${product.id}")
-            ) {
-              Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-                modifier = Modifier.fillMaxSize()
-              ) {
-                Icon(Icons.Default.Inventory2, contentDescription = null, tint = if (product.inStock) GoldLight else Color.Red, modifier = Modifier.size(12.dp))
-                Spacer(modifier = Modifier.width(2.dp))
-                Text(if (product.inStock) "المخزون" else "نفذ", color = if (product.inStock) WhitePrimary else Color.Red, fontSize = 10.sp)
-              }
-            }
+          Spacer(Modifier.height(6.dp))
+          HorizontalDivider(color = GoldBorder.copy(alpha = 0.6f))
+          Row(Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+            CompactProductAction("تعديل", Icons.Default.Edit, "admin_edit_prod_${product.id}", Modifier.weight(1f)) { onEditProduct(product) }
+            CompactProductAction("الصور", Icons.Default.AddPhotoAlternate, "admin_image_prod_${product.id}", Modifier.weight(1f)) { onQuickImage(product) }
+            CompactProductAction("السعر", Icons.Default.PriceChange, "admin_price_prod_${product.id}", Modifier.weight(1f)) { onQuickPrice(product) }
+            CompactProductAction("المخزون", Icons.Default.Inventory2, "admin_stock_prod_${product.id}", Modifier.weight(1f)) { onQuickStock(product) }
+            CompactProductAction("حذف", Icons.Default.Delete, "admin_delete_prod_${product.id}", Modifier.weight(1f), Color(0xFFEF5350)) { onDeleteProduct(product) }
           }
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun CompactProductAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, tag: String, modifier: Modifier, tint: Color = GoldLight, onClick: () -> Unit) {
+  Surface(modifier = modifier.height(36.dp).clickable(onClick = onClick).testTag(tag), shape = RoundedCornerShape(6.dp), color = BlackSurfaceElevated, border = BorderStroke(0.6.dp, GoldBorder)) {
+    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+      Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(14.dp))
+      Text(label, color = tint, fontSize = 9.sp, maxLines = 1)
     }
   }
 }

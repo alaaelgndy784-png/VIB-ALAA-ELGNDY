@@ -242,6 +242,9 @@ class FirebaseRepository(val context: Context) {
               category = category,
               description = description,
               imageUrl = imageUrl,
+              imageUrls = obj.optJSONArray("imageUrls")?.let { a -> (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } } ?: emptyList(),
+              stockQuantity = obj.optInt("stockQuantity", 10),
+              createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
               drawableRes = resolvedDrawable,
               inStock = inStock
             )
@@ -268,6 +271,9 @@ class FirebaseRepository(val context: Context) {
         obj.put("category", p.category)
         obj.put("description", p.description)
         obj.put("imageUrl", p.imageUrl)
+        obj.put("imageUrls", JSONArray(p.imageUrls))
+        obj.put("stockQuantity", p.stockQuantity)
+        obj.put("createdAt", p.createdAt)
         obj.put("inStock", p.inStock)
         // Intentionally do not write raw int drawableRes to avoid outdated AAPT IDs across builds
         array.put(obj)
@@ -386,7 +392,7 @@ class FirebaseRepository(val context: Context) {
     }
   }
 
-  private fun imageUriToFirestoreDataUrl(uri: Uri): String? {
+  private fun imageUriToFirestoreDataUrl(uri: Uri, maxBytes: Int = 520_000): String? {
     return try {
       val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
       context.contentResolver.openInputStream(uri)?.use {
@@ -420,12 +426,12 @@ class FirebaseRepository(val context: Context) {
         resized.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, output)
         bytes = output.toByteArray()
         quality -= 8
-      } while (bytes.size > 520_000 && quality >= 32)
+      } while (bytes.size > maxBytes && quality >= 32)
 
       if (resized !== decoded) decoded.recycle()
       resized.recycle()
 
-      if (bytes.size > 700_000) {
+      if (bytes.size > maxBytes) {
         Log.e(TAG, "Compressed image is still too large for Firestore")
         null
       } else {
@@ -468,6 +474,32 @@ class FirebaseRepository(val context: Context) {
     }
   }
 
+  internal suspend fun prepareProductGallery(images: List<String>): List<String>? = withContext(Dispatchers.IO) {
+    val sources = images.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+    if (sources.size > 8) return@withContext null
+    val maxBytes = (600_000 / sources.size.coerceAtLeast(1)).coerceAtMost(180_000)
+    val prepared = mutableListOf<String>()
+    for (source in sources) {
+      val image = when {
+        source.startsWith("content://") || source.startsWith("file://") -> imageUriToFirestoreDataUrl(Uri.parse(source), maxBytes)
+        source.startsWith("data:image/") -> {
+          // Recompress legacy large covers when more photos are added; never
+          // duplicate the cover in the additional-images field.
+          if (source.length <= maxBytes * 4 / 3 + 32) source else {
+            val bytes = try { Base64.decode(source.substringAfter(","), Base64.DEFAULT) } catch (_: Exception) { return@withContext null }
+            val temporary = File.createTempFile("gallery_", ".jpg", context.cacheDir)
+            try { temporary.writeBytes(bytes); imageUriToFirestoreDataUrl(Uri.fromFile(temporary), maxBytes) } finally { temporary.delete() }
+          }
+        }
+        source.startsWith("https://") || source.startsWith("http://") -> source
+        else -> null
+      } ?: return@withContext null
+      prepared.add(image)
+    }
+    if (prepared.sumOf { it.toByteArray(Charsets.UTF_8).size } > 850_000) return@withContext null
+    prepared
+  }
+
   suspend fun addProduct(
     name: String,
     price: Double,
@@ -476,7 +508,8 @@ class FirebaseRepository(val context: Context) {
     imageUri: Uri?,
     customImageUrl: String? = null,
     inStock: Boolean = true,
-    stockQuantity: Int = 10
+    stockQuantity: Int = 10,
+    galleryImages: List<String>? = null
   ): Boolean = withContext(Dispatchers.IO) {
     val id = "prod_${System.currentTimeMillis()}"
     var finalImageUrl = if (!customImageUrl.isNullOrBlank()) customImageUrl.trim() else ""
@@ -490,42 +523,40 @@ class FirebaseRepository(val context: Context) {
       finalImageUrl = uploadedImageUrl
     }
 
+    val gallery = if (galleryImages != null) prepareProductGallery(galleryImages) ?: return@withContext false else listOf(finalImageUrl).filter { it.isNotBlank() }
     val newProduct = Product(
       id = id,
       name = name,
       price = price,
       category = category,
       description = description,
-      imageUrl = finalImageUrl,
+      imageUrl = gallery.firstOrNull().orEmpty(),
+      imageUrls = gallery.drop(1),
       inStock = inStock,
       stockQuantity = stockQuantity,
       createdAt = System.currentTimeMillis()
     )
 
-    // Update local immediately
+    if (isFirebaseConfigured()) {
+      try {
+        val saved = withTimeoutOrNull(30000L) {
+          FirebaseFirestore.getInstance().collection("products").document(id).set(newProduct.toMap()).await()
+          true
+        } ?: false
+        if (!saved) return@withContext false
+      } catch (_: Exception) { return@withContext false }
+    }
     val updated = listOf(newProduct) + _products.value
     _products.value = updated
     saveProductsLocally(updated)
-
-    // Sync to Firestore directly
-    if (isFirebaseConfigured()) {
-      try {
-        withTimeoutOrNull(30000L) {
-          val db = FirebaseFirestore.getInstance()
-          db.collection("products").document(id).set(newProduct.toMap()).await()
-          Log.d(TAG, "Added product $id to Firestore")
-        }
-      } catch (e: Exception) {
-        Log.w(TAG, "Could not sync new product to Firestore: ${e.message}")
-      }
-    }
     return@withContext true
   }
 
   suspend fun updateProduct(
     product: Product,
     newImageUri: Uri?,
-    customImageUrl: String? = null
+    customImageUrl: String? = null,
+    galleryImages: List<String>? = null
   ): Boolean = withContext(Dispatchers.IO) {
     val oldProduct = _products.value.find { it.id == product.id }
     val oldImageUrl = oldProduct?.imageUrl ?: product.imageUrl
@@ -545,32 +576,25 @@ class FirebaseRepository(val context: Context) {
       imageWasChanged = true
     }
 
-    val updatedProduct = product.copy(imageUrl = finalImageUrl)
+    val gallery = if (galleryImages != null) prepareProductGallery(galleryImages) ?: return@withContext false else (listOf(finalImageUrl) + product.imageUrls).filter { it.isNotBlank() }.distinct()
+    val updatedProduct = product.copy(imageUrl = gallery.firstOrNull().orEmpty(), imageUrls = gallery.drop(1))
 
-    val updated = _products.value.map {
-      if (it.id == product.id) updatedProduct else it
-    }
-    _products.value = updated
-    saveProductsLocally(updated)
-
-    // Direct Firestore update
     if (isFirebaseConfigured()) {
       try {
-        withTimeoutOrNull(30000L) {
-          val db = FirebaseFirestore.getInstance()
-          db.collection("products").document(product.id).set(updatedProduct.toMap()).await()
-          Log.d(TAG, "Updated product ${product.id} in Firestore")
-        }
-      } catch (e: Exception) {
-        Log.w(TAG, "Could not update product in Firestore: ${e.message}")
-      }
+        val saved = withTimeoutOrNull(30000L) {
+          FirebaseFirestore.getInstance().collection("products").document(product.id).set(updatedProduct.toMap()).await()
+          true
+        } ?: false
+        if (!saved) return@withContext false
+      } catch (_: Exception) { return@withContext false }
     }
-
-    // Safely delete old image from Firebase Storage if replaced
-    if (imageWasChanged && oldImageUrl.isNotBlank() && oldImageUrl != finalImageUrl) {
+    val updated = _products.value.map { if (it.id == product.id) updatedProduct else it }
+    _products.value = updated
+    saveProductsLocally(updated)
+    // Only remove an old remote cover if it is absent from the entire gallery.
+    if (imageWasChanged && oldImageUrl.isNotBlank() && oldImageUrl !in updatedProduct.galleryImages()) {
       deleteImageFromStorage(oldImageUrl)
     }
-
     return@withContext true
   }
 
