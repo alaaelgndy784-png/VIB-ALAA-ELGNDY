@@ -59,10 +59,10 @@ jobs:
           if-no-files-found: error
       - name: Check free hosting credentials
         env:
-          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_HOSTING_SERVICE_ACCOUNT }}
         run: |
           if [ -z "$SERVICE_ACCOUNT" ]; then
-            echo "::warning::Web build ready. Publishing needs FIREBASE_SERVICE_ACCOUNT. No paid service was enabled."
+            echo "::warning::Web build ready. Publishing needs FIREBASE_HOSTING_SERVICE_ACCOUNT. No paid service was enabled."
             echo "PUBLISH_READY=false" >> "$GITHUB_ENV"
           else
             printf '%s' "$SERVICE_ACCOUNT" > "$RUNNER_TEMP/vib-firebase.json"
