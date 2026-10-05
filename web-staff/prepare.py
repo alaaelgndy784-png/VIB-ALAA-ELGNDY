@@ -32,6 +32,12 @@ s=s.replace('Widget build(BuildContext context) => Scaffold(body: Center(child: 
 s=s.replace('  ))));\n}\n\nconst managerNavy', '  )))));\n}\n\nconst managerNavy')
 s=s.replace('      TextButton.icon(onPressed: busy ? null : recoverPasswordByBiometric', '      if (!kIsWeb) TextButton.icon(onPressed: busy ? null : recoverPasswordByBiometric')
 s=s.replace("      const Text('استرجاع كلمة السر بالبصمة يعمل مجانًا على نفس الموبايل بعد أول تسجيل دخول ناجح. المدير يفعّل حساب الموظف ويحدد فرعه.'),", "      Text(kIsWeb ? 'ادخل بنفس رقمك ورقمك السري في برنامج الموظف. المدير يفعّل حسابك ويحدد فرعك.' : 'استرجاع كلمة السر بالبصمة يعمل مجانًا على نفس الموبايل بعد أول تسجيل دخول ناجح. المدير يفعّل حساب الموظف ويحدد فرعه.'),")
+s=s.replace('ThemeData.dark(useMaterial3: true).copyWith(', "ThemeData(brightness: Brightness.dark, useMaterial3: true, fontFamily: 'VIBArabic').copyWith(")
+s=s.replace('ThemeData.dark().textTheme.apply(bodyColor:', "ThemeData(brightness: Brightness.dark, fontFamily: 'VIBArabic').textTheme.apply(fontFamily: 'VIBArabic', bodyColor:")
+p.write_text(s)
+# Bundle Arabic glyphs instead of depending on a runtime font CDN.
+p=root/'pubspec.yaml'
+s=p.read_text().replace('flutter:\n  uses-material-design: true', 'flutter:\n  fonts:\n    - family: VIBArabic\n      fonts:\n        - asset: assets/fonts/DejaVuSans.ttf\n  uses-material-design: true')
 p.write_text(s)
 # Mobile OS notification plugin is native; live text chat remains available.
 p=root/'lib/chat_alerts.dart';s=p.read_text().replace('    final token=++generation;','    if (kIsWeb) return;\n    final token=++generation;',1)

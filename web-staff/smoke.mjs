@@ -22,6 +22,7 @@ try{
       await page.goto('http://127.0.0.1:8085');
       await page.locator('flt-semantics-placeholder').dispatchEvent('click',{}, {timeout:120000});
       await page.getByText('دخول',{exact:true}).waitFor({timeout:60000});
+      await page.waitForTimeout(1500); // Let the canvas paint after the semantics tree and bundled font are ready.
       await page.screenshot({path:`web-project/smoke/${name}.png`});
       if(errors.length) throw new Error(`${name}: ${errors.join('; ')}`);
       console.log(`${name}: login rendered, no uncaught JavaScript errors`);
