@@ -1,0 +1,46 @@
+name: Publish VIB manager approval update
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-vib-approval.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify tested source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37334543157 --jq '[.head_sha,.conclusion] | join(" ")')" = "0b7b34e56f04e8fde986bfbae3fb9d912809f74f success"
+      - name: Download manager APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          run-id: 37334543157
+          github-token: ${{ github.token }}
+          path: download
+      - name: Download staff APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-STAFF-APK
+          run-id: 37334543157
+          github-token: ${{ github.token }}
+          path: download
+      - name: Validate and publish both APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          for path in ['download/VIB-SALES-MANAGER.apk','download/VIB-SALES-STAFF.apk']:
+              with zipfile.ZipFile(path) as apk:
+                  assert apk.testzip() is None, path
+                  assert 'AndroidManifest.xml' in apk.namelist(), path
+          PY
+          sha256sum download/*.apk > download/SHA256SUMS.txt
+          gh release view vib-staff-manager-approval-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-staff-manager-approval-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target 0b7b34e56f04e8fde986bfbae3fb9d912809f74f --title 'VIB 0.2.2 — manager approval for staff invoices above four items' --notes 'Staff invoices with 1–4 products save immediately as before. Invoices with 5–50 products are immutable pending requests and affect no stock, customer balance or cash until the manager approves. Approval revalidates current staff permissions, prices, discounts, costs and stock, then posts the invoice, stock, accounts and sequential number together. Retries reuse the same invoice ID. Managers can reject with a reason; staff can follow pending/approved/rejected status and open the completed invoice after approval. Pending requests are excluded from completed-sales and profit reports. New pendingSales Firestore rules were published to vib-sales on Spark; no Blaze billing or Cloud Functions deployment required. Existing pending requests are not included in the legacy Drive backup export. Existing direct staff invoice rules are retained. Version 0.2.2, build 2004, existing application IDs and cached signing key. Rules emulator and Flutter accounting, PDF, invoice and report tests passed. Install manager first, then staff, as updates over the existing matching apps. Production invoice entry on physical devices still requires user verification.'
+          gh release upload vib-staff-manager-approval-20261005 download/VIB-SALES-MANAGER.apk download/VIB-SALES-STAFF.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
