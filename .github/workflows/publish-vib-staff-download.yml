@@ -1,4 +1,4 @@
-name: Publish VIB statements and staff permissions
+name: Publish VIP invoice and receipt updates
 on:
   workflow_dispatch:
   push:
@@ -15,20 +15,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37245296061 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
-          test "$(cat source-run.txt)" = "7a1498cd404aedaf38d34bb492a301da7e9276f8 success"
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37248301744 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "35951250f9c2d029f905cfbb8bcc9757e2d614e9 success"
       - name: Download tested staff APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37245296061
+          run-id: 37248301744
           github-token: ${{ github.token }}
           path: download
       - name: Download tested manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37245296061
+          run-id: 37248301744
           github-token: ${{ github.token }}
           path: download
       - name: Verify and publish reports APKs
@@ -45,5 +45,5 @@ jobs:
                   assert 'AndroidManifest.xml' in apk.namelist(), path
           PY
           sha256sum download/VIB-Manager-Reports.apk download/VIB-Staff-Reports.apk > download/SHA256SUMS.txt
-          gh release view vib-statements-staff-permissions-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-statements-staff-permissions-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB statements and employee permissions — 5 October 2026' --notes 'Dated customer and supplier statements with opening and closing balances, product movement trace with invoice, party and employee details, employee colours, manager-controlled purchase permission and sale cost visibility, and employee removal preserving history. Includes prior invoice corrections, repayment periods and compact mobile forms. All 90 Firestore rules tests and Flutter report/widget tests passed. Matching Firestore rules were published to vib-sales on 5 October 2026. Employee purchases are limited to four lines and serials are assigned when reviewed by the manager. Install as an update over the matching existing app.'
-          gh release upload vib-statements-staff-permissions-20261005 download/VIB-Staff-Reports.apk download/VIB-Manager-Reports.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+          gh release view vip-invoices-receipts-discounts-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vip-invoices-receipts-discounts-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIP invoice PDF, receipt dates and staff discounts — 5 October 2026' --notes 'VIP black and gold launcher icons, company header and shared A4/80mm invoice design. After-save sharing attaches a PDF through the Android share sheet. Customer receipts accept a chosen Cairo date and time used by repayment reports and account statements. Staff sale percentage discounts are computed from the product price; manual price changes require manager permission, and staff prices remain at or above cost. New manager invoice series starts at sales 1223 and purchases 431 without renumbering history or rewinding existing higher counters. Staff serials are assigned when reviewed by the manager. Employee discount, receipt-date and price-permission changes require the matching Firestore rules to be published. All 109 Firestore rules tests, 32 function tests and Flutter invoice/report/widget tests passed. Android version 2002 (0.2.0); install over the matching existing app.'
+          gh release upload vip-invoices-receipts-discounts-20261005 download/VIB-Staff-Reports.apk download/VIB-Manager-Reports.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
