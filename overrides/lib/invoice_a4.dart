@@ -93,8 +93,8 @@ Future<Uint8List> createStyledA4InvoicePdf({
       pw.Center(child:ltr('ALAAELGNDY',size:11,color:gold)),
       if(address.isNotEmpty)txt(address,size:8,color:PdfColors.white,align:pw.TextAlign.center),
       for(final phone in phones)pw.Center(child:ltr(phone,size:8,color:PdfColors.white)),
-      if(taxNumber.isNotEmpty)txt('البطاقة الضريبية: $taxNumber',size:7,color:PdfColors.white),
-      if(commercialRegister.isNotEmpty)txt('السجل التجاري: $commercialRegister',size:7,color:PdfColors.white),
+      if(taxNumber.isNotEmpty)pw.Row(children:[pw.Expanded(child:txt('البطاقة الضريبية:',size:7,color:PdfColors.white)),pw.Flexible(child:ltr(taxNumber,size:7,color:PdfColors.white))]),
+      if(commercialRegister.isNotEmpty)pw.Row(children:[pw.Expanded(child:txt('السجل التجاري:',size:7,color:PdfColors.white)),pw.Flexible(child:ltr(commercialRegister,size:7,color:PdfColors.white))]),
     ]) : pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
       pw.Expanded(flex: 3, child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
         txt(company, size: 16, bold: true, color: gold), pw.SizedBox(height: 4),
