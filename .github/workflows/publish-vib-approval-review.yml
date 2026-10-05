@@ -1,0 +1,47 @@
+name: Publish VIB invoice approval review update
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/publish-vib-approval-review.yml']
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify tested source
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37342033160 --jq '[.head_sha,.conclusion] | join(" ")')" = "74a81b37b20e37c49a47b2f7e9b3927ff36b1c79 success"
+      - name: Download manager APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          run-id: 37342033160
+          github-token: ${{ github.token }}
+          path: download
+      - name: Download staff APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-STAFF-APK
+          run-id: 37342033160
+          github-token: ${{ github.token }}
+          path: download
+      - name: Validate and publish both APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          for path in ['download/VIB-SALES-MANAGER.apk','download/VIB-SALES-STAFF.apk']:
+              with zipfile.ZipFile(path) as apk:
+                  assert apk.testzip() is None, path
+                  assert 'AndroidManifest.xml' in apk.namelist(), path
+          PY
+          gh api 'repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/contents/overrides/firebase/firestore.rules?ref=74a81b37b20e37c49a47b2f7e9b3927ff36b1c79' --jq .content | base64 --decode > download/VIB-Firestore-0.2.3.rules
+          sha256sum download/*.apk > download/SHA256SUMS.txt
+          gh release view vib-staff-approval-invoice-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-staff-approval-invoice-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target 74a81b37b20e37c49a47b2f7e9b3927ff36b1c79 --title 'VIB 0.2.3 — invoice table and removal of rejected staff requests' --notes 'Manager review displays a full numbered invoice table with submitted date, customer, employee, unit prices, quantities, line totals, total, paid and remaining balance. After rejection, the manager can remove the request from both updated app lists; the immutable rejected payload and review audit remain stored. Only rejected requests can be removed. No stock, cash or balance changes occur on removal. Staff can create a fresh invoice. 1–4 products still save immediately and 5–50 products await approval. Rules emulator tests and Flutter tests passed, including invoice layout at 360/564-pixel widths and 50 long Arabic product names. Version 0.2.3, build 2005; existing app IDs and signing key retained. Install manager first then staff over existing apps. Removal requires publishing the included pendingSales Firestore rules; production rules activation has not yet been verified. No Blaze billing or Cloud Functions deployment required.'
+          gh release upload vib-staff-approval-invoice-20261005 download/VIB-SALES-MANAGER.apk download/VIB-SALES-STAFF.apk download/SHA256SUMS.txt download/VIB-Firestore-0.2.3.rules --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
