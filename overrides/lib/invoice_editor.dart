@@ -56,7 +56,7 @@ class InvoiceEditorFrame extends StatelessWidget {
         if(!checkout) Container(color: const Color(0xFF282215), padding: const EdgeInsets.all(8),
           child: Row(children: [Text('الأصناف: $itemCount • العدد: $quantityCount', style: const TextStyle(fontSize: 11, color: Colors.white)),
             const SizedBox(width: 8), Expanded(child: Align(alignment: Alignment.centerLeft, child: FittedBox(fit: BoxFit.scaleDown,
-              child: Text('الإجمالي: ${total.toStringAsFixed(2)} ج.م', style: const TextStyle(color: Colors.greenAccent, fontSize: 18, fontWeight: FontWeight.bold))))),
+              child:Container(padding:const EdgeInsets.symmetric(horizontal:8,vertical:6),decoration:BoxDecoration(color:staffApp ? const Color(0xFF1565C0) : null,borderRadius:BorderRadius.circular(6)),child:Text('الإجمالي: ${total.toStringAsFixed(2)} ج.م',style:TextStyle(color:staffApp ? Colors.white : Colors.greenAccent,fontSize:18,fontWeight:FontWeight.bold)))))),
           ])),
         const SizedBox(height: 6),
         Wrap(alignment: WrapAlignment.end, spacing: 6, runSpacing: 4, children: actions),
@@ -233,7 +233,7 @@ class InvoiceCompactTableLine extends StatelessWidget {
           Expanded(flex:5,child:Text(name,textDirection:TextDirection.rtl,style:TextStyle(color:staffApp ? const Color(0xFF0056B3) : Colors.black,fontSize:12))),
           Expanded(flex:3,child:value(p.toStringAsFixed(2),background:staffApp ? const Color(0xFFB9F6CA) : null)),
           Expanded(flex:2,child:value('$q',background:staffApp ? const Color(0xFFFFF59D) : null)),
-          Expanded(flex:3,child:value((p*q).toStringAsFixed(2))),
+          Expanded(flex:3,child:value((p*q).toStringAsFixed(2),background:staffApp ? const Color(0xFF90CAF9) : null)),
         ]))));
   }
 }
@@ -290,7 +290,7 @@ class _InvoiceLineEditorDialogState extends State<_InvoiceLineEditorDialog> {
     title:const Text('بيانات الصنف'),
     content:SizedBox(width:450,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
       PurchaseInvoiceLine(number:1,name:widget.name,cost:draftPrice,quantity:draftQuantity,enabled:true,
-        priceEditable:widget.priceEditable,totalEditable:widget.priceEditable,discountDraft:draftDiscount,showProductActions:false,
+        priceEditable:widget.priceEditable,totalEditable:widget.priceEditable,discountEditable:widget.saleScreen,discountDraft:draftDiscount,showProductActions:false,
         onChoose:() {},onDelete:() {},onChanged:()=>setState(() {})),
       if(widget.stockStream!=null) StreamBuilder<int?>(stream:widget.stockStream,builder:(context,snapshot)=>Text(
         'الكمية المتوفرة: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.data ?? 'جارٍ التحميل'}',style:TextStyle(color:staffApp ? Colors.redAccent : gold))),

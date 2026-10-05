@@ -36,6 +36,7 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
+    - assets/vip-logo.png
     - assets/tessdata_config.json
     - assets/tessdata/
     - assets/fonts/DejaVuSans.ttf

@@ -86,3 +86,31 @@ Future<void> printInvoiceBarcode(BuildContext context,String type,String id,Map<
     await Printing.layoutPdf(name:'$barcode.pdf',onLayout:(_)async=>bytes);
   }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر طباعة الباركود: $e',title:'طباعة الباركود',button:'تمام');}
 }
+
+
+final _requestedSeriesInit=<String,Future<void>>{};
+Future<void> initializeRequestedInvoiceSeries() {
+  final uid=FirebaseAuth.instance.currentUser!.uid;
+  return _requestedSeriesInit.putIfAbsent(uid,() async {
+    try {
+    final done=db.collection('settings').doc('vipSeries20261005');
+    if((await done.get(const GetOptions(source:Source.server))).exists)return;
+    // Number earlier invoices first, then seed only the next new invoice number.
+    await prepareInvoiceSerials('sales');await prepareInvoiceSerials('purchases');
+    await db.runTransaction((tx) async {
+      if((await tx.get(done)).exists)return;
+      final profile=(await tx.get(db.collection('users').doc(uid))).data();
+      if(profile?['role']!='owner' || profile?['active']!=true)throw StateError('تجهيز التسلسل متاح للمدير');
+      final sales=db.collection('settings').doc('invoiceCounter_sales'),purchases=db.collection('settings').doc('invoiceCounter_purchases');
+      final s=(await tx.get(sales)).data(),p=(await tx.get(purchases)).data();
+      final sn=requestedSeriesLast((s?['lastNumber'] as int?)??0,1223),pn=requestedSeriesLast((p?['lastNumber'] as int?)??0,431);
+      final sc=await tx.get(db.collection('settings').doc('invoiceSerialClaim_sales_${sn+1}'));
+      final pc=await tx.get(db.collection('settings').doc('invoiceSerialClaim_purchases_${pn+1}'));
+      if(sc.exists || pc.exists)throw StateError('الرقم المطلوب محجوز؛ راجع التسلسل');
+      final at=FieldValue.serverTimestamp();
+      tx.set(sales,{'lastNumber':sn,'updatedAt':at});tx.set(purchases,{'lastNumber':pn,'updatedAt':at});
+      tx.set(done,{'salesNext':sn+1,'purchasesNext':pn+1,'requestedSales':1223,'requestedPurchases':431,'actorId':uid,'createdAt':at});
+    });
+    } catch(e) {_requestedSeriesInit.remove(uid);rethrow;}
+  });
+}

@@ -23,3 +23,9 @@ Future<InvoiceSerialPlan> reserveInvoiceSerial(String type,String id,Future<Map<
   return InvoiceSerialPlan({'kind':'invoiceSerial_$type','invoiceType':type,'invoiceId':id,
     'internalNumber':n,'invoiceBarcode':invoiceBarcodeValue(type,n)},counter,marker,claim,false);
 }
+
+
+int requestedSeriesLast(int current,int first) {
+  if(current<0 || first<=0 || first>999999999)throw StateError('بداية التسلسل غير صحيحة');
+  return current>=first ? current : first-1;
+}

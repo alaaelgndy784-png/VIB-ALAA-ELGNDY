@@ -19,14 +19,14 @@ beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRulesDisab
     await setDoc(doc(db,'stock/main_p'+i),{branchId:'main',productId:'p'+i,quantity:10});
   }
 })});
-function saleBatch(db,{n=1,paid,customer=true,mutate=()=>{},omit='',saleId='sale',cashBefore=500,createCash=false}={}){
-  const items=Array.from({length:n},(_,i)=>({productId:'p'+i,productName:'Product'+i,quantity:2,unitPrice:12.35,lineTotal:24.70,purchasePriceAtSale:5}));
-  const total=n*24.70,payment=paid??total,due=total-payment;
+function saleBatch(db,{n=1,paid,customer=true,mutate=()=>{},omit='',saleId='sale',cashBefore=500,createCash=false,unitPrice=12.35}={}){
+  const items=Array.from({length:n},(_,i)=>({productId:'p'+i,productName:'Product'+i,quantity:2,unitPrice,lineTotal:unitPrice*2,purchasePriceAtSale:5}));
+  const total=n*unitPrice*2,payment=paid??total,due=total-payment;
   const s={id:saleId,branchId:'staffbranch',stockBranchId:'main',employeeId:'staff',customerId:customer?'customer':'',
     customerName:customer?'Customer':'',customerPhone:customer?'010':'',customerPreviousBalance:customer?100:0,
     customerBalanceAfter:customer?100+due:0,items,itemCount:n,stockIndex:Object.fromEntries(items.map((x,i)=>[x.productId,i])),
     total,paid:payment,due,cashBefore,cashAfter:cashBefore+payment,paymentStatus:due>0?'credit':'cash',status:'completed',createdAt:serverTimestamp(),requestKey:'test'};
-  if(n===1)Object.assign(s,{productId:'p0',productName:'Product0',quantity:2,unitPrice:12.35});
+  if(n===1)Object.assign(s,{productId:'p0',productName:'Product0',quantity:2,unitPrice});
   mutate(s);
   const batch=writeBatch(db);batch.set(doc(db,'sales/'+saleId),s);
   for(const x of items){
@@ -377,3 +377,39 @@ test('owner stock edits still work after employee purchase marker',async()=>{
  await enablePurchasing();await employeePurchase(env.authenticatedContext('staff').firestore());
  await assertSucceeds(setDoc(doc(env.authenticatedContext('owner').firestore(),'stock/main_p0'),{quantity:15},{merge:true}));
 });
+
+for(const n of [1,4])for(const paid of [0,10,undefined])test(`permitted employee price ${n} lines paid ${paid}`,async()=>{
+ await setDoc(doc(env.authenticatedContext('owner').firestore(),'users/staff'),{canEditSalePrice:true},{merge:true});
+ await assertSucceeds(saleBatch(env.authenticatedContext('staff').firestore(),{n,paid,unitPrice:15}));
+});
+test('unpermitted price change denied atomically',async()=>assertFails(saleBatch(env.authenticatedContext('staff').firestore(),{unitPrice:15})));
+test('revoked price permission and below cost both denied',async()=>{
+ const owner=env.authenticatedContext('owner').firestore(),staff=env.authenticatedContext('staff').firestore();
+ await setDoc(doc(owner,'users/staff'),{canEditSalePrice:true},{merge:true});
+ await assertFails(saleBatch(staff,{unitPrice:4}));
+ await setDoc(doc(owner,'users/staff'),{canEditSalePrice:false},{merge:true});
+ await assertFails(saleBatch(staff,{unitPrice:15}));
+ await assertFails(setDoc(doc(staff,'users/staff'),{canEditSalePrice:true},{merge:true}));
+});
+function datedReceipt(db,date,movementDate=date,createdAt=serverTimestamp()){
+ const b=writeBatch(db),ts=serverTimestamp();
+ b.set(doc(db,'receipts/r'),{customerId:'customer',customerName:'Customer',customerPhone:'010',amount:20,balanceBefore:100,balanceAfter:80,
+ cashBefore:500,cashAfter:520,actorId:'staff',actorName:'Staff',branchId:'staffbranch',note:'Chosen date',createdAt,receiptDate:date,customerMovementId:'rc',cashMovementId:'rk'});
+ b.update(doc(db,'customers/customer'),{balance:80,lastReceiptId:'r',updatedAt:ts});
+ b.update(doc(db,'settings/cash'),{balance:520,lastReceiptId:'r',updatedAt:ts});
+ for(const cash of [false,true])b.set(doc(db,'accountMovements/'+(cash?'rk':'rc')),{accountType:cash?'cash':'customers',accountId:'customer',accountName:'Customer',kind:cash?'customerCollection':'collection',amount:20,...(cash?{delta:20}:{}),balanceBefore:cash?500:100,balanceAfter:cash?520:80,referenceId:'r',reason:'',actorId:'staff',branchId:'staffbranch',createdAt:ts,receiptDate:movementDate});
+ return b.commit();
+}
+for(const date of ['2001-01-01T12:00:00Z','2030-12-31T20:00:00Z'])test('chosen receipt date '+date,async()=>{
+ const db=env.authenticatedContext('staff').firestore();await assertSucceeds(datedReceipt(db,new Date(date)));
+ assert.equal((await getDoc(doc(db,'receipts/r'))).data().receiptDate.toDate().toISOString(),new Date(date).toISOString());
+});
+for(const date of ['bad date',new Date('1999-12-31'),new Date('2101-01-01')])test('invalid receipt date '+date,async()=>assertFails(datedReceipt(env.authenticatedContext('staff').firestore(),date)));
+test('receipt ledger date mismatch denied',async()=>assertFails(datedReceipt(env.authenticatedContext('staff').firestore(),new Date('2026-10-02'),new Date('2026-10-03'))));
+test('choosing a date cannot forge immutable audit time',async()=>assertFails(datedReceipt(env.authenticatedContext('staff').firestore(),new Date('2026-10-02'),new Date('2026-10-02'),new Date('2026-10-02'))));
+
+for(const n of [1,4])test('staff percentage discount without manual price permission '+n,async()=>{
+ await assertSucceeds(saleBatch(env.authenticatedContext('staff').firestore(),{n,paid:10,unitPrice:12.35*.9,mutate:s=>s.items.forEach(x=>Object.assign(x,{basePrice:12.35,discountPercent:10}))}));
+});
+test('discount base cannot disguise unauthorized manual price',async()=>assertFails(saleBatch(env.authenticatedContext('staff').firestore(),{unitPrice:11,mutate:s=>Object.assign(s.items[0],{basePrice:15,discountPercent:10})})));
+test('invalid discount percentage rejected',async()=>assertFails(saleBatch(env.authenticatedContext('staff').firestore(),{mutate:s=>Object.assign(s.items[0],{discountPercent:-1})})));

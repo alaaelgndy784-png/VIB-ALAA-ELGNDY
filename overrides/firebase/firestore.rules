@@ -15,6 +15,11 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/receipts/$(id)).data.branchId == branch();
     }
     function receipt(id) { return getAfter(/databases/$(database)/documents/receipts/$(id)).data; }
+    function validReceiptDate(r) {
+      return r.get('receiptDate', r.createdAt) is timestamp
+        && r.get('receiptDate', r.createdAt) >= timestamp.date(2000,1,1)
+        && r.get('receiptDate', r.createdAt) < timestamp.date(2101,1,1);
+    }
     function validReceipt(id) {
       let r = request.resource.data;
       let c = get(/databases/$(database)/documents/customers/$(r.customerId)).data;
@@ -25,8 +30,8 @@ service cloud.firestore {
       let cm = getAfter(/databases/$(database)/documents/accountMovements/$(r.customerMovementId)).data;
       let km = getAfter(/databases/$(database)/documents/accountMovements/$(r.cashMovementId)).data;
       return r.keys().hasOnly(['customerId','customerName','customerPhone','amount','balanceBefore','balanceAfter',
-          'cashBefore','cashAfter','actorId','actorName','branchId','note','createdAt','customerMovementId','cashMovementId','invoiceId'])
-        && receiptInvoiceValid(r, id)
+          'cashBefore','cashAfter','actorId','actorName','branchId','note','createdAt','customerMovementId','cashMovementId','invoiceId','receiptDate'])
+        && receiptInvoiceValid(r, id) && validReceiptDate(r)
         && r.actorId == request.auth.uid && r.branchId == branch() && r.actorName == profile().name
         && r.createdAt == request.time && r.amount is number && r.amount > 0 && r.amount <= c.balance
         && c.get('active', true) == true && r.customerName == c.name && r.customerPhone == c.get('phone', '')
@@ -87,7 +92,7 @@ service cloud.firestore {
     function staffLine(s, i) {
       let x = s.items[i];
       let stock = getAfter(/databases/$(database)/documents/stock/$('main_' + x.productId)).data;
-      return x.keys().hasOnly(['productId','productName','quantity','unitPrice','lineTotal','purchasePriceAtSale'])
+      return x.keys().hasOnly(['productId','productName','quantity','unitPrice','lineTotal','purchasePriceAtSale','basePrice','discountPercent'])
         && natural(x.quantity) && x.quantity > 0 && x.quantity <= 1000000
         && moneyEqual(x.lineTotal, x.quantity * x.unitPrice)
         && s.stockIndex[x.productId] == i && stock.lastSaleId == s.id;
@@ -141,7 +146,8 @@ service cloud.firestore {
         && next.productId == resource.data.productId && x.productId == next.productId
         && next.diff(resource.data).affectedKeys().hasOnly(['quantity','lastSaleId'])
         && natural(next.quantity) && next.quantity == resource.data.quantity - x.quantity
-        && p.active == true && x.productName == p.name && x.unitPrice == p.price
+        && p.active == true && x.productName == p.name && (profile().get('canEditSalePrice', false) == true || (x.get('basePrice', p.price) == p.price && moneyEqual(x.unitPrice, p.price * (1 - x.get('discountPercent', 0) / 100))))
+        && x.get('discountPercent', 0) is number && x.get('discountPercent', 0) >= 0 && x.get('discountPercent', 0) <= 100
         && x.purchasePriceAtSale == p.get('purchasePrice', 0) && x.unitPrice >= p.get('purchasePrice', 0)
         && movement.actorId == request.auth.uid && movement.referenceId == next.lastSaleId
         && movement.productId == next.productId && movement.quantity == -x.quantity
@@ -362,7 +368,7 @@ service cloud.firestore {
     }
     match /receipts/{id} {
       allow read: if owner();
-      allow create: if owner() && receiptInvoiceValid(request.resource.data, id);
+      allow create: if owner() && receiptInvoiceValid(request.resource.data, id) && validReceiptDate(request.resource.data);
       allow get: if employee() && (!exists(/databases/$(database)/documents/receipts/$(id)) || resource.data.actorId == request.auth.uid);
       allow list: if employee() && resource.data.actorId == request.auth.uid;
       allow create: if employee() && validReceipt(id);
@@ -399,7 +405,8 @@ service cloud.firestore {
       allow create: if request.resource.data.kind == 'sale' && employee() && staffMoneyMovement(id);
       allow create: if request.resource.data.kind in ['collection','customerCollection'] && employee() && newReceipt(request.resource.data.referenceId)
         && request.resource.data.keys().hasOnly(['accountType','accountId','accountName','kind','amount','delta',
-          'balanceBefore','balanceAfter','referenceId','reason','actorId','branchId','createdAt'])
+          'balanceBefore','balanceAfter','referenceId','reason','actorId','branchId','createdAt','receiptDate'])
+        && request.resource.data.get('receiptDate', request.resource.data.createdAt) == receipt(request.resource.data.referenceId).get('receiptDate', receipt(request.resource.data.referenceId).createdAt)
         && request.resource.data.actorId == request.auth.uid && request.resource.data.branchId == branch()
         && request.resource.data.createdAt == request.time
         && request.resource.data.amount == receipt(request.resource.data.referenceId).amount

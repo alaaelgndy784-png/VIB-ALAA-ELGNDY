@@ -63,6 +63,7 @@ const _staffFirebaseAppId = '1:200962643703:android:fd5ac8ff4a1fae7c2c65f2';
 
 bool staffApp = false;
 final saleCostVisible = ValueNotifier<bool>(false);
+final salePriceEditable = ValueNotifier<bool>(false);
 Future<FirebaseOptions> _firebaseOptionsForThisApp() async {
   final packageName = (await PackageInfo.fromPlatform()).packageName;
   staffApp = packageName == 'com.alaa.vibsales.staffscan';
@@ -168,8 +169,13 @@ class Gate extends StatelessWidget {
           activeResetAt = data['resetAt'] as Timestamp?;
           final showCost = data['role']=='owner' || data['showSaleCost']==true;
           if(saleCostVisible.value!=showCost)WidgetsBinding.instance.addPostFrameCallback((_)=>saleCostVisible.value=showCost);
+          final editPrice=data['role']=='owner' || data['canEditSalePrice']==true;
+          if(salePriceEditable.value!=editPrice)WidgetsBinding.instance.addPostFrameCallback((_)=>salePriceEditable.value=editPrice);
           final home = Home(canPurchase:data['canPurchase']==true,key:ValueKey('${auth.data!.uid}:${data['role']}'), uid: auth.data!.uid, role: data['role'] as String, branchId: (data['branchId'] ?? '') as String, name: (data['name'] ?? '') as String);
-          return data['role'] == 'owner' ? OwnerSecurity(child: home) : home;
+          return data['role'] == 'owner' ? FutureBuilder<void>(future:initializeRequestedInvoiceSeries(),builder:(context,ready){
+            if(ready.hasError)return Scaffold(body:Center(child:Column(mainAxisSize:MainAxisSize.min,children:[Text('تعذر تجهيز تسلسل الفواتير: ${ready.error}'),FilledButton(onPressed:()=>FirebaseAuth.instance.signOut(),child:const Text('خروج وإعادة المحاولة'))])));
+            if(ready.connectionState!=ConnectionState.done)return const Scaffold(body:Center(child:CircularProgressIndicator()));
+            return OwnerSecurity(child:home);}) : home;
         },
       );
     },
@@ -486,7 +492,7 @@ class _HomeState extends State<Home> {
           backgroundColor: managerNavy,
           centerTitle: true,
           toolbarHeight: 78,
-          title: const Text('VIB', style: TextStyle(color: gold, fontWeight: FontWeight.w800, fontSize: 38, letterSpacing: 2)),
+          title:const Column(mainAxisSize:MainAxisSize.min,children:[Text('مبيعات شركة VIP',style:TextStyle(color:gold,fontWeight:FontWeight.w800,fontSize:22)),Text('ALAAELGNDY',style:TextStyle(color:gold,fontSize:14,letterSpacing:2))]),
           leading: const ChatShortcut(owner: true),
           actions: [
             Padding(padding: const EdgeInsetsDirectional.only(end: 12), child: IconButton.filledTonal(
@@ -499,7 +505,7 @@ class _HomeState extends State<Home> {
     }
 
     return Scaffold(
-      appBar: AppBar(title: Text('VIB | ${widget.name}'), actions: [
+      appBar: AppBar(toolbarHeight:78,title:const Column(mainAxisSize:MainAxisSize.min,children:[Text('مبيعات شركة VIP',style:TextStyle(color:gold,fontSize:20)),Text('ALAAELGNDY',style:TextStyle(color:gold,fontSize:13))]), actions: [
         const ChatShortcut(owner: false),
         if(widget.canPurchase) IconButton(tooltip:'المشتريات',icon:const Icon(Icons.post_add),onPressed:()=>openPage('مشتريات الموظف',const Purchases(owner:false))),
         IconButton(tooltip: 'خروج', onPressed: () => FirebaseAuth.instance.signOut(), icon: const Icon(Icons.logout)),
@@ -891,7 +897,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
       Future<void> editSelected(SaleLine row, {bool adding=false}) async {
         final product=productDoc(row.productId!).data();
         final result=await showInvoiceLineEditor(c,name:'${product['name'] ?? ''}',price:row.price,quantity:row.quantity,
-          discount:row.discount,priceEditable:owner,allowDelete:!adding,saleScreen:true,
+          discount:row.discount,priceEditable:owner || salePriceEditable.value,allowDelete:!adding,saleScreen:true,
           unitCost:product['purchasePrice'] as num?,stockStream:invoiceMainStock(row.productId!));
         if(!c.mounted) {if(adding) row.dispose();return;}
         if(result==InvoiceLineEditAction.apply) update(() {if(adding) lines.add(row);});
@@ -966,7 +972,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               return;
             }
             if (!checkout) {update(() => checkout=true);return;}
-            final entries = <({String id, String name, int qty, double price, double? cost})>[];
+            final entries = <({String id, String name, int qty, double price, double? cost, double discount, double basePrice})>[];
             double total = 0;
 
             for (final row in lines) {
@@ -983,7 +989,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 await showInvoiceSaveProblem(c, 'سعر ${p['name']} أقل من التكلفة');
                 return;
               }
-              entries.add((id: id, name: '${p['name'] ?? ''}', qty: qty, price: price, cost: cost));
+              entries.add((id: id, name: '${p['name'] ?? ''}', qty: qty, price:price,cost:cost,discount:row.discount.percent,basePrice:row.discount.baseCost ?? price));
               total += qty * price;
             }
 
@@ -1028,7 +1034,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 for (final e in entries) {
                   final product = (await tx.get(db.collection('products').doc(e.id))).data();
                   if (product == null || product['active'] != true) throw Exception('الصنف غير متاح');
-                  if (!owner && (product['price'] as num?)?.toDouble() != e.price) {
+                  if (!owner && actorProfile?['canEditSalePrice']!=true && ((product['price'] as num?)?.toDouble() != e.basePrice || (e.price-e.basePrice*(1-e.discount/100)).abs()>0.000001)) {
                     throw Exception('سعر الصنف اتغير؛ افتح الفاتورة من جديد');
                   }
                   final cost = (product['purchasePrice'] as num?)?.toDouble();
@@ -1063,7 +1069,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                     'productId': e.id,
                     'productName': '${liveProducts[e.id]!['name']}',
                     'quantity': e.qty,
-                    'unitPrice': e.price,
+                    'unitPrice':e.price,
+                    'basePrice':e.basePrice,'discountPercent':e.discount,
                     'lineTotal': lineTotal,
                     'purchasePriceAtSale': (liveProducts[e.id]!['purchasePrice'] as num?)?.toDouble() ?? 0,
                   });
@@ -1970,11 +1977,12 @@ class PurchaseInvoiceLine extends StatefulWidget {
   final bool enabled;
   final bool priceEditable;
   final bool totalEditable;
+  final bool discountEditable;
   final bool showProductActions;
   final PurchaseDiscountDraft? discountDraft;
   final VoidCallback onChoose, onDelete, onChanged;
   const PurchaseInvoiceLine({super.key, required this.number, required this.name, required this.cost,
-    required this.quantity, required this.enabled, required this.onChoose, required this.onDelete, required this.onChanged,this.priceEditable = true,this.totalEditable = false,this.discountDraft,this.showProductActions=true});
+    required this.quantity, required this.enabled, required this.onChoose, required this.onDelete, required this.onChanged,this.priceEditable = true,this.totalEditable = false,this.discountEditable=false,this.discountDraft,this.showProductActions=true});
   @override
   State<PurchaseInvoiceLine> createState() => _PurchaseInvoiceLineState();
 }
@@ -2117,29 +2125,29 @@ class _PurchaseInvoiceLineState extends State<PurchaseInvoiceLine> {
           const SizedBox(width: 5), Expanded(flex: 4, child: widget.totalEditable ? TextField(
             controller: _total, enabled: enabled && priceEditable, textAlign: TextAlign.center,
             onTapAlwaysCalled:true,onTap:()=>selectInvoiceNumberText(_total),
-            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: gold),
+            style:TextStyle(fontSize:13,fontWeight:FontWeight.bold,color:staffApp ? Colors.white : gold),
             keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: InputDecoration(labelText: 'الإجمالي', errorText: _totalError,
+            decoration: InputDecoration(filled:staffApp,fillColor:staffApp ? const Color(0xFF1565C0) : null,labelText: 'الإجمالي', errorText: _totalError,
               floatingLabelBehavior: FloatingLabelBehavior.always, labelStyle: const TextStyle(fontSize: 11),
               isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
               border: const OutlineInputBorder()), onChanged: _costFromTotal,
-          ) : Column(children: [
+          ) : Container(padding:const EdgeInsets.all(5),decoration:BoxDecoration(color:staffApp ? const Color(0xFF1565C0) : null,borderRadius:BorderRadius.circular(5)),child:Column(children: [
             const Text('الإجمالي', style: TextStyle(fontSize: 11)),
             FittedBox(fit: BoxFit.scaleDown, child: Text(total.toStringAsFixed(2),
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: gold))),
-          ])),
+              style:TextStyle(fontSize:14,fontWeight:FontWeight.bold,color:staffApp ? Colors.white : gold))),
+          ]))),
         ]),
-        if(widget.totalEditable) Padding(padding:const EdgeInsets.only(top:6),child:Row(children:[
-          IconButton(tooltip:'تقليل نسبة الخصم',onPressed:enabled && priceEditable ? ()=>_stepDiscount(-1) : null,
+        if(widget.totalEditable || widget.discountEditable) Padding(padding:const EdgeInsets.only(top:6),child:Row(children:[
+          IconButton(tooltip:'تقليل نسبة الخصم',onPressed:enabled && (priceEditable || widget.discountEditable) ? ()=>_stepDiscount(-1) : null,
             constraints:const BoxConstraints.tightFor(width:32,height:32),padding:EdgeInsets.zero,
             icon:const Icon(Icons.remove,size:18,color:gold)),
-          Expanded(child:TextField(controller:_discount,enabled:enabled && priceEditable,textAlign:TextAlign.center,
+          Expanded(child:TextField(controller:_discount,enabled:enabled && (priceEditable || widget.discountEditable),textAlign:TextAlign.center,
             onTapAlwaysCalled:true,onTap:()=>selectInvoiceNumberText(_discount),
             keyboardType:const TextInputType.numberWithOptions(decimal:true),style:const TextStyle(fontSize:12),
             decoration:InputDecoration(labelText:'خصم %',errorText:_discountError,isDense:true,
               floatingLabelBehavior:FloatingLabelBehavior.always,contentPadding:const EdgeInsets.symmetric(horizontal:5,vertical:7),
               border:const OutlineInputBorder()),onChanged:_applyDiscount)),
-          IconButton(tooltip:'زيادة نسبة الخصم',onPressed:enabled && priceEditable ? ()=>_stepDiscount(1) : null,
+          IconButton(tooltip:'زيادة نسبة الخصم',onPressed:enabled && (priceEditable || widget.discountEditable) ? ()=>_stepDiscount(1) : null,
             constraints:const BoxConstraints.tightFor(width:32,height:32),padding:EdgeInsets.zero,
             icon:const Icon(Icons.add,size:18,color:gold)),
         ])),
@@ -2491,6 +2499,7 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
   bool canPrint = data['canPrint'] == true;
   bool canPurchase=data['canPurchase']==true;
   bool showSaleCost=data['showSaleCost']==true;
+  bool canEditSalePrice=data['canEditSalePrice']==true;
   await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(
     builder: (c, setDialogState) => AlertDialog(
       title: const Text('صلاحيات الموظف'),
@@ -2502,6 +2511,7 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
           onChanged: (v) { if (v != null) setDialogState(() => selected = v); }),
         SwitchListTile(title: const Text('تفعيل الدخول'), value: enabled,
           onChanged: (v) => setDialogState(() => enabled = v)),
+        SwitchListTile(title:const Text('السماح بتعديل سعر البيع'),value:canEditSalePrice,onChanged:(v)=>setDialogState(()=>canEditSalePrice=v)),
         SwitchListTile(title:const Text('إظهار سعر التكلفة في شاشة البيع'),value:showSaleCost,onChanged:(v)=>setDialogState(()=>showSaleCost=v)),
         SwitchListTile(title:const Text('السماح بعمل فواتير مشتريات'),value:canPurchase,onChanged:(v)=>setDialogState(()=>canPurchase=v)),
         SwitchListTile(title: const Text('السماح بطباعة الفواتير'), value: canPrint,
@@ -2513,7 +2523,7 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
           try {
             await db.collection('users').doc(uid).update({
               'name': name.text.trim(), 'role': 'employee', 'branchId': selected,
-              'active': enabled, 'canPrint': canPrint, 'canPurchase':canPurchase, 'showSaleCost':showSaleCost,
+              'active': enabled, 'canPrint': canPrint, 'canPurchase':canPurchase, 'showSaleCost':showSaleCost, 'canEditSalePrice':canEditSalePrice,
             });
             if (c.mounted) Navigator.pop(c);
           } catch (_) {
@@ -2591,15 +2601,15 @@ class ReceiptVouchers extends StatelessWidget {
           if (snapshot.hasError) return const Center(child: Text('تعذر تحميل سندات القبض؛ تحقق من الاتصال وصلاحيات الحساب'));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           final rows = snapshot.data!.docs.where((d) => visibleAfterReset(d.data())).toList()
-            ..sort((a, b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
-              .compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+            ..sort((a, b) => ((receiptEffectiveTimestamp(b.data()) as Timestamp?)?.millisecondsSinceEpoch ?? 0)
+              .compareTo((receiptEffectiveTimestamp(a.data()) as Timestamp?)?.millisecondsSinceEpoch ?? 0));
           if (rows.isEmpty) return const Center(child: Text('لا توجد سندات قبض بعد'));
           return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
             final row = rows[index], data = row.data();
             return Card(child: ListTile(
               leading: const Icon(Icons.payments_outlined, color: gold),
               title: Text('${data['customerName']} • ${data['amount']} ج.م'),
-              subtitle: Text('سند: ${row.id}\n${formatDate(data['createdAt'])} • ${data['actorName'] ?? ''}\nالرصيد بعد القبض: ${data['balanceAfter']} ج.م'),
+              subtitle: Text('سند: ${row.id}\n${formatDate(receiptEffectiveTimestamp(data))} • ${data['actorName'] ?? ''}\nالرصيد بعد القبض: ${data['balanceAfter']} ج.م'),
               isThreeLine: true,
               trailing: IconButton(tooltip: 'طباعة / حفظ PDF', icon: const Icon(Icons.picture_as_pdf),
                 onPressed: () => printReceiptVoucher(context, row.id, data)),
@@ -2640,7 +2650,7 @@ ReceiptDayReport summarizeReceiptBetween(List<Map<String,dynamic>> receipts,Date
   final groups = <String, List<Map<String, dynamic>>>{};
   var totalCents = 0, count = 0;
   for (final receipt in receipts) {
-    final stamp = receipt['createdAt'];
+    final stamp = receiptEffectiveTimestamp(receipt);
     if (stamp is! Timestamp) continue;
     final at = stamp.toDate().toLocal();
     if (at.isBefore(start) || !at.isBefore(end)) continue;
@@ -2657,7 +2667,7 @@ ReceiptDayReport summarizeReceiptBetween(List<Map<String,dynamic>> receipts,Date
   }
   final customers = groups.entries.map((entry) {
     final rows = entry.value..sort((a, b) {
-      final order = (a['createdAt'] as Timestamp).compareTo(b['createdAt'] as Timestamp);
+      final order = receiptEffectiveTimestamp(a)!.compareTo(receiptEffectiveTimestamp(b)!);
       return order != 0 ? order : '${a['id']}'.compareTo('${b['id']}');
     });
     return ReceiptCustomerTotal('${rows.last['customerId'] ?? ''}',
@@ -2669,6 +2679,8 @@ ReceiptDayReport summarizeReceiptBetween(List<Map<String,dynamic>> receipts,Date
   });
   return ReceiptDayReport(customers, count, totalCents);
 }
+
+Timestamp? receiptEffectiveTimestamp(Map<String,dynamic> row)=>(row['receiptDate'] ?? row['createdAt']) as Timestamp?;
 
 String receiptReportMoney(int cents) => '${(cents / 100).toStringAsFixed(2)} ج.م';
 
@@ -2733,7 +2745,7 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                   title: Text(customer.name),
                   subtitle: Text('إجمالي السداد: ${receiptReportMoney(customer.amountCents)} • ${customer.receipts.length} سند'),
                   children: customer.receipts.map((row) => ListTile(
-                    title: Text('${DateFormat('dd/MM/yyyy HH:mm').format(tz.TZDateTime.from((row['createdAt'] as Timestamp).toDate(),tz.getLocation('Africa/Cairo')))} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
+                    title: Text('${DateFormat('dd/MM/yyyy HH:mm').format(tz.TZDateTime.from(receiptEffectiveTimestamp(row)!.toDate(),tz.getLocation('Africa/Cairo')))} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
                     subtitle: Text('سند: ${row['id']}\nالمحصّل: ${row['actorName'] ?? ''}${'${row['note'] ?? ''}'.isEmpty ? '' : '\n${row['note']}'}'),
                   )).toList(),
                 ));
@@ -2745,7 +2757,7 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
 }
 
 String receiptReportStamp(Map<String,dynamic> row,DateTime? to) {
-  final at=(row['createdAt'] as Timestamp).toDate();
+  final at=receiptEffectiveTimestamp(row)!.toDate();
   return to==null ? DateFormat('HH:mm').format(at.toLocal()) : DateFormat('dd/MM/yyyy HH:mm').format(tz.TZDateTime.from(at,tz.getLocation('Africa/Cairo')));
 }
 
@@ -2832,7 +2844,8 @@ Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, Rece
 }
 
 Future<void> createReceiptVoucher(BuildContext context, String branchId, {String? initialCustomerId}) async {
-  final amount = TextEditingController(), note = TextEditingController(), invoiceNumber = TextEditingController();
+  final amount = TextEditingController(), note = TextEditingController();
+  DateTime selectedReceiptDate=tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
   // Reuse this ID on transaction retries and after an uncertain network response.
   final receiptRef = db.collection('receipts').doc();
   final customerMovement = db.collection('accountMovements').doc();
@@ -2856,8 +2869,13 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
         TextField(controller: amount, enabled: !saving,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
           decoration: const InputDecoration(labelText: 'المبلغ المقبوض')),
-        TextField(controller: invoiceNumber, enabled: !saving, decoration: const InputDecoration(labelText: 'رقم فاتورة المبيعات المرتبطة بالسند (اختياري)')),
-        const Text('تحديد الفاتورة يمنع تعديلها. السند العام يُحتسب على رصيد العميل، وتحتاج فواتيره السابقة مراجعة قبل التعديل.'),
+        OutlinedButton.icon(icon:const Icon(Icons.calendar_month),label:Text('تاريخ ووقت السداد: ${DateFormat('dd/MM/yyyy HH:mm').format(selectedReceiptDate)}'),
+          onPressed:saving ? null : () async {
+            final day=await showDatePicker(context:dialog,initialDate:selectedReceiptDate,firstDate:DateTime(2000),lastDate:DateTime(2100));
+            if(day==null || !dialog.mounted)return;
+            final time=await showTimePicker(context:dialog,initialTime:TimeOfDay.fromDateTime(selectedReceiptDate));
+            if(time!=null && dialog.mounted)update(()=>selectedReceiptDate=tz.TZDateTime(tz.getLocation('Africa/Cairo'),day.year,day.month,day.day,time.hour,time.minute));
+          }),
         TextField(controller: note, enabled: !saving, decoration: const InputDecoration(labelText: 'البيان / ملاحظات')),
         const SizedBox(height: 12),
         const Text('يُخصم المبلغ من مديونية العميل ويُضاف للصندوق عند حفظ السند.'),
@@ -2867,9 +2885,6 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
         FilledButton(onPressed: saving ? null : () async {
           final paid = double.tryParse(amount.text.trim());
           final id = customerId;
-          if (invoiceNumber.text.trim().contains('/')) {
-            ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content: Text('رقم الفاتورة غير صحيح'))); return;
-          }
           if (id == null || paid == null || !paid.isFinite || paid <= 0) {
             ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content: Text('اختر العميل واكتب مبلغًا صحيحًا أكبر من صفر')));
             return;
@@ -2878,7 +2893,7 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
           try {
             final actor = FirebaseAuth.instance.currentUser!.uid;
             final profile = (await db.collection('users').doc(actor).get()).data();
-            final linkedInvoiceId=await resolveInvoiceNumber('sales',invoiceNumber.text.trim());
+            final receiptDate=Timestamp.fromDate(selectedReceiptDate);
             await db.runTransaction((tx) async {
               final existing = await tx.get(receiptRef);
               if (existing.exists) return;
@@ -2890,24 +2905,13 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
               final balance = (customer.data()?['balance'] as num?)?.toDouble() ?? 0;
               if (paid > balance) throw Exception('المبلغ أكبر من المديونية الحالية للعميل');
               final beforeCash = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
-              final invoiceId = linkedInvoiceId;
-              final invoiceRef = invoiceId.isEmpty ? null : db.collection('sales').doc(invoiceId);
-              final invoice = invoiceRef == null ? null : (await tx.get(invoiceRef)).data();
-              if (invoiceRef != null && (invoice == null || invoice['customerId'] != id || invoice['status'] != 'completed')) {
-                throw Exception('الفاتورة غير موجودة أو لا تخص العميل المختار');
-              }
-              if (invoice != null && paid > ((invoice['due'] as num?)?.toDouble() ?? 0) - ((invoice['receiptPaid'] as num?)?.toDouble() ?? 0) + 0.000001) {
-                throw Exception('المبلغ أكبر من المتبقي غير المحصّل في الفاتورة');
-              }
               final now = FieldValue.serverTimestamp();
-              if (invoiceRef != null) tx.update(invoiceRef, {'receiptId': receiptRef.id,
-                'receiptPaid': ((invoice!['receiptPaid'] as num?)?.toDouble() ?? 0) + paid});
               final customerName = '${customer.data()?['name'] ?? ''}';
               tx.update(customerRef, {'balance': balance - paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now});
               tx.set(cashRef, {'balance': beforeCash + paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now}, SetOptions(merge: true));
               tx.set(receiptRef, {
                 'customerId': id, 'customerName': customerName, 'customerPhone': '${customer.data()?['phone'] ?? ''}',
-                if (invoiceNumber.text.trim().isNotEmpty) 'invoiceId': linkedInvoiceId,
+                'receiptDate':receiptDate,
                 'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
                 'cashBefore': beforeCash, 'cashAfter': beforeCash + paid,
                 'actorId': actor, 'actorName': '${profile?['name'] ?? ''}', 'branchId': branchId,
@@ -2917,12 +2921,12 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
               tx.set(customerMovement, {
                 'accountType': 'customers', 'accountId': id, 'accountName': customerName, 'kind': 'collection',
                 'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
-                'referenceId': receiptRef.id, 'actorId': actor, 'branchId': branchId, 'createdAt': now,
+                'referenceId': receiptRef.id, 'actorId': actor, 'branchId': branchId, 'createdAt': now, 'receiptDate':receiptDate,
               });
               tx.set(cashMovement, {
                 'accountType': 'cash', 'accountId': id, 'accountName': customerName, 'kind': 'customerCollection',
                 'amount': paid, 'delta': paid, 'balanceBefore': beforeCash, 'balanceAfter': beforeCash + paid,
-                'referenceId': receiptRef.id, 'reason': 'سند قبض من عميل', 'actorId': actor, 'branchId': branchId, 'createdAt': now,
+                'referenceId': receiptRef.id, 'reason': 'سند قبض من عميل', 'actorId': actor, 'branchId': branchId, 'createdAt': now, 'receiptDate':receiptDate,
               });
             });
             if (dialog.mounted) Navigator.pop(dialog);
@@ -2939,7 +2943,6 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
   ));
   amount.dispose();
   note.dispose();
-  invoiceNumber.dispose();
 }
 
 Future<void> printReceiptVoucher(BuildContext context, String id, Map<String, dynamic> data) async {
@@ -2953,7 +2956,7 @@ Future<void> printReceiptVoucher(BuildContext context, String id, Map<String, dy
           pw.SizedBox(height: 16), pw.Text('سند قبض', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 20)),
           pw.SizedBox(height: 20),
           for (final line in [
-            'رقم السند: $id', 'التاريخ: ${formatDate(data['createdAt'])}',
+            'رقم السند: $id', 'التاريخ: ${formatDate(receiptEffectiveTimestamp(data))}',
             'استلمنا من: ${data['customerName']}', 'الهاتف: ${data['customerPhone'] ?? ''}',
             'المبلغ: ${data['amount']} ج.م', 'رصيد العميل قبل القبض: ${data['balanceBefore']} ج.م',
             'رصيد العميل بعد القبض: ${data['balanceAfter']} ج.م',
@@ -3124,7 +3127,7 @@ Future<void> createSupplierPaymentVoucher(BuildContext context, {String? initial
 
 Future<Uint8List> createSupplierPaymentVoucherPdf(String id, Map<String,dynamic> data, pw.Font font, {bool thermal = false}) async {
   final pdf = pw.Document();
-  final lines = ['رقم السند: $id', 'التاريخ: ${formatDate(data['createdAt'])}', 'صرفنا إلى المورد: ${data['accountName'] ?? ''}', 'الهاتف: ${data['supplierPhone'] ?? ''}', 'المبلغ المصروف: ${data['amount']} ج.م', 'رصيد المورد قبل السداد: ${data['balanceBefore']} ج.م', 'الباقي عليك للمورد بعد السداد: ${data['balanceAfter']} ج.م', 'الصندوق قبل الصرف: ${data['cashBefore'] ?? 'غير مسجل'} ج.م', 'الصندوق بعد الصرف: ${data['cashAfter'] ?? 'غير مسجل'} ج.م', 'المسؤول: ${data['actorName'] ?? data['actorId'] ?? ''}', 'البيان: ${data['note'] ?? ''}'];
+  final lines = ['رقم السند: $id', 'التاريخ: ${formatDate(receiptEffectiveTimestamp(data))}', 'صرفنا إلى المورد: ${data['accountName'] ?? ''}', 'الهاتف: ${data['supplierPhone'] ?? ''}', 'المبلغ المصروف: ${data['amount']} ج.م', 'رصيد المورد قبل السداد: ${data['balanceBefore']} ج.م', 'الباقي عليك للمورد بعد السداد: ${data['balanceAfter']} ج.م', 'الصندوق قبل الصرف: ${data['cashBefore'] ?? 'غير مسجل'} ج.م', 'الصندوق بعد الصرف: ${data['cashAfter'] ?? 'غير مسجل'} ج.م', 'المسؤول: ${data['actorName'] ?? data['actorId'] ?? ''}', 'البيان: ${data['note'] ?? ''}'];
   final widgets = <pw.Widget>[
     pw.Text('VIB للتجارة والتوزيع',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:thermal ? 14 : 22)),
     pw.SizedBox(height:12),pw.Text('سند صرف لمورد',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:thermal ? 16 : 20,fontWeight:pw.FontWeight.bold)),
@@ -3691,7 +3694,7 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
     if (type != 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.playlist_add, color: gold), title: const Text('تعديل فاتورة مشتريات — إضافة أو تعديل أصناف'), onTap: () { Navigator.pop(c); appendInvoiceDialog(context, type, id, replacePurchase: true); }),
     if(canPrint && data['internalNumber'] is int)ListTile(leading:const Icon(Icons.qr_code,color:gold),title:const Text('طباعة باركود الفاتورة'),onTap:(){Navigator.pop(c);printInvoiceBarcode(context,type,id,data);}),
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
-    if (type == 'sales' && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال للزبون على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
+    if (type == 'sales') ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال الفاتورة PDF على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
     if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
   ])));
 }
@@ -4010,32 +4013,14 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
   }
 }
 
-Future<void> sendInvoiceWhatsApp(BuildContext context, String id, Map<String, dynamic> data) async {
-  var phone = '${data['customerPhone'] ?? ''}'.replaceAll(RegExp(r'\D'), '');
-  if (phone.startsWith('0')) phone = '20${phone.substring(1)}';
-  if (phone.startsWith('00')) phone = phone.substring(2);
-
-  final lines = <String>[];
-  final rawItems = (data['items'] as List?) ?? const [];
-  if (rawItems.isNotEmpty) {
-    for (var i = 0; i < rawItems.length; i++) {
-      final item = rawItems[i];
-      if (item is Map) {
-        lines.add('${i + 1}- ${item['productName'] ?? ''} × ${item['quantity'] ?? 0} = ${item['lineTotal'] ?? 0} ج.م');
-      }
-    }
-  } else {
-    lines.add('1- ${data['productName'] ?? ''} × ${data['quantity'] ?? 0} = ${data['total'] ?? 0} ج.م');
-  }
-
-  final message = 'فاتورة مبيعات VIB رقم $id\n${lines.join('\n')}\nالإجمالي: ${data['total'] ?? 0} ج.م\nالمدفوع: ${data['paid'] ?? data['total'] ?? 0} ج.م\nالباقي: ${data['due'] ?? 0} ج.م\nشكراً لتعاملكم معنا';
-  final uri = Uri.parse('https://wa.me/$phone?text=${Uri.encodeComponent(message)}');
-  if (!await launchUrl(uri, mode: LaunchMode.externalApplication) && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تعذر فتح واتساب')));
-  }
+Future<void> sendInvoiceWhatsApp(BuildContext context,String id,Map<String,dynamic> data) => shareInvoicePdfForWhatsApp(context,'sales',id,data);
+Future<void> shareInvoicePdfForWhatsApp(BuildContext context,String type,String id,Map<String,dynamic> data) async {
+  final paper=await showModalBottomSheet<String>(context:context,builder:(sheet)=>SafeArea(child:Wrap(children:[
+    const ListTile(title:Text('إرسال فاتورة PDF على واتساب')),
+    for(final choice in [('a4','فاتورة A4'),('80','فاتورة 80 مللي')])ListTile(leading:const Icon(Icons.picture_as_pdf),title:Text(choice.$2),onTap:()=>Navigator.pop(sheet,choice.$1)),
+  ])));
+  if(paper!=null && context.mounted)await exportInvoicePdf(context,type,id,data,paperChoice:paper);
 }
-
-
 
 
 class InvoiceSaveButtonLabel extends StatelessWidget {
@@ -4098,7 +4083,7 @@ class InvoiceSavedDialog extends StatelessWidget {
           icon: const Icon(Icons.print), label: const Text('طباعة الفاتورة — A4 أو 80 مللي')),
         const SizedBox(height: 10),
         OutlinedButton.icon(onPressed: () => Navigator.pop(context, 'share'),
-          icon: const Icon(Icons.share), label: const Text('مشاركة PDF / إرسال على واتساب')),
+          icon: const Icon(Icons.share), label: const Text('إرسال الفاتورة PDF على واتساب')),
         const SizedBox(height: 8),
         const Text('لإرسال الملف اختَر واتساب ثم العميل من قائمة المشاركة.', textAlign: TextAlign.center),
       ]),
@@ -4115,7 +4100,7 @@ Future<void> showInvoiceSavedActions(BuildContext context, String type, String i
       builder: (_) => Directionality(textDirection: TextDirection.rtl, child: InvoiceSavedDialog(invoiceId: invoiceDisplayNumber(type,id,data))));
     if (!context.mounted) return;
     if (action == 'print') await selectInvoicePaper(context, type, id, data);
-    if (action == 'share') await exportInvoicePdf(context, type, id, data);
+    if (action == 'share') await shareInvoicePdfForWhatsApp(context,type,id,data);
   } catch (_) {
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('الفاتورة محفوظة بالفعل. يمكنك طباعتها أو مشاركة PDF من قائمة الفواتير.')));
@@ -4146,7 +4131,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
     logoBytes = base64Decode('${settings['logoBase64'] ?? ''}');
     if (logoBytes.isEmpty) throw const FormatException('No custom logo');
   } catch (_) {
-    logoBytes = (await rootBundle.load('assets/icons/manager/mipmap-xxxhdpi/ic_launcher.png')).buffer.asUint8List();
+    logoBytes = (await rootBundle.load('assets/vip-logo.png')).buffer.asUint8List();
   }
   final logo = pw.MemoryImage(logoBytes), pdf = pw.Document();
   final isSale = type == 'sales';
@@ -4160,7 +4145,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   String configured(String key, String fallback) {
     final value = '${settings[key] ?? ''}'.trim(); return value.isEmpty ? fallback : value;
   }
-  final company = configured('companyName', 'VIB للتجارة والتوزيع');
+  const company='مبيعات شركة VIP';
   final address = configured('address', '');
   final taxNumber = configured('taxNumber', ''), commercialRegister = configured('commercialRegister', '');
   final phones = ['phone', 'phone2', 'whatsapp'].map((key) => configured(key, '')).where((x) => x.isNotEmpty).toSet().toList();
@@ -4187,129 +4172,17 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
       liveSupplierBalance = true;
     } catch (_) { /* Keep missing historical balances explicit instead of printing zero. */ }
   }
-  if (!thermal) return createStyledA4InvoicePdf(font: font, logo: logo, isSale: isSale,
+  return createStyledA4InvoicePdf(font: font, logo: logo, isSale: isSale,
     number: number, barcode: barcode, data: data, items: items, company: company,
     address: address, taxNumber: taxNumber, commercialRegister: commercialRegister,
     phones: phones, footer: footer, supplierBalance: supplierBalance,
-    liveSupplierBalance: liveSupplierBalance);
-  final format = thermal ? (narrow ? PdfPageFormat(58 * PdfPageFormat.mm, double.infinity) : PdfPageFormat.roll80) : PdfPageFormat.a4;
-  pw.Text text(String value, {double? fontSize, bool bold = false, PdfColor? color, pw.TextAlign align = pw.TextAlign.right}) =>
-    pw.Text(value, textAlign: align, style: pw.TextStyle(fontSize: fontSize ?? size,
-      fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal, color: color ?? PdfColors.black));
-  pw.Widget identifier(String label, String value) => pw.Row(children: [
-    text('$label: '),
-    pw.Directionality(textDirection: pw.TextDirection.ltr,
-      child: text(value, align: pw.TextAlign.left)),
-  ]);
-  pw.Widget brand() => pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-    pw.Center(child: pw.Image(logo, width: thermal ? 38 : 62, height: thermal ? 38 : 62)),
-    pw.SizedBox(height: 6), text(company, fontSize: thermal ? 12 : 22, bold: true, color: navy, align: pw.TextAlign.center),
-    pw.SizedBox(height: 3), text('ALAA ELGNDY', fontSize: thermal ? 8 : 11, color: accent, align: pw.TextAlign.center),
-    if (address.isNotEmpty) ...[pw.SizedBox(height: 4), text('العنوان: $address', fontSize: size, align: pw.TextAlign.center)],
-    if (!thermal && (taxNumber.isNotEmpty || commercialRegister.isNotEmpty)) ...[
-      pw.SizedBox(height: 6), pw.Row(children: [
-        if (taxNumber.isNotEmpty) pw.Expanded(child: identifier('رقم البطاقة الضريبية', taxNumber)),
-        if (commercialRegister.isNotEmpty) pw.Expanded(child: identifier('رقم السجل التجاري', commercialRegister)),
-      ]),
-    ],
-    if (phones.isNotEmpty) ...[pw.SizedBox(height: 4), pw.Wrap(alignment: pw.WrapAlignment.center, spacing: 10, runSpacing: 3,
-      children: phones.map((phone) => pw.Directionality(textDirection: pw.TextDirection.ltr, child: text(phone, fontSize: size, align: pw.TextAlign.center))).toList())],
-    pw.SizedBox(height: thermal ? 7 : 12), pw.Divider(color: accent, thickness: thermal ? .7 : 1.5),
-  ]);
-  pw.Widget detail(String label, String value) => pw.Padding(padding: const pw.EdgeInsets.only(bottom: 4),
-    child: text('$label: $value', fontSize: size));
-  pw.Widget summaryRow(String label, dynamic value, {bool strong = false}) => pw.Container(
-    padding: const pw.EdgeInsets.symmetric(vertical: 6),
-    decoration: pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: accent, width: .4))), child: pw.Row(children: [
-      pw.Expanded(child: text(label, bold: strong)),
-      text('${money(value)} ج.م', bold: strong, fontSize: strong ? size + 2 : size),
-    ]));
-  final table = pw.Table(columnWidths: {0: const pw.FlexColumnWidth(1.5), 1: const pw.FlexColumnWidth(1.4),
-      2: const pw.FlexColumnWidth(.8), 3: const pw.FlexColumnWidth(4), 4: const pw.FlexColumnWidth(.5)},
-    border: pw.TableBorder.all(color: accent, width: .6),
-    children: [
-      pw.TableRow(repeat: true, decoration: pw.BoxDecoration(color: navy), children: ['الإجمالي', 'العدد', 'السعر', 'المنتج', 'م']
-        .map((v) => pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 9),
-          child: text(v, bold: true, color: PdfColors.white, align: pw.TextAlign.center))).toList()),
-      for (var i = 0; i < items.length; i++) pw.TableRow(decoration: pw.BoxDecoration(color: i.isEven ? pale : PdfColors.white),
-        children: [money(lineTotal(items[i])), '${items[i]['quantity'] ?? 0}', money(unit(items[i])), '${items[i]['productName'] ?? ''}', '${i + 1}']
-          .map((v) => pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 9),
-            child: text(v, align: pw.TextAlign.center))).toList()),
-    ]);
-  final content = <pw.Widget>[
-      brand(),
-      pw.Container(padding: pw.EdgeInsets.all(thermal ? 6 : 12), decoration: pw.BoxDecoration(color: pale,
-        border: pw.Border.all(color: thermal ? PdfColors.grey500 : accent, width: .7), borderRadius: pw.BorderRadius.circular(thermal ? 3 : 8)),
-        child: text(isSale ? 'فاتورة مبيعات' : 'فاتورة مشتريات', fontSize: thermal ? 13 : 20, bold: true, color: navy, align: pw.TextAlign.center)),
-      pw.SizedBox(height: 10), detail('رقم الفاتورة', number),
-      if(!isSale && '${data['invoiceNumber']??''}'.trim().isNotEmpty)detail('رقم فاتورة المورد','${data['invoiceNumber']}'),
-      if(barcode.isNotEmpty)pw.Padding(padding:const pw.EdgeInsets.symmetric(vertical:8),child:pw.BarcodeWidget(barcode:pw.Barcode.code128(),data:barcode,width:thermal?130:220,height:thermal?38:50,drawText:true,textStyle:const pw.TextStyle(fontSize:8))),
-      detail('التاريخ', formatDate(data['createdAt'])),
-      if (isSale) detail('العميل', '${data['customerName'] ?? ''}'.trim().isEmpty ? 'بيع نقدي' : '${data['customerName']}'),
-      if (isSale && '${data['customerPhone'] ?? ''}'.trim().isNotEmpty) detail('هاتف العميل', '${data['customerPhone']}'),
-      if (!isSale) detail('المورد', '${data['supplierName'] ?? ''}'),
-      if (!isSale && '${data['supplierPhone'] ?? ''}'.trim().isNotEmpty) detail('هاتف المورد', '${data['supplierPhone']}'),
-      pw.SizedBox(height: 8),
-      if (thermal) ...[
-        for (var i = 0; i < items.length; i++) pw.Container(padding: const pw.EdgeInsets.symmetric(vertical: 6),
-          decoration: const pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(color: PdfColors.grey400, width: .5))),
-          child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-            text('${i + 1}. ${items[i]['productName'] ?? ''}', bold: true), pw.SizedBox(height: 4),
-            pw.Row(children: [pw.Expanded(child: text('${items[i]['quantity'] ?? 0} × ${money(unit(items[i]))}')),
-              text('${money(lineTotal(items[i]))} ج.م', bold: true)]),
-          ])),
-      ] else table,
-      pw.SizedBox(height: 12),
-      pw.Container(padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 5), decoration: pw.BoxDecoration(color: pale,
-        border: pw.Border.all(color: PdfColors.grey400, width: .6), borderRadius: pw.BorderRadius.circular(6)),
-        child: pw.Column(children: [
-          summaryRow('إجمالي الفاتورة', total, strong: true),
-          if (isSale && data.containsKey('customerPreviousBalance'))
-            summaryRow('الرصيد السابق', data['customerPreviousBalance']),
-          if (isSale && data.containsKey('customerPreviousBalance'))
-            summaryRow('الإجمالي المستحق', (data['customerPreviousBalance'] as num).toDouble() + total),
-          if (!isSale && data.containsKey('supplierPreviousBalance'))
-            summaryRow('الرصيد السابق للمورد', data['supplierPreviousBalance']),
-          if (!isSale && data.containsKey('supplierPreviousBalance'))
-            summaryRow('الإجمالي المستحق', (data['supplierPreviousBalance'] as num).toDouble() + total),
-          summaryRow('المدفوع نقدًا', paid),
-          if (receiptPaid > 0) summaryRow(data['onlinePaymentEver'] == true ? 'محصّل بعد الفاتورة' : 'محصّل بسندات قبض', receiptPaid),
-          summaryRow('باقي هذه الفاتورة', due - receiptPaid, strong: true),
-          if (isSale && data.containsKey('customerBalanceAfter'))
-            summaryRow('رصيد العميل بعد الفاتورة', data['customerBalanceAfter'], strong: true),
-          if (!isSale && supplierBalance != null)
-            summaryRow(liveSupplierBalance ? 'إجمالي الباقي عليك للمورد حاليًا' : 'إجمالي الباقي عليك للمورد بعد السداد', supplierBalance, strong: true),
-          if (!isSale && supplierBalance == null)
-            text('إجمالي الباقي للمورد: الرصيد غير متاح', bold: true),
-        ])),
-      if ('${data['note'] ?? ''}'.trim().isNotEmpty) ...[pw.SizedBox(height: 8), text('ملاحظات: ${data['note']}')],
-      if (data['status'] == 'returned') ...[pw.SizedBox(height: 10), text('فاتورة مرتجعة', bold: true, color: PdfColors.red)],
-      pw.SizedBox(height: 14),
-    ];
-  pw.Widget thanks() => pw.Column(children: [pw.Divider(color: PdfColors.grey400, thickness: .6),
-    text(footer, align: pw.TextAlign.center, fontSize: thermal ? 8 : 10),
-    if (!thermal) ...[pw.SizedBox(height: 12), pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-      children: [text('المستلم: ....................', fontSize: 9), text('الموظف: ....................', fontSize: 9)])],
-  ]);
-  if (thermal) {
-    pdf.addPage(pw.Page(pageFormat: format, margin: const pw.EdgeInsets.all(4 * PdfPageFormat.mm),
-      theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
-      build: (_) => pw.Column(mainAxisSize: pw.MainAxisSize.min, crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-        children: [...content, thanks()])));
-  } else {
-    pdf.addPage(pw.MultiPage(pageFormat: format, margin: const pw.EdgeInsets.all(18 * PdfPageFormat.mm),
-      maxPages: 100, theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
-      footer: (context) => pw.Column(children: [thanks(),
-        pw.Padding(padding: const pw.EdgeInsets.only(top: 5), child: text('صفحة ${context.pageNumber} / ${context.pagesCount}', fontSize: 8, align: pw.TextAlign.center))]),
-      build: (_) => content));
-  }
-  return pdf.save();
+    liveSupplierBalance:liveSupplierBalance,paper:paper);
 }
 
-Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<String, dynamic> data) async {
+Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<String, dynamic> data,{String paperChoice='a4'}) async {
   try {
-    final bytes = await createInvoicePdf(type, id, data, paperChoice: 'a4');
-    await Printing.sharePdf(bytes: bytes, filename: '${type == 'sales' ? 'VIB-SALE' : 'VIB-PURCHASE'}-$id.pdf');
+    final bytes = await createInvoicePdf(type,id,data,paperChoice:paperChoice);
+    await Printing.sharePdf(bytes: bytes, filename: 'VIP-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf');
   } catch (e) {
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر إنشاء PDF: $e')));
   }
@@ -4318,7 +4191,7 @@ Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<
 Future<void> printInvoice(BuildContext context, String type, String id, Map<String, dynamic> data, {String? paperChoice}) async {
   try {
     final bytes = await createInvoicePdf(type, id, data, paperChoice: paperChoice);
-    await Printing.layoutPdf(name: '${type == 'sales' ? 'VIB-SALE' : 'VIB-PURCHASE'}-$id.pdf', onLayout: (_) async => bytes);
+    await Printing.layoutPdf(name: 'VIP-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf', onLayout: (_) async => bytes);
     await db.collection(type).doc(id).set({'printedAt': FieldValue.serverTimestamp(), 'printedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
   } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e'))); }
 }

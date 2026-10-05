@@ -36,4 +36,17 @@ void main(){
     final store=Store();await store.allocate('purchases','one');store.rows['settings/invoiceSerial_purchases_one']!['invoiceBarcode']='VIB-S-000001';
     await expectLater(store.allocate('purchases','one'),throwsStateError);
   });
+
+  test('VIP requested series preserves older invoices and never rewinds',()async{
+    final store=Store();final old=await store.allocate('sales','old');
+    store.rows['settings/invoiceCounter_sales']={'lastNumber':requestedSeriesLast(1,1223)};
+    store.rows['settings/invoiceCounter_purchases']={'lastNumber':requestedSeriesLast(0,431)};
+    expect((await store.allocate('sales','new')).data['internalNumber'],1223);
+    expect((await store.allocate('purchases','new')).data['internalNumber'],431);
+    expect((await store.allocate('sales','old')).data,old.data);
+    expect(requestedSeriesLast(1500,1223),1500);
+    final plans=await Future.wait(List.generate(32,(i)=>store.allocate('sales','vip$i')));
+    expect(plans.map((p)=>p.data['internalNumber']).toSet().length,32);
+  });
 }
+

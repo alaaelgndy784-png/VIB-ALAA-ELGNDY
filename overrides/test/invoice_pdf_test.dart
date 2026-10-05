@@ -346,7 +346,7 @@ void main() {
       File('dist/VIB-PURCHASE-BALANCE-${paper.toUpperCase()}.pdf').writeAsBytesSync(bytes);
     });
   }
-  for (final action in [('طباعة الفاتورة — A4 أو 80 مللي', 'print'), ('مشاركة PDF / إرسال على واتساب', 'share'), ('إغلاق', 'close')]) {
+  for (final action in [('طباعة الفاتورة — A4 أو 80 مللي', 'print'), ('إرسال الفاتورة PDF على واتساب', 'share'), ('إغلاق', 'close')]) {
     testWidgets('saved invoice confirmation returns ${action.$2} after closing', (tester) async {
       String? selected;
       await tester.pumpWidget(MaterialApp(home: Scaffold(body: Builder(builder: (context) =>
@@ -411,3 +411,4 @@ void main() {
     }
   }
 }
+

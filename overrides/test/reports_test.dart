@@ -33,6 +33,30 @@ void main() {
     expect(()=>summarizeReceiptPeriod([],to,from),throwsStateError);
     expect(summarizeReceiptPeriod([],from,to).totalCents,0);
   });
+  test('chosen receipt date drives reports and statements instead of audit timestamp',(){
+    final chosen=Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,2)));
+    final audit=Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,5)));
+    final row={'id':'dated','customerId':'a','customerName':'عميل','amount':20,'receiptDate':chosen,'createdAt':audit,'balanceBefore':100,'balanceAfter':80,'kind':'collection'};
+    expect(summarizeReceiptPeriod([row],DateTime(2026,10,1),DateTime(2026,10,3)).totalCents,2000);
+    expect(summarizeReceiptPeriod([row],DateTime(2026,10,5),DateTime(2026,10,5)).receiptCount,0);
+    final statement=summarizeAccountPeriod([row],{'name':'عميل','balance':80},DateTime(2026,10,1),DateTime(2026,10,3),supplier:false);
+    expect(statement.opening,10000);expect(statement.closing,8000);expect(statement.rows.length,1);
+  });
+  testWidgets('staff percentage discount stays available with manual price locked',(tester)async{
+    staffApp=true;addTearDown(()=>staffApp=false);
+    final price=TextEditingController(text:'100'),qty=TextEditingController(text:'2');
+    addTearDown(price.dispose);addTearDown(qty.dispose);late BuildContext page;
+    await tester.pumpWidget(MaterialApp(home:Builder(builder:(context){page=context;return const Scaffold();})));
+    final draft=PurchaseDiscountDraft();
+    final dialog=showInvoiceLineEditor(page,name:'صنف خصم',price:price,quantity:qty,discount:draft,priceEditable:false,saleScreen:true);
+    await tester.pumpAndSettle();
+    Finder field(String label)=>find.byWidgetPredicate((w)=>w is TextField && w.decoration?.labelText==label);
+    expect(tester.widget<TextField>(field('السعر')).enabled,false);
+    expect(tester.widget<TextField>(field('خصم %')).enabled,true);
+    await tester.enterText(field('خصم %'),'10');await tester.pump();
+    await tester.tap(find.text('متابعة'));await tester.pumpAndSettle();await dialog;
+    expect(double.parse(price.text),90);expect(draft.percent,10);expect(tester.takeException(),isNull);
+  });
   test('receipt period spans Cairo daylight saving boundary',() {
     final from=DateTime(2026,10,29),to=DateTime(2026,10,30);
     final start=movementReportBoundary(from),end=movementReportBoundary(to,next:true);

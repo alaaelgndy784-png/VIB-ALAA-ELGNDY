@@ -20,7 +20,7 @@ AccountPeriodReport summarizeAccountPeriod(List<Map<String,dynamic>> movements,M
   var closing=current,increase=0,decrease=0;
   final rows=<Map<String,dynamic>>[];
   for(final row in movements) {
-    final stamp=row['createdAt'];
+    final stamp=receiptEffectiveTimestamp(row);
     if(stamp is! Timestamp) throw StateError('يوجد تاريخ حركة غير مؤكد؛ انتظر المزامنة');
     final delta=ledgerCents(row['balanceAfter'])-ledgerCents(row['balanceBefore']);
     if(stamp.toDate().isBefore(start)) continue;
@@ -28,7 +28,7 @@ AccountPeriodReport summarizeAccountPeriod(List<Map<String,dynamic>> movements,M
     if(delta>=0)increase+=delta;else decrease-=delta;
     rows.add({...row,'deltaCents':delta});
   }
-  rows.sort((a,b){final cmp=(a['createdAt'] as Timestamp).compareTo(b['createdAt'] as Timestamp);return cmp==0?'${a['id']}'.compareTo('${b['id']}'):cmp;});
+  rows.sort((a,b){final cmp=receiptEffectiveTimestamp(a)!.compareTo(receiptEffectiveTimestamp(b)!);return cmp==0?'${a['id']}'.compareTo('${b['id']}'):cmp;});
   final opening=closing-increase+decrease;
   var balance=opening;
   for(final row in rows) {balance+=row['deltaCents'] as int;row['periodBalance']=balance;}
@@ -129,7 +129,7 @@ ProductPeriodTotals summarizeProductPeriod(List<Map<String,dynamic>> rows,int cu
   var after=0,incoming=0,outgoing=0;
   final latest=<String,Map<String,dynamic>>{};
   for(final row in rows) {
-    final at=row['createdAt'];final q=row['quantity'];
+    final at=receiptEffectiveTimestamp(row);final q=row['quantity'];
     if(at is! Timestamp || q is! num || !q.isFinite || q!=q.round())throw StateError('يوجد تاريخ أو عدد غير مؤكد في حركات المنتج');
     final branch='${row['branchId']}';
     if(latest[branch]==null || at.compareTo(latest[branch]!['createdAt'] as Timestamp)>=0)latest[branch]=row;

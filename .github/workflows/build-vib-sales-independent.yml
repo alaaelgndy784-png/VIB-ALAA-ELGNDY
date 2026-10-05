@@ -57,6 +57,7 @@ jobs:
           mkdir -p VIB-SALES-INDEPENDENT/vib_overrides
           cp overrides/android/prepare_cheque_notifications.py VIB-SALES-INDEPENDENT/vib_overrides/
           cp overrides/pubspec.yaml VIB-SALES-INDEPENDENT/pubspec.yaml
+          cp overrides/assets/vip-logo.png VIB-SALES-INDEPENDENT/assets/vip-logo.png
           mkdir -p VIB-SALES-INDEPENDENT/test
           cp overrides/test/*.dart VIB-SALES-INDEPENDENT/test/
           mkdir -p VIB-SALES-INDEPENDENT/assets/tessdata
@@ -77,7 +78,7 @@ jobs:
         run: |
           printf '%s\n' 'android.newDsl=false' 'android.builtInKotlin=false' >> android/gradle.properties
           sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
-          sed -i 's/android:label="manager"/android:label="VIB MANAGER SCAN"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="manager"/android:label="VIP MANAGER"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/applicationId = "com.alaa.vibsales.manager"/applicationId = "com.alaa.vibsales.managerscan"/' android/app/build.gradle.kts
           grep -q 'applicationId = "com.alaa.vibsales.managerscan"' android/app/build.gradle.kts
           sed -i 's/import io.flutter.embedding.android.FlutterActivity/import io.flutter.embedding.android.FlutterFragmentActivity/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
@@ -112,7 +113,7 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi
+          flutter build apk --release --split-per-abi --build-number=2002 --build-name=0.2.0
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk
 
@@ -120,7 +121,7 @@ jobs:
         if: matrix.app == 'staff'
         working-directory: VIB-SALES-INDEPENDENT
         run: |
-          sed -i 's/android:label="VIB MANAGER SCAN"/android:label="VIB STAFF SCAN"/' android/app/src/main/AndroidManifest.xml
+          sed -i 's/android:label="VIP MANAGER"/android:label="VIP STAFF"/' android/app/src/main/AndroidManifest.xml
           sed -i 's/applicationId = "com.alaa.vibsales.managerscan"/applicationId = "com.alaa.vibsales.staffscan"/' android/app/build.gradle.kts
           grep -q 'applicationId = "com.alaa.vibsales.staffscan"' android/app/build.gradle.kts
           perl -0pi -e "s/'role':\s*'owner',\s*'active':\s*true/'role': 'pending', 'active': false/g" lib/main.dart
@@ -130,7 +131,7 @@ jobs:
           done
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi
+          flutter build apk --release --split-per-abi --build-number=2002 --build-name=0.2.0
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk
 
