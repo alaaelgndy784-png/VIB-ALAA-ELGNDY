@@ -19,15 +19,34 @@
   <div id="loading" role="status"><img src="icons/Icon-512.png" alt="VIB"><strong id="loading-title">جاري فتح برنامج الموظف…</strong><span id="loading-help">يحتاج اتصال بالإنترنت</span><button id="retry" hidden onclick="location.reload()">إعادة المحاولة</button></div>
   <noscript>فعّل JavaScript في Safari لفتح البرنامج.</noscript>
   <script>
+    const diagnosticMode = new URLSearchParams(location.search).get('diagnose') === '1';
+    if (diagnosticMode) {
+      const panel = document.createElement('section');
+      panel.id = 'vib-diagnostics';
+      panel.style.cssText = 'position:fixed;top:12px;left:12px;right:12px;z-index:2147483647;background:#171717;color:#fff;padding:18px;border:2px solid #d6ac55;border-radius:14px;font:16px system-ui;max-height:70vh;overflow:auto';
+      panel.innerHTML = '<strong style="color:#d6ac55">VIB — فحص فتح البرنامج</strong><p>انتظر دقيقة، وبعدها ابعت صورة النتائج دي. لا تدخل رقمك أو كلمة السر أثناء الفحص.</p><pre id="vib-diagnostic-log" style="white-space:pre-wrap;direction:rtl;font:14px system-ui"></pre>';
+      document.body.appendChild(panel);
+    }
+    window.vibReport = function (message) {
+      if (!diagnosticMode) return;
+      const log = document.getElementById('vib-diagnostic-log');
+      log.textContent += message + '\n';
+    };
+    window.vibReport('الفحص D4 — JavaScript يعمل');
+    window.vibReport('WebAssembly: ' + (typeof WebAssembly === 'object' ? 'متاح' : 'غير متاح'));
+    window.addEventListener('error', function (event) { window.vibReport('خطأ: ' + (event.message || 'تعذر تحميل ملف') + (event.filename ? ' — ' + event.filename.split('/').pop() : '')); });
+    window.addEventListener('unhandledrejection', function (event) { window.vibReport('خطأ تشغيل: ' + String(event.reason).slice(0, 400)); });
+    setTimeout(function () { window.vibReport('انتهت دقيقة الفحص — ابعت صورة النتائج'); }, 60000);
     window.vibStartupFailed = function () {
+      window.vibReport('التحميل لم يكتمل بعد');
       if (!document.getElementById('loading')) return;
       document.getElementById('loading-title').textContent = 'التحميل لم يكتمل بعد';
       document.getElementById('loading-help').textContent = 'تأكد من الإنترنت وافتح الرابط في Safari، أو جرّب إعادة المحاولة.';
       document.getElementById('retry').hidden = false;
     };
     const startupTimer = setTimeout(window.vibStartupFailed, 30000);
-    window.addEventListener('flutter-first-frame', function () { clearTimeout(startupTimer); document.getElementById('loading')?.remove(); });
+    window.addEventListener('flutter-first-frame', function () { window.vibReport('تم رسم أول شاشة'); clearTimeout(startupTimer); document.getElementById('loading')?.remove(); });
   </script>
-  <script src="flutter_bootstrap.js?v=20261005-3" async onerror="window.vibStartupFailed()"></script>
+  <script src="flutter_bootstrap.js?v=20261005-4" async onerror="window.vibStartupFailed()"></script>
 </body>
 </html>
