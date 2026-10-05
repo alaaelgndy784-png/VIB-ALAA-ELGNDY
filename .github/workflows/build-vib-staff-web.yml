@@ -1,0 +1,67 @@
+name: Build free VIB Staff web app
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'web-staff/**'
+      - '.github/workflows/build-vib-staff-web.yml'
+permissions:
+  contents: read
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          channel: stable
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Assemble employee browser app
+        run: |
+          mkdir web-project
+          unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d web-project
+          cp overrides/lib/*.dart web-project/lib/
+          cp overrides/pubspec.yaml web-project/pubspec.yaml
+          cp overrides/assets/vip-logo.png web-project/assets/vip-logo.png
+          mkdir -p web-project/assets/tessdata web-project/assets/fonts web-project/test
+          printf '%s\n' '{"files":[]}' > web-project/assets/tessdata_config.json
+          touch web-project/assets/tessdata/.keep
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf web-project/assets/fonts/DejaVuSans.ttf
+          cp overrides/test/*.dart web-project/test/
+          cd web-project
+          flutter create --platforms=web --project-name vib_sales .
+          cd ..
+          python3 web-staff/prepare.py web-project
+          cp web-staff/firebase.json web-project/firebase.json
+      - name: Verify invoice and account calculations
+        working-directory: web-project
+        run: flutter test test/accounting_test.dart test/invoice_serial_core_test.dart test/invoice_pdf_test.dart
+      - name: Build iPhone compatible web app
+        working-directory: web-project
+        run: flutter build web --release --no-wasm-dry-run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VIB-STAFF-WEB
+          path: web-project/build/web/
+          if-no-files-found: error
+      - name: Check free hosting credentials
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SERVICE_ACCOUNT" ]; then
+            echo "::warning::Web build ready. Publishing needs FIREBASE_SERVICE_ACCOUNT. No paid service was enabled."
+            echo "PUBLISH_READY=false" >> "$GITHUB_ENV"
+          else
+            printf '%s' "$SERVICE_ACCOUNT" > "$RUNNER_TEMP/vib-firebase.json"
+            echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/vib-firebase.json" >> "$GITHUB_ENV"
+            echo "PUBLISH_READY=true" >> "$GITHUB_ENV"
+          fi
+      - name: Verify Spark and publish Hosting only
+        if: env.PUBLISH_READY == 'true'
+        run: |
+          npm install --prefix web-staff --no-save google-auth-library firebase-tools
+          node web-staff/publish.mjs
