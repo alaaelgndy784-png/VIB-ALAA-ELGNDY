@@ -45,6 +45,8 @@ s=s.replace('  @override Widget build(BuildContext context) => IconButton(', '  
 p.write_text(s)
 web=root/'web'
 shutil.copyfile('web-staff/index.html',web/'index.html')
+shutil.copyfile('web-staff/flutter_bootstrap.js',web/'flutter_bootstrap.js')
+shutil.copyfile('web-staff/_headers',web/'_headers')
 shutil.copyfile('web-staff/manifest.json',web/'manifest.json')
 (web/'icons').mkdir(exist_ok=True)
 for size in (512,):
