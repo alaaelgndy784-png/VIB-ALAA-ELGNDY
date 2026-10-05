@@ -9,6 +9,7 @@ import 'package:tesseract_ocr/tesseract_ocr.dart';
 import 'package:tesseract_ocr/ocr_engine_config.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
@@ -917,7 +918,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         else if(adding) row.dispose();
       }
       void addSelected(String id) async {
-        if (saving || lines.length >= (owner ? 50 : 4) || lines.any((row) => row.productId == id)) return;
+        if (saving || lines.length >= 50 || lines.any((row) => row.productId == id)) return;
         final product=productDoc(id).data();
         await editSelected(SaleLine(productId:id,unitPrice:(product['price'] as num?)?.toDouble() ?? 0),adding:true);
       }
@@ -930,7 +931,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           unitCosts:{for(final product in products) product.id:product.data()['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
           products:[for(final product in products) if(!lines.any((row)=>row.productId == product.id))
             (id:product.id,name:'${product.data()['name'] ?? ''}')],
-          enabled:!saving && lines.length < (owner ? 50 : 4),onSelect:addSelected,
+          enabled:!saving && lines.length < 50,onSelect:addSelected,
           onSearch:() async {
             final id=await selectSaleProduct(c,products,lines.map((row)=>row.productId).whereType<String>().toSet());
             if(id != null && c.mounted) addSelected(id);
@@ -975,8 +976,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           TextButton(onPressed:saving ? null : () {if(checkout) {update(()=>checkout=false);} else {Navigator.pop(c);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
             FocusScope.of(c).unfocus();
-            if (!owner && lines.length > 4) {
-              await showInvoiceSaveProblem(c, 'فاتورة الموظف تقبل حتى 4 أصناف مختلفة لضمان حفظ المخزون والحسابات معًا. استخدم فاتورة أخرى لباقي الأصناف.');
+            if (lines.length > 50) {
+              await showInvoiceSaveProblem(c, 'الفاتورة تقبل حتى 50 صنفًا مختلفًا');
               return;
             }
             if (lines.isEmpty) {
@@ -1022,6 +1023,24 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
             update(() => saving = true);
             try {
+                if (!owner && entries.length > 4) {
+                  // Admin transaction preserves one invoice and all accounting writes
+                  // without exceeding the client security-rule document-read budget.
+                  await FirebaseFunctions.instanceFor(region: 'us-central1')
+                    .httpsCallable('createStaffSale').call(<String, dynamic>{
+                      'requestId': saleRef.id, 'customerId': customerId,
+                      'credit': credit, 'paid': payment,
+                      'items': [for (final e in entries) <String, dynamic>{
+                        'productId': e.id, 'quantity': e.qty, 'unitPrice': e.price,
+                        'basePrice': e.basePrice, 'discountPercent': e.discount,
+                      }],
+                    });
+                  final savedInvoice = (await saleRef.get()).data();
+                  if (savedInvoice == null) throw Exception('تعذر قراءة الفاتورة المحفوظة؛ أعد المحاولة بنفس الفاتورة');
+                  if (c.mounted) Navigator.pop(c);
+                  if (context.mounted) await showInvoiceSavedActions(context, 'sales', saleRef.id, savedInvoice);
+                  return;
+                }
                 final savedInvoice = await db.runTransaction<Map<String, dynamic>>((tx) async {
                 final actor = FirebaseAuth.instance.currentUser!.uid;
                 final actorProfile = (await tx.get(db.collection('users').doc(actor))).data();
@@ -4047,6 +4066,12 @@ class InvoiceSaveButtonLabel extends StatelessWidget {
 }
 
 String invoiceSaveFailureMessage(Object error) {
+  if (error is FirebaseFunctionsException) {
+    if (error.code == 'not-found') return 'خدمة حفظ الفواتير الأكبر من 4 أصناف تحتاج تفعيلًا على الخادم. البنود ما زالت موجودة؛ لم يتم تقسيم الفاتورة.';
+    if (error.code != 'unavailable' && error.code != 'deadline-exceeded') {
+      return error.message ?? 'تعذر حفظ الفاتورة: ${error.code}';
+    }
+  }
   if (error is FirebaseException) {
     if (error.code == 'permission-denied') {
       return 'تعذر حفظ الفاتورة: الخادم رفض صلاحيات العملية. راجع تفعيل الحساب وقواعد حفظ الفواتير.\nرمز الخطأ: permission-denied';
@@ -5232,7 +5257,6 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
 }
-
 
 
 

@@ -20,12 +20,17 @@ async function saveStaffSale(db, FieldValue, ErrorType, uid, input) {
         !Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 1000000)
       fail('invalid-argument', 'راجع الأصناف والكميات ولا تكرر الصنف');
     money(item.unitPrice);
+    money(item.basePrice ?? item.unitPrice);
+    if (typeof (item.discountPercent ?? 0) !== 'number' || !Number.isFinite(item.discountPercent ?? 0) ||
+        (item.discountPercent ?? 0) < 0 || (item.discountPercent ?? 0) > 100)
+      fail('invalid-argument', 'نسبة الخصم غير صحيحة');
     seen.add(item.productId);
   }
   const requestedPaid = money(input.paid);
   const fingerprint = crypto.createHash('sha256').update(JSON.stringify({
     customerId: input.customerId, credit: input.credit, paid: requestedPaid,
-    items: input.items.map(x => [x.productId, x.quantity, money(x.unitPrice)]),
+    items: input.items.map(x => [x.productId, x.quantity, money(x.unitPrice),
+      money(x.basePrice ?? x.unitPrice), x.discountPercent ?? 0]),
   })).digest('hex');
   const saleRef = db.collection('sales').doc(input.requestId);
   return db.runTransaction(async (tx) => {
@@ -57,8 +62,12 @@ async function saveStaffSale(db, FieldValue, ErrorType, uid, input) {
     const items = input.items.map((line, i) => {
       const product = products[i].data();
       if (!product || product.active !== true) fail('failed-precondition', 'الصنف غير متاح');
-      const price = money(product.price);
-      if (price !== money(line.unitPrice)) fail('failed-precondition', 'سعر الصنف اتغير؛ افتح الفاتورة من جديد');
+      const basePrice = money(line.basePrice ?? line.unitPrice);
+      const discountPercent = line.discountPercent ?? 0;
+      const price = money(line.unitPrice);
+      if (profile.canEditSalePrice !== true && (basePrice !== money(product.price) ||
+          price !== Math.round(basePrice * (1 - discountPercent / 100))))
+        fail('failed-precondition', 'سعر الصنف اتغير؛ افتح الفاتورة من جديد');
       if (product.purchasePrice != null && price < money(product.purchasePrice))
         fail('permission-denied', 'البيع أقل من التكلفة يحتاج صلاحية المدير');
       const available = stocks[i].data()?.quantity ?? 0;
@@ -67,6 +76,7 @@ async function saveStaffSale(db, FieldValue, ErrorType, uid, input) {
       totalCents += price * line.quantity;
       return {productId: line.productId, productName: product.name,
         quantity: line.quantity, unitPrice: price / 100, lineTotal: price * line.quantity / 100,
+        basePrice: basePrice / 100, discountPercent,
         ...(product.purchasePrice != null ? {purchasePriceAtSale: product.purchasePrice} : {})};
     });
     if (!Number.isSafeInteger(totalCents) || totalCents > 1e12) fail('invalid-argument', 'إجمالي الفاتورة غير صحيح');
