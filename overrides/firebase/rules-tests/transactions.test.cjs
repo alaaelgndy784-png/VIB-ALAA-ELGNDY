@@ -488,3 +488,37 @@ test('owner rejection is final and requires a reason; approval requires linked c
   await assert.rejects(approvePending(db));
   assert.equal((await getDoc(doc(db,'sales/request'))).exists(),false);
 });
+
+async function rejectDraft(db){
+  await setDoc(doc(env.authenticatedContext('staff').firestore(),'pendingSales/request'),pendingDraft());
+  await setDoc(doc(db,'pendingSales/request'),{status:'rejected',reviewedBy:'owner',reviewedAt:serverTimestamp(),rejectionReason:'Re-enter invoice'},{merge:true});
+}
+function removeDraft(db,extra={}){return setDoc(doc(db,'pendingSales/request'),{removed:true,removedBy:'owner',removedAt:serverTimestamp(),...extra},{merge:true});}
+test('owner removes rejected proposal without financial effect and submitting employee sees the hide marker',async()=>{
+  const db=env.authenticatedContext('owner').firestore();await rejectDraft(db);await assertSucceeds(removeDraft(db));
+  const r=(await getDoc(doc(env.authenticatedContext('staff').firestore(),'pendingSales/request'))).data();
+  assert.equal(r.removed,true);assert.equal(r.status,'rejected');assert.equal(r.rejectionReason,'Re-enter invoice');assert.equal(r.items.length,5);
+  assert.equal((await getDoc(doc(db,'stock/main_p0'))).data().quantity,10);
+  assert.equal((await getDoc(doc(db,'settings/cash'))).data().balance,500);
+  assert.equal((await getDoc(doc(db,'customers/customer'))).data().balance,100);
+  assert.equal((await getDoc(doc(db,'sales/request'))).exists(),false);
+  await assertSucceeds(setDoc(doc(env.authenticatedContext('staff').firestore(),'pendingSales/new'),pendingDraft({mutate:r=>r.id='new'})));
+});
+test('staff cannot remove their rejected proposal; owner cannot erase its audit or payload',async()=>{
+  const db=env.authenticatedContext('owner').firestore();await rejectDraft(db);
+  await assertFails(removeDraft(env.authenticatedContext('staff').firestore(),{removedBy:'staff'}));
+  for(const extra of [{paid:0},{items:[]},{rejectionReason:'Changed'},{reviewedBy:'staff'},{removedBy:'staff'},{removedAt:new Date('2026-01-01')}])await assertFails(removeDraft(db,extra));
+  await assertFails(deleteDoc(doc(db,'pendingSales/request')));
+});
+test('pending and approved proposals cannot be removed',async()=>{
+  const db=env.authenticatedContext('owner').firestore();await setDoc(doc(env.authenticatedContext('staff').firestore(),'pendingSales/request'),pendingDraft());
+  await assertFails(removeDraft(db));await approvePending(db);await assertFails(removeDraft(db));
+});
+test('removed rejected proposal cannot be revived, approved, overwritten or permanently deleted',async()=>{
+  const db=env.authenticatedContext('owner').firestore();await rejectDraft(db);await removeDraft(db);
+  const ref=doc(db,'pendingSales/request');
+  await assertFails(setDoc(ref,{removed:false},{merge:true}));await assertFails(setDoc(ref,{status:'pending'},{merge:true}));
+  await assertFails(setDoc(ref,{status:'approved',saleId:'request',reviewedBy:'owner',reviewedAt:serverTimestamp()},{merge:true}));
+  await assertFails(setDoc(doc(env.authenticatedContext('staff').firestore(),'pendingSales/request'),pendingDraft()));
+  await assertFails(deleteDoc(ref));await assert.rejects(approvePending(db));
+});

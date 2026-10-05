@@ -222,18 +222,30 @@ class InvoiceCompactTableLine extends StatelessWidget {
   @override Widget build(BuildContext context) {
     final p=double.tryParse(price.text.trim().replaceAll(',', '.')) ?? 0;
     final q=int.tryParse(quantity.text.trim()) ?? 0;
+    return InvoiceCompactReadOnlyLine(number:number,name:name,price:p,quantity:q,onTap:onEdit);
+  }
+}
+
+class InvoiceCompactReadOnlyLine extends StatelessWidget {
+  final int number, quantity;
+  final String name;
+  final double price;
+  final VoidCallback? onTap;
+  const InvoiceCompactReadOnlyLine({super.key,required this.number,required this.name,
+    required this.price,required this.quantity,this.onTap});
+  @override Widget build(BuildContext context) {
     Widget value(String text,{Color? background})=>Container(margin:const EdgeInsets.all(2),padding:const EdgeInsets.symmetric(vertical:7,horizontal:2),
       decoration:BoxDecoration(color:background,border:Border.all(color:const Color(0xFFD4D4D4))),
       child:FittedBox(fit:BoxFit.scaleDown,child:Text(text,style:const TextStyle(color:Colors.black,fontSize:12,fontWeight:FontWeight.w600))));
-    return Material(color:number.isOdd ? Colors.white : const Color(0xFFF5F4F0),child:InkWell(onTap:onEdit,
+    return Material(color:number.isOdd ? Colors.white : const Color(0xFFF5F4F0),child:InkWell(onTap:onTap,
       child:Container(padding:const EdgeInsets.symmetric(vertical:8,horizontal:4),
         decoration:const BoxDecoration(border:Border(bottom:BorderSide(color:Color(0xFFDDDDDD)))),
         child:Row(textDirection:TextDirection.rtl,children:[
           SizedBox(width:22,child:Text('$number',textAlign:TextAlign.center,style:const TextStyle(color:Colors.black54,fontSize:11))),
           Expanded(flex:5,child:Text(name,textDirection:TextDirection.rtl,style:TextStyle(color:const Color(0xFF0056B3),fontSize:12))),
-          Expanded(flex:3,child:value(p.toStringAsFixed(2),background:const Color(0xFFB9F6CA))),
-          Expanded(flex:2,child:value('$q',background:const Color(0xFFFFF59D))),
-          Expanded(flex:3,child:value((p*q).toStringAsFixed(2),background:const Color(0xFF90CAF9))),
+          Expanded(flex:3,child:value(price.toStringAsFixed(2),background:const Color(0xFFB9F6CA))),
+          Expanded(flex:2,child:value('$quantity',background:const Color(0xFFFFF59D))),
+          Expanded(flex:3,child:value((price*quantity).toStringAsFixed(2),background:const Color(0xFF90CAF9))),
         ]))));
   }
 }
@@ -317,4 +329,3 @@ Future<String> invoiceDraftNumberPreview(String type) async {
     return '${((data?['lastNumber'] as num?)?.toInt() ?? 0)+1}'.padLeft(6,'0')+' (مبدئي)';
   } catch(_) { return 'يُخصص عند الحفظ'; }
 }
-
