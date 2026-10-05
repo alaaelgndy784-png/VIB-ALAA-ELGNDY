@@ -56,9 +56,10 @@ Future<Uint8List> createStyledA4InvoicePdf({
       color: color,
       align: pw.TextAlign.center,
     );
-    return numeric
-        ? pw.Directionality(textDirection: pw.TextDirection.ltr, child: child)
-        : child;
+    return pw.Directionality(
+      textDirection: numeric ? pw.TextDirection.ltr : pw.TextDirection.rtl,
+      child: child,
+    );
   }
 
   final title = isSale ? 'فاتورة مبيعات' : 'فاتورة مشتريات';
@@ -151,15 +152,12 @@ Future<Uint8List> createStyledA4InvoicePdf({
                   color: entry.highlight ? gold : black,
                 ),
                 pw.SizedBox(height: 4),
-                pw.FittedBox(
-                  fit: pw.BoxFit.scaleDown,
-                  child: centered(
-                    entry.value,
-                    size: thermal ? 11 : 15,
-                    bold: true,
-                    numeric: entry.value != 'غير مسجل',
-                    color: entry.highlight ? gold : black,
-                  ),
+                centered(
+                  entry.value,
+                  size: thermal ? 11 : 15,
+                  bold: true,
+                  numeric: entry.value != 'غير مسجل',
+                  color: entry.highlight ? gold : black,
                 ),
               ],
             ),
