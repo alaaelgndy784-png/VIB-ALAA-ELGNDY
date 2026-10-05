@@ -383,7 +383,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
       1: const pw.FlexColumnWidth(1.35),
       2: const pw.FlexColumnWidth(.8),
       3: const pw.FlexColumnWidth(4.5),
-      4: const pw.FlexColumnWidth(.5),
+      4: pw.FlexColumnWidth(thermal ? .9 : .5),
     },
     border: pw.TableBorder.all(color: line, width: .5),
     children: [
