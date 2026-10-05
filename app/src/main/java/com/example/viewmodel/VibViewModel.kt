@@ -473,37 +473,30 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
     customerAddress: String,
     notes: String
   ) {
+    if (_isLoading.value || _cartItems.value.isEmpty()) return
     viewModelScope.launch {
-      if (_cartItems.value.isEmpty()) return@launch
-
       _isLoading.value = true
-      val customer = repository.saveCustomer(customerName, customerPhone, customerAddress, notes)
-
-      val order = Order(
-        id = "ORD-${System.currentTimeMillis() % 1000000}",
-        customer = customer,
-        items = _cartItems.value,
-        totalAmount = cartTotal.value,
-        createdAt = System.currentTimeMillis(),
-        status = "تم الإرسال عبر واتساب"
-      )
-
-      // Save to Firestore
-      repository.recordOrderInFirestore(order)
-
-      // Send via WhatsApp
-      WhatsAppHelper.sendOrderViaWhatsApp(
-        context = context,
-        order = order,
-        customer = customer,
-        targetWhatsAppNumber = adminWhatsAppNumber.value
-      )
-
-      _isLoading.value = false
-      _showOrderConfirmation.value = false
-      _showCart.value = false
-      clearCart()
-      _statusMessage.value = "تم تجهيز الطلب وإرساله إلى واتساب بنجاح"
+      try {
+        val items = _cartItems.value.toList()
+        val customer = repository.saveCustomer(customerName, customerPhone, customerAddress, notes)
+        val order = Order(
+          id = "ORD-${System.currentTimeMillis()}-${java.util.UUID.randomUUID().toString().take(4)}",
+          customer = customer,
+          items = items,
+          totalAmount = items.sumOf { it.subtotal },
+          createdAt = System.currentTimeMillis(),
+          status = "جاهز للإرسال عبر واتساب"
+        )
+        val pdf = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { com.example.util.OrderInvoicePdf.create(context.applicationContext, order) }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) { repository.recordOrderInFirestore(order) }
+        if (WhatsAppHelper.sendInvoiceViaWhatsApp(context, pdf, order, adminWhatsAppNumber.value)) {
+          _showOrderConfirmation.value = false
+          _showCart.value = false
+          clearCart()
+          _statusMessage.value = "تم تجهيز فاتورة PDF. أكّد الإرسال داخل واتساب."
+        } else _statusMessage.value = "الفاتورة جاهزة، لكن تعذر فتح واتساب. السلة محفوظة لإعادة المحاولة."
+      } catch (_: Exception) { _statusMessage.value = "تعذر تجهيز فاتورة الطلب. السلة محفوظة، حاول مرة أخرى." }
+      finally { _isLoading.value = false }
     }
   }
 

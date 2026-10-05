@@ -726,7 +726,7 @@ class FirebaseRepository(val context: Context, private val startListeners: Boole
       .putString("customer_notes", customer.notes)
       .apply()
 
-    if (isFirebaseConfigured()) {
+    if (isFirebaseConfigured()) scope.launch {
       try {
         withTimeoutOrNull(30000L) {
           val db = FirebaseFirestore.getInstance()

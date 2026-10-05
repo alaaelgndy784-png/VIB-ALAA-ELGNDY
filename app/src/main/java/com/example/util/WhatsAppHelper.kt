@@ -51,49 +51,31 @@ object WhatsAppHelper {
     return sb.toString()
   }
 
-  fun sendOrderViaWhatsApp(
-    context: Context,
-    order: Order,
-    customer: Customer,
-    targetWhatsAppNumber: String
-  ) {
-    try {
-      val message = formatOrderMessage(order, customer)
-      val encodedMessage = URLEncoder.encode(message, "UTF-8")
-
-      // Clean phone number: remove +, spaces, dashes
-      var cleanNumber = targetWhatsAppNumber.replace(Regex("[^0-9]"), "")
-      if (cleanNumber.startsWith("0")) {
-        // If Egyptian local number e.g. 010... -> add 20
-        cleanNumber = "2$cleanNumber"
-      } else if (!cleanNumber.startsWith("20") && cleanNumber.length == 10) {
-        cleanNumber = "20$cleanNumber"
-      }
-
-      val uri = Uri.parse("https://wa.me/$cleanNumber?text=$encodedMessage")
-      val intent = Intent(Intent.ACTION_VIEW, uri).apply {
-        setPackage("com.whatsapp")
-        flags = Intent.FLAG_ACTIVITY_NEW_TASK
-      }
-
-      try {
-        context.startActivity(intent)
-      } catch (_: Exception) {
-        try {
-          val businessIntent = Intent(Intent.ACTION_VIEW, uri).apply {
-            setPackage("com.whatsapp.w4b")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-          }
-          context.startActivity(businessIntent)
-        } catch (_: Exception) {
-          val fallbackIntent = Intent(Intent.ACTION_VIEW, uri).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK
-          }
-          context.startActivity(fallbackIntent)
-        }
-      }
-    } catch (e: Exception) {
-      Toast.makeText(context, "تعذر فتح تطبيق واتساب: ${e.localizedMessage}", Toast.LENGTH_LONG).show()
+  fun invoiceShareIntent(context: Context, pdf: java.io.File, order: Order, targetWhatsAppNumber: String, packageName: String): Intent {
+    var number = targetWhatsAppNumber.replace(Regex("[^0-9]"), "")
+    if (number.startsWith("0")) number = "2$number"
+    else if (!number.startsWith("20") && number.length == 10) number = "20$number"
+    require(number.length in 10..15) { "رقم واتساب VIB غير صحيح" }
+    val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.updates", pdf)
+    return Intent(Intent.ACTION_SEND).apply {
+      type = "application/pdf"
+      setPackage(packageName)
+      putExtra(Intent.EXTRA_STREAM, uri)
+      putExtra(Intent.EXTRA_TEXT, "فاتورة طلب ${order.id} - ${order.customer.name}")
+      putExtra("jid", "$number@s.whatsapp.net")
+      clipData = android.content.ClipData.newUri(context.contentResolver, "فاتورة طلب VIB", uri)
+      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
+  }
+
+  fun sendInvoiceViaWhatsApp(context: Context, pdf: java.io.File, order: Order, targetWhatsAppNumber: String): Boolean {
+    for (packageName in listOf("com.whatsapp", "com.whatsapp.w4b")) {
+      try {
+        context.startActivity(invoiceShareIntent(context, pdf, order, targetWhatsAppNumber, packageName))
+        return true
+      } catch (_: android.content.ActivityNotFoundException) { /* Try WhatsApp Business. */ }
+    }
+    Toast.makeText(context, "واتساب غير مثبت. ثبّته ثم أعد إرسال فاتورة الطلب.", Toast.LENGTH_LONG).show()
+    return false
   }
 }

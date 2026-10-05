@@ -533,7 +533,8 @@ fun VibMainScreen(
       OrderConfirmationDialog(
         savedCustomer = currentCustomer,
         totalAmount = cartTotal,
-        itemCount = cartCount,
+        itemCount = cartItems.size,
+        isLoading = isLoading,
         onDismiss = { viewModel.toggleOrderConfirmation(false) },
         onConfirmOrder = { name, phone, address, notes ->
           viewModel.submitOrderAndSendWhatsApp(

@@ -87,7 +87,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: VIB-CATALOG-PREVIEW
-          path: app/build/gallery-preview.png
+          path: |
+            app/build/gallery-preview.png
+            app/build/order-invoice-*.pdf
 
       - name: Prepare Public APKs
         env:
