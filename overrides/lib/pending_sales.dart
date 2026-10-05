@@ -245,7 +245,7 @@ class PendingSalesShortcut extends StatelessWidget {
   const PendingSalesShortcut({super.key,required this.owner});
   @override Widget build(BuildContext context)=>StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
     stream:pendingSalesQuery(owner).snapshots(),builder:(context,snapshot) {
-      final count=snapshot.data?.docs.where((d)=>d.data()['status']=='pending').length;
+      final count=snapshot.data?.docs.where((d)=>pendingSaleIsVisible(d.data()) && d.data()['status']=='pending').length;
       return SizedBox(width:double.infinity,child:OutlinedButton.icon(icon:const Icon(Icons.pending_actions),
         label:Text('${owner ? 'اعتماد فواتير الموظفين' : 'فواتير الموظف — متابعة الاعتماد'}${count==null ? '' : ' ($count معلقة)'}'),
         onPressed:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>Directionality(textDirection:TextDirection.rtl,
@@ -260,7 +260,7 @@ class PendingSalesPage extends StatelessWidget {
     stream:pendingSalesQuery(owner).snapshots(),builder:(context,snapshot) {
       if(snapshot.hasError) return const Center(child:Text('تعذر تحميل الطلبات. تأكد من الاتصال وتحديث قواعد الحماية.'));
       if(!snapshot.hasData) return const Center(child:CircularProgressIndicator());
-      final rows=snapshot.data!.docs.where((d)=>visibleAfterReset(d.data())).toList()
+      final rows=snapshot.data!.docs.where((d)=>visibleAfterReset(d.data()) && pendingSaleIsVisible(d.data())).toList()
         ..sort((a,b) {
           final pendingA=a.data()['status']=='pending',pendingB=b.data()['status']=='pending';
           if(pendingA!=pendingB)return pendingA?-1:1;
@@ -273,6 +273,7 @@ class PendingSalesPage extends StatelessWidget {
           Card(child:ListTile(leading:Icon(row.data()['status']=='approved'?Icons.check_circle:row.data()['status']=='rejected'?Icons.cancel:Icons.hourglass_top,color:gold),
             title:Text('${row.data()['customerName'] ?? ''} • ${row.data()['total'] ?? 0} ج.م'),
             subtitle:Text('${owner ? '${row.data()['employeeName'] ?? ''} • ' : ''}${pendingSaleStatus(row.data()['status'])} • ${formatDate(row.data()['createdAt'])}'),
+            trailing:owner && row.data()['status']=='rejected' ? IconButton(tooltip:'مسح الطلب من التطبيقين',icon:const Icon(Icons.delete_outline,color:Colors.redAccent),onPressed:()=>removeRejectedPendingSale(context,row.reference)) : null,
             onTap:()=>reviewPendingSale(context,row.reference,owner)))])),
       ]);
     });
@@ -280,22 +281,80 @@ class PendingSalesPage extends StatelessWidget {
 
 String pendingSaleStatus(Object? status)=>status=='approved'?'تم اعتماد الفاتورة':status=='rejected'?'مرفوضة — لم تسجل':'في انتظار الاعتماد';
 
+bool pendingSaleIsVisible(Map<String,dynamic> data)=>data['removed']!=true;
+
+// Keep the rejected payload and audit trail; hide it in both applications.
+Future<bool> removeRejectedPendingSale(BuildContext context,DocumentReference<Map<String,dynamic>> ref) async {
+  final confirmed=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(
+    title:const Text('مسح الطلب المرفوض'),
+    content:const Text('سيختفي الطلب من عندك ومن عند الموظف. الموظف يبدأ فاتورة جديدة من شاشة المبيعات.'),
+    actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('إلغاء')),
+      FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('مسح من التطبيقين'))]));
+  if(confirmed!=true || !context.mounted)return false;
+  try {
+    await db.runTransaction((tx)async {
+      final current=(await tx.get(ref)).data();
+      if(current==null || current['status']!='rejected')throw Exception('المسح متاح للطلبات المرفوضة فقط');
+      if(current['removed']==true)return;
+      tx.update(ref,{'removed':true,'removedBy':FirebaseAuth.instance.currentUser!.uid,'removedAt':FieldValue.serverTimestamp()});
+    });
+    return true;
+  }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,invoiceSaveFailureMessage(e));return false;}
+}
+
+class PendingSaleInvoiceDialog extends StatelessWidget {
+  final Map<String,dynamic> data;
+  final List<Widget> actions;
+  const PendingSaleInvoiceDialog({super.key,required this.data,required this.actions});
+  @override Widget build(BuildContext context) {
+    final items=(data['items'] as List? ?? const []).whereType<Map>().toList();
+    final total=items.fold<double>(0,(sum,x)=>sum+((x['unitPrice'] as num?)?.toDouble() ?? 0)*((x['quantity'] as num?)?.toInt() ?? 0));
+    final paid=(data['paid'] as num?)?.toDouble() ?? 0;
+    final quantity=items.fold<int>(0,(sum,x)=>sum+((x['quantity'] as num?)?.toInt() ?? 0));
+    Widget money(String label,double value)=>Text('$label: ${value.toStringAsFixed(2)} ج.م',style:const TextStyle(color:Colors.white,fontWeight:FontWeight.bold));
+    return Directionality(textDirection:TextDirection.rtl,child:Dialog(
+      backgroundColor:const Color(0xFF080808),insetPadding:const EdgeInsets.symmetric(horizontal:6,vertical:12),
+      shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(16),side:const BorderSide(color:gold)),
+      child:SizedBox(width:650,height:double.infinity,child:Padding(padding:const EdgeInsets.all(8),child:Column(children:[
+        const Padding(padding:EdgeInsets.only(bottom:8),child:Text('فاتورة مبيعات الموظف',textAlign:TextAlign.center,style:TextStyle(fontSize:20,fontWeight:FontWeight.bold,color:gold))),
+        Expanded(child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+          Container(color:const Color(0xFF282215),padding:const EdgeInsets.all(8),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+            Text(pendingSaleStatus(data['status']),style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
+            Text('العميل: ${data['customerName'] ?? ''}'),Text('الموظف: ${data['employeeName'] ?? ''}'),
+            Text('التاريخ: ${formatDate(data['createdAt'])}'),
+            if(data['status']!='approved')const Text('رقم الفاتورة: يُخصص عند الاعتماد'),
+            Text(data['credit']==true?'طريقة الدفع: آجل':'طريقة الدفع: نقدي'),
+          ])),
+          const SizedBox(height:8),const InvoiceCompactTableHeader(),
+          for(var i=0;i<items.length;i++)InvoiceCompactReadOnlyLine(number:i+1,name:'${items[i]['productName'] ?? ''}',
+            price:(items[i]['unitPrice'] as num?)?.toDouble() ?? 0,quantity:(items[i]['quantity'] as num?)?.toInt() ?? 0),
+          const SizedBox(height:8),
+          if(data['status']=='pending')const Text('الكمية والأسعار تُراجع وقت الاعتماد. المخزون والحسابات لم تتغير بعد.'),
+          if(data['status']=='rejected')Text('سبب الرفض: ${data['rejectionReason'] ?? ''}'),
+        ]))),
+        Container(width:double.infinity,color:const Color(0xFF282215),padding:const EdgeInsets.all(8),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+          Text('الأصناف: ${items.length} • العدد: $quantity',style:const TextStyle(color:Colors.white,fontSize:12)),
+          Text('الإجمالي: ${total.toStringAsFixed(2)} ج.م',style:const TextStyle(color:gold,fontSize:20,fontWeight:FontWeight.bold)),
+          Wrap(spacing:16,runSpacing:4,children:[money('المدفوع',paid),money('المتبقي',total-paid)]),
+        ])),
+        const SizedBox(height:6),Wrap(alignment:WrapAlignment.end,spacing:6,runSpacing:4,children:actions),
+      ]))),
+    ));
+  }
+}
+
 Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String,dynamic>> ref,bool owner) async {
   bool busy=false;
   await showDialog<void>(context:context,barrierDismissible:false,builder:(outer)=>StatefulBuilder(builder:(c,update)=>
     StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(stream:ref.snapshots(),builder:(c,snapshot) {
       final data=snapshot.data?.data();
       if(data==null)return AlertDialog(title:const Text('طلب فاتورة موظف'),content:Text(snapshot.hasError?'تعذر تحميل الطلب':'جارٍ التحميل'),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إغلاق'))]);
-      final raw=data['items'] is List ? data['items'] as List : const [];
+      if(!pendingSaleIsVisible(data))return AlertDialog(title:const Text('تم مسح الطلب'),content:const Text('ابدأ فاتورة جديدة من شاشة المبيعات.'),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إغلاق'))]);
       final pending=data['status']=='pending';
-      return AlertDialog(title:Text(pendingSaleStatus(data['status'])),content:SizedBox(width:600,child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,mainAxisSize:MainAxisSize.min,children:[
-        Text('العميل: ${data['customerName'] ?? ''}'),Text('الموظف: ${data['employeeName'] ?? ''}'),
-        for(var i=0;i<raw.length;i++) if(raw[i] is Map) Padding(padding:const EdgeInsets.symmetric(vertical:6),child:Text('${i+1}. ${raw[i]['productName']} — ${raw[i]['quantity']} × ${raw[i]['unitPrice']}')),
-        Text('الإجمالي: ${data['total']} ج.م • المدفوع: ${data['paid']} ج.م'),
-        if(pending)const Text('المخزون والحسابات لم تتغير بعد. الكمية والأسعار تُراجع وقت الاعتماد.'),
-        if(data['status']=='rejected')Text('سبب الرفض: ${data['rejectionReason'] ?? ''}'),
-      ]))),actions:[
+      return PendingSaleInvoiceDialog(data:data,actions:[
         TextButton(onPressed:busy?null:()=>Navigator.pop(c),child:const Text('إغلاق')),
+        if(owner && data['status']=='rejected')TextButton.icon(icon:const Icon(Icons.delete_outline,color:Colors.redAccent),label:const Text('مسح الطلب'),
+          onPressed:busy?null:()async {update(()=>busy=true);final removed=await removeRejectedPendingSale(c,ref);if(!c.mounted)return;if(removed)Navigator.pop(c);else update(()=>busy=false);}),
         if(owner && pending)TextButton(onPressed:busy?null:()async {
           final reason=TextEditingController();
           final result=await showDialog<String>(context:c,builder:(dialog)=>AlertDialog(title:const Text('رفض الطلب'),content:TextField(controller:reason,maxLength:500,decoration:const InputDecoration(labelText:'سبب الرفض')),

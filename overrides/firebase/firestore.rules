@@ -508,6 +508,13 @@ service cloud.firestore {
           || (request.resource.data.status == 'rejected' && request.resource.data.rejectionReason is string
             && request.resource.data.rejectionReason.size() > 0 && request.resource.data.rejectionReason.size() <= 500
             && !exists(/databases/$(database)/documents/sales/$(id))));
+      // Owner-only removal of rejected proposals. Preserve payload and review audit.
+      allow update: if owner() && resource.data.status == 'rejected'
+        && resource.data.get('removed', false) == false
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['removed','removedBy','removedAt'])
+        && request.resource.data.removed == true && request.resource.data.removedBy == request.auth.uid
+        && request.resource.data.removedAt == request.time
+        && !exists(/databases/$(database)/documents/sales/$(id));
       allow delete: if false;
     }
     match /sales/{id} {
@@ -528,7 +535,6 @@ service cloud.firestore {
     }
   }
 }
-
 
 
 
