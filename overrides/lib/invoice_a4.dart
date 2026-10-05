@@ -69,7 +69,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
   }
   final table = pw.Table(columnWidths: {0: const pw.FlexColumnWidth(1.5),
     1: const pw.FlexColumnWidth(1.2), 2: const pw.FlexColumnWidth(.8),
-    3: const pw.FlexColumnWidth(4.5), 4: const pw.FlexColumnWidth(.45)},
+    3: const pw.FlexColumnWidth(4.5), 4:pw.FlexColumnWidth(thermal ? .8 : .45)},
     border: pw.TableBorder.all(color: line, width: .5), children: [
       pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
         children: ['الإجمالي', 'السعر', 'العدد', 'الصنف', 'م'].map((value) =>
