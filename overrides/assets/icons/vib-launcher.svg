@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+<defs><linearGradient id="black" x2="1" y2="1"><stop stop-color="#322b1b"/><stop offset=".55" stop-color="#080808"/><stop offset="1" stop-color="#151515"/></linearGradient><linearGradient id="gold" x2="0" y2="1"><stop stop-color="#ffedaa"/><stop offset=".4" stop-color="#e3bd50"/><stop offset=".7" stop-color="#a37822"/><stop offset="1" stop-color="#f5d96d"/></linearGradient></defs>
+<rect x="8" y="8" width="496" height="496" rx="88" fill="url(#black)" stroke="#d4af37" stroke-width="10"/>
+<path d="M186 91 L212 121 L256 72 L300 121 L326 91 L312 154 L200 154 Z" fill="url(#gold)"/>
+<path d="M110 190 C22 214 32 361 130 376 C69 316 58 251 110 190 M402 190 C490 214 480 361 382 376 C443 316 454 251 402 190" fill="url(#gold)"/>
+<text x="260" y="330" text-anchor="middle" font-family="DejaVu Sans" font-size="150" font-weight="bold" fill="#624312">VIB</text>
+<text x="256" y="325" text-anchor="middle" font-family="DejaVu Sans" font-size="150" font-weight="bold" fill="url(#gold)">VIB</text>
+<text x="256" y="390" text-anchor="middle" font-family="DejaVu Sans" font-size="27" fill="#efd684">ALAA ELGNDY</text>
+<text x="256" y="440" text-anchor="middle" font-family="DejaVu Sans" font-size="30" font-weight="bold" fill="#d4af37">ROLE</text>
+</svg>

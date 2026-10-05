@@ -132,14 +132,14 @@ class InvoiceProductOptionRow extends StatelessWidget {
   final Stream<int?>? quantityStream;
   const InvoiceProductOptionRow({super.key,required this.name,this.unitCost,this.quantityStream,this.saleScreen=false});
   @override Widget build(BuildContext context) => Row(crossAxisAlignment:CrossAxisAlignment.center,children:[
-    Expanded(flex:5,child:Text(name,softWrap:true,style:TextStyle(fontSize:14,color:staffApp ? Colors.lightBlueAccent : null))),
+    Expanded(flex:5,child:Text(name,softWrap:true,style:TextStyle(fontSize:14,color:vibBlue))),
     const SizedBox(width:8),
     Expanded(flex:4,child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
       StreamBuilder<int?>(stream:quantityStream,builder:(context,snapshot)=>Text(
         'المتاح: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.connectionState == ConnectionState.waiting ? 'جارٍ التحميل' : snapshot.data == null ? 'غير متاح' : snapshot.data}',
-        softWrap:true,style:TextStyle(fontSize:12,color:staffApp ? Colors.redAccent : gold))),
+        softWrap:true,style:TextStyle(fontSize:12,color:vibRed))),
       ValueListenableBuilder<bool>(valueListenable:saleCostVisible,builder:(context,visible,_)=>!saleScreen || visible ? Text('تكلفة الوحدة: ${unitCost == null ? 'غير مسجلة' : '${unitCost!.toStringAsFixed(2)} ج.م'}',
-        softWrap:true,style:TextStyle(fontSize:12,color:staffApp ? Colors.greenAccent : null)) : const SizedBox.shrink()),
+        softWrap:true,style:TextStyle(fontSize:12,color:vibNeon)) : const SizedBox.shrink()),
     ])),
   ]);
 }
@@ -230,10 +230,10 @@ class InvoiceCompactTableLine extends StatelessWidget {
         decoration:const BoxDecoration(border:Border(bottom:BorderSide(color:Color(0xFFDDDDDD)))),
         child:Row(textDirection:TextDirection.rtl,children:[
           SizedBox(width:22,child:Text('$number',textAlign:TextAlign.center,style:const TextStyle(color:Colors.black54,fontSize:11))),
-          Expanded(flex:5,child:Text(name,textDirection:TextDirection.rtl,style:TextStyle(color:staffApp ? const Color(0xFF0056B3) : Colors.black,fontSize:12))),
-          Expanded(flex:3,child:value(p.toStringAsFixed(2),background:staffApp ? const Color(0xFFB9F6CA) : null)),
-          Expanded(flex:2,child:value('$q',background:staffApp ? const Color(0xFFFFF59D) : null)),
-          Expanded(flex:3,child:value((p*q).toStringAsFixed(2),background:staffApp ? const Color(0xFF90CAF9) : null)),
+          Expanded(flex:5,child:Text(name,textDirection:TextDirection.rtl,style:TextStyle(color:const Color(0xFF0056B3),fontSize:12))),
+          Expanded(flex:3,child:value(p.toStringAsFixed(2),background:const Color(0xFFB9F6CA))),
+          Expanded(flex:2,child:value('$q',background:const Color(0xFFFFF59D))),
+          Expanded(flex:3,child:value((p*q).toStringAsFixed(2),background:const Color(0xFF90CAF9))),
         ]))));
   }
 }
@@ -293,8 +293,8 @@ class _InvoiceLineEditorDialogState extends State<_InvoiceLineEditorDialog> {
         priceEditable:widget.priceEditable,totalEditable:widget.priceEditable,discountEditable:widget.saleScreen,discountDraft:draftDiscount,showProductActions:false,
         onChoose:() {},onDelete:() {},onChanged:()=>setState(() {})),
       if(widget.stockStream!=null) StreamBuilder<int?>(stream:widget.stockStream,builder:(context,snapshot)=>Text(
-        'الكمية المتوفرة: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.data ?? 'جارٍ التحميل'}',style:TextStyle(color:staffApp ? Colors.redAccent : gold))),
-      if(widget.unitCost!=null) ValueListenableBuilder<bool>(valueListenable:saleCostVisible,builder:(context,visible,_)=>!widget.saleScreen || visible ? Text('سعر التكلفة: ${widget.unitCost!.toStringAsFixed(2)} ج.م',style:TextStyle(color:staffApp ? Colors.greenAccent : gold)) : const SizedBox.shrink()),
+        'الكمية المتوفرة: ${snapshot.hasError ? 'تعذر التحميل' : snapshot.data ?? 'جارٍ التحميل'}',style:TextStyle(color:vibRed))),
+      if(widget.unitCost!=null) ValueListenableBuilder<bool>(valueListenable:saleCostVisible,builder:(context,visible,_)=>!widget.saleScreen || visible ? Text('سعر التكلفة: ${widget.unitCost!.toStringAsFixed(2)} ج.م',style:TextStyle(color:vibNeon)) : const SizedBox.shrink()),
     ]))),
     actions:[
       if(widget.allowDelete) TextButton.icon(icon:const Icon(Icons.delete_outline,color:Colors.redAccent),label:const Text('حذف الصنف'),

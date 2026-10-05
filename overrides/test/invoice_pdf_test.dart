@@ -410,5 +410,29 @@ void main() {
       });
     }
   }
+  for (final paper in ['a4', '80']) {
+    test('approved angled VIB design $paper with complete header and discount', () async {
+      final bytes = await createInvoicePdf('sales', 'APPROVED-DESIGN', {
+        'internalNumber': 8, 'invoiceBarcode': 'VIB-S-000008',
+        'customerName': 'عميل تجريبي', 'customerPhone': '01000000000',
+        'items': [
+          {'productName': 'خلاط حوض', 'quantity': 2, 'basePrice': 350, 'unitPrice': 315, 'discountPercent': 10, 'lineTotal': 630},
+          {'productName': 'محبس نحاس', 'quantity': 4, 'basePrice': 75, 'unitPrice': 67.5, 'discountPercent': 10, 'lineTotal': 270},
+          {'productName': 'طقم إكسسوارات', 'quantity': 1, 'basePrice': 250, 'unitPrice': 225, 'discountPercent': 10, 'lineTotal': 225},
+        ],
+        'total': 1125, 'paid': 1000, 'due': 125,
+        'customerPreviousBalance': 500, 'customerBalanceAfter': 625,
+        'createdAt': Timestamp.fromDate(DateTime(2026, 10, 5, 4)),
+      }, paperChoice: paper, settingsOverride: {
+        'companyName': 'VIB للتجارة والتوزيع', 'address': 'الروضة – طلخا – الدقهلية',
+        'phone': '01211500003', 'phone2': '0502691889', 'whatsapp': '01013631323',
+        'taxNumber': '482/117/702', 'commercialRegister': '132/148',
+      });
+      expect(String.fromCharCodes(bytes.take(4)), '%PDF');
+      Directory('dist').createSync(recursive: true);
+      File('dist/VIB-APPROVED-${paper.toUpperCase()}.pdf').writeAsBytesSync(bytes);
+    });
+  }
+
 }
 

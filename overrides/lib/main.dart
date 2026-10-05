@@ -102,6 +102,9 @@ class _VibBootstrapState extends State<VibBootstrap> {
 }
 
 const gold = Color(0xFFD6AC55);
+const vibBlue = Color(0xFF64B5F6);
+const vibNeon = Color(0xFFB2FF59);
+const vibRed = Color(0xFFFF6B6B);
 final db = FirebaseFirestore.instance;
 Timestamp? activeResetAt;
 
@@ -123,6 +126,11 @@ class VibApp extends StatelessWidget {
       scaffoldBackgroundColor: const Color(0xFF111111),
       colorScheme: ColorScheme.fromSeed(seedColor: gold, brightness: Brightness.dark),
       appBarTheme: const AppBarTheme(backgroundColor: Color(0xFF171717), foregroundColor: gold),
+      textTheme: ThemeData.dark().textTheme.apply(bodyColor: vibBlue, displayColor: vibBlue),
+      iconTheme: const IconThemeData(color: gold),
+      inputDecorationTheme: const InputDecorationTheme(labelStyle: TextStyle(color: vibBlue), errorStyle: TextStyle(color: vibRed)),
+      navigationBarTheme: NavigationBarThemeData(backgroundColor: const Color(0xFF111111),
+        indicatorColor: const Color(0xFF423416), iconTheme: WidgetStateProperty.all(const IconThemeData(color: gold))),
     ),
     home: const Directionality(textDirection: TextDirection.rtl, child: Gate()),
   );
@@ -452,13 +460,13 @@ class _LoginPageState extends State<LoginPage> {
   ))));
 }
 
-const managerNavy = Color(0xFF101E33);
-const managerSurface = Color(0xFF192D45);
-const managerBorder = Color(0xFF30445D);
+const managerNavy = Color(0xFF080808);
+const managerSurface = Color(0xFF171717);
+const managerBorder = Color(0xFF756037);
 ThemeData managerTheme(BuildContext context) => Theme.of(context).copyWith(
   scaffoldBackgroundColor: managerNavy,
   colorScheme: Theme.of(context).colorScheme.copyWith(surface: managerSurface, primary: gold),
-  appBarTheme: const AppBarTheme(backgroundColor: managerNavy, foregroundColor: Colors.white, centerTitle: true, elevation: 0),
+  appBarTheme: const AppBarTheme(backgroundColor: managerNavy, foregroundColor: gold, centerTitle: true, elevation: 0),
   cardTheme: const CardThemeData(color: managerSurface, elevation: 0),
 );
 
@@ -492,7 +500,7 @@ class _HomeState extends State<Home> {
           backgroundColor: managerNavy,
           centerTitle: true,
           toolbarHeight: 78,
-          title:const Column(mainAxisSize:MainAxisSize.min,children:[Text('مبيعات شركة VIP',style:TextStyle(color:gold,fontWeight:FontWeight.w800,fontSize:22)),Text('ALAAELGNDY',style:TextStyle(color:gold,fontSize:14,letterSpacing:2))]),
+          title:const Column(mainAxisSize:MainAxisSize.min,children:[Text('VIB للتجارة والتوزيع',style:TextStyle(color:gold,fontWeight:FontWeight.w800,fontSize:22)),Text('ALAAELGNDY',style:TextStyle(color:gold,fontSize:14,letterSpacing:2))]),
           leading: const ChatShortcut(owner: true),
           actions: [
             Padding(padding: const EdgeInsetsDirectional.only(end: 12), child: IconButton.filledTonal(
@@ -505,7 +513,7 @@ class _HomeState extends State<Home> {
     }
 
     return Scaffold(
-      appBar: AppBar(toolbarHeight:78,title:const Column(mainAxisSize:MainAxisSize.min,children:[Text('مبيعات شركة VIP',style:TextStyle(color:gold,fontSize:20)),Text('ALAAELGNDY',style:TextStyle(color:gold,fontSize:13))]), actions: [
+      appBar: AppBar(toolbarHeight:78,title:const Column(mainAxisSize:MainAxisSize.min,children:[Text('VIB للتجارة والتوزيع',style:TextStyle(color:gold,fontSize:20)),Text('ALAAELGNDY',style:TextStyle(color:gold,fontSize:13))]), actions: [
         const ChatShortcut(owner: false),
         if(widget.canPurchase) IconButton(tooltip:'المشتريات',icon:const Icon(Icons.post_add),onPressed:()=>openPage('مشتريات الموظف',const Purchases(owner:false))),
         IconButton(tooltip: 'خروج', onPressed: () => FirebaseAuth.instance.signOut(), icon: const Icon(Icons.logout)),
@@ -543,11 +551,15 @@ class OwnerDashboard extends StatelessWidget {
     child: InkWell(onTap: onTap, child: SizedBox(height: height, child: Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Container(width: 66, height: 66, decoration: const BoxDecoration(color: Color(0xFF263B53), shape: BoxShape.circle),
+        Container(width: 66, height: 66, decoration: BoxDecoration(
+          gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight,
+            colors: [Color(0xFF3B321C), Color(0xFF080808)]),
+          borderRadius: BorderRadius.circular(16), border: Border.all(color: gold),
+          boxShadow: const [BoxShadow(color: Colors.black, offset: Offset(3, 4), blurRadius: 5)]),
           child: Icon(icon, color: gold, size: 34)),
         const SizedBox(height: 12),
         Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Text(title, textAlign: TextAlign.center,
-          maxLines: 2, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18))),
+          maxLines: 2, style: const TextStyle(color: gold, fontWeight: FontWeight.w700, fontSize: 18))),
       ],
     ))),
   );
@@ -4145,7 +4157,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   String configured(String key, String fallback) {
     final value = '${settings[key] ?? ''}'.trim(); return value.isEmpty ? fallback : value;
   }
-  const company='مبيعات شركة VIP';
+  final company=configured('companyName', 'VIB للتجارة والتوزيع').replaceAll('VIP', 'VIB');
   final address = configured('address', '');
   final taxNumber = configured('taxNumber', ''), commercialRegister = configured('commercialRegister', '');
   final phones = ['phone', 'phone2', 'whatsapp'].map((key) => configured(key, '')).where((x) => x.isNotEmpty).toSet().toList();
@@ -4182,7 +4194,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
 Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<String, dynamic> data,{String paperChoice='a4'}) async {
   try {
     final bytes = await createInvoicePdf(type,id,data,paperChoice:paperChoice);
-    await Printing.sharePdf(bytes: bytes, filename: 'VIP-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf');
+    await Printing.sharePdf(bytes: bytes, filename: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf');
   } catch (e) {
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر إنشاء PDF: $e')));
   }
@@ -4191,7 +4203,7 @@ Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<
 Future<void> printInvoice(BuildContext context, String type, String id, Map<String, dynamic> data, {String? paperChoice}) async {
   try {
     final bytes = await createInvoicePdf(type, id, data, paperChoice: paperChoice);
-    await Printing.layoutPdf(name: 'VIP-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf', onLayout: (_) async => bytes);
+    await Printing.layoutPdf(name: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf', onLayout: (_) async => bytes);
     await db.collection(type).doc(id).set({'printedAt': FieldValue.serverTimestamp(), 'printedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
   } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e'))); }
 }
