@@ -43,6 +43,15 @@ jobs:
       - name: Build iPhone compatible web app
         working-directory: web-project
         run: flutter build web --release --no-wasm-dry-run
+      - name: Check login on iPhone WebKit and mobile Chromium
+        run: |
+          npm install --prefix web-staff --no-save playwright
+          web-staff/node_modules/.bin/playwright install --with-deps webkit chromium
+          node web-staff/smoke.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VIB-STAFF-WEB-SCREENSHOTS
+          path: web-project/smoke/*.png
       - uses: actions/upload-artifact@v4
         with:
           name: VIB-STAFF-WEB
