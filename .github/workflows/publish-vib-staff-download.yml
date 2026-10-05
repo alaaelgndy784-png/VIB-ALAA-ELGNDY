@@ -1,4 +1,4 @@
-name: Publish VIB repayment periods and invoice correction
+name: Publish VIB statements and staff permissions
 on:
   workflow_dispatch:
   push:
@@ -15,20 +15,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37241911538 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
-          test "$(cat source-run.txt)" = "3944c56ef1af8f15ac03a18c58fda39ea9412375 success"
+          gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37245296061 --jq '[.head_sha,.conclusion] | join(" ")' > source-run.txt
+          test "$(cat source-run.txt)" = "7a1498cd404aedaf38d34bb492a301da7e9276f8 success"
       - name: Download tested staff APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37241911538
+          run-id: 37245296061
           github-token: ${{ github.token }}
           path: download
       - name: Download tested manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37241911538
+          run-id: 37245296061
           github-token: ${{ github.token }}
           path: download
       - name: Verify and publish reports APKs
@@ -45,5 +45,5 @@ jobs:
                   assert 'AndroidManifest.xml' in apk.namelist(), path
           PY
           sha256sum download/VIB-Manager-Reports.apk download/VIB-Staff-Reports.apk > download/SHA256SUMS.txt
-          gh release view vib-repayment-period-customer-correction-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-repayment-period-customer-correction-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB dated repayments and invoice correction — 5 October 2026' --notes 'Customer repayment reports use explicit From, To and Confirm controls, inclusive Cairo dates, per-customer totals, dated voucher details, A4 and 80mm printing. Printing refreshes confirmed server data. Switching a cash invoice to credit resets paid to zero and supports partial payment. Invoice correction includes choosing the correct registered customer, atomic transfer of only the invoice debt between accounts, preserved invoice identity, audit records, and receipt guards. Customer reassignment requires deployment of the included Firestore rules; automatic deployment is currently blocked by missing Firebase repository credentials. Install as an update over the matching existing app.'
-          gh release upload vib-repayment-period-customer-correction-20261005 download/VIB-Staff-Reports.apk download/VIB-Manager-Reports.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+          gh release view vib-statements-staff-permissions-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-statements-staff-permissions-20261005 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB statements and employee permissions — 5 October 2026' --notes 'Dated customer and supplier statements with opening and closing balances, product movement trace with invoice, party and employee details, employee colours, manager-controlled purchase permission and sale cost visibility, and employee removal preserving history. Includes prior invoice corrections, repayment periods and compact mobile forms. All 90 Firestore rules tests and Flutter report/widget tests passed. Matching Firestore rules were published to vib-sales on 5 October 2026. Employee purchases are limited to four lines and serials are assigned when reviewed by the manager. Install as an update over the matching existing app.'
+          gh release upload vib-statements-staff-permissions-20261005 download/VIB-Staff-Reports.apk download/VIB-Manager-Reports.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
