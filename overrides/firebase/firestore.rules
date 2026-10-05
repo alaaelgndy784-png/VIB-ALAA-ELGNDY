@@ -483,6 +483,33 @@ service cloud.firestore {
         && request.resource.data.lastEditedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
       allow delete: if false;
     }
+    // Drafts have no financial effect. Only an owner can approve or reject them.
+    match /pendingSales/{id} {
+      allow get: if owner() || (employee() && (!exists(/databases/$(database)/documents/pendingSales/$(id)) || resource.data.employeeId == request.auth.uid));
+      allow list: if owner() || (employee() && resource.data.employeeId == request.auth.uid);
+      allow create: if employee()
+        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey'])
+        && request.resource.data.id == id && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.employeeName == profile().name && request.resource.data.branchId == branch()
+        && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time
+        && request.resource.data.customerId is string && request.resource.data.customerId.size() > 0
+        && request.resource.data.customerName is string && request.resource.data.credit is bool
+        && request.resource.data.items is list && request.resource.data.items.size() > 4 && request.resource.data.items.size() <= 50
+        && request.resource.data.total is number && request.resource.data.total >= 0
+        && request.resource.data.paid is number && request.resource.data.paid >= 0 && request.resource.data.paid <= request.resource.data.total
+        && request.resource.data.requestKey is string && request.resource.data.requestKey.size() <= 100000;
+      allow update: if owner() && resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','saleId','reviewedBy','reviewedAt','rejectionReason'])
+        && request.resource.data.reviewedBy == request.auth.uid && request.resource.data.reviewedAt == request.time
+        && ((request.resource.data.status == 'approved' && request.resource.data.saleId == id
+          && getAfter(/databases/$(database)/documents/sales/$(id)).data.sourceRequestId == id
+          && getAfter(/databases/$(database)/documents/sales/$(id)).data.employeeId == resource.data.employeeId
+          && getAfter(/databases/$(database)/documents/sales/$(id)).data.status == 'completed')
+          || (request.resource.data.status == 'rejected' && request.resource.data.rejectionReason is string
+            && request.resource.data.rejectionReason.size() > 0 && request.resource.data.rejectionReason.size() <= 500
+            && !exists(/databases/$(database)/documents/sales/$(id))));
+      allow delete: if false;
+    }
     match /sales/{id} {
       allow get: if employee() && !exists(/databases/$(database)/documents/sales/$(id));
       allow read: if owner() || (employee() && resource.data.branchId == branch());

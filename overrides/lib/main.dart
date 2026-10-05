@@ -1,4 +1,5 @@
 import 'invoice_serial_core.dart';
+import 'pending_sale_data.dart';
 import 'dart:typed_data';
 import 'dart:async';
 import 'package:record/record.dart';
@@ -36,6 +37,7 @@ part 'cheques.dart';
 part 'chat_alerts.dart';
 
 part 'invoice_editor.dart';
+part 'pending_sales.dart';
 part 'product_import.dart';
 part 'inventory_tools.dart';
 part 'online_payments.dart';
@@ -592,6 +594,8 @@ class OwnerDashboard extends StatelessWidget {
         const SizedBox(width:gap),
         Expanded(child:tile('مواعيد الشيكات',Icons.event_note,() => openPage('مواعيد الشيكات',ChequeAgenda(uid:uid)),132)),
       ]),
+      const SizedBox(height: 12),
+      const PendingSalesShortcut(owner:true),
       const SizedBox(height: 18),
       const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         Icon(Icons.info_outline, color: gold, size: 20), SizedBox(width: 8),
@@ -917,7 +921,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         else if(adding) row.dispose();
       }
       void addSelected(String id) async {
-        if (saving || lines.length >= (owner ? 50 : 4) || lines.any((row) => row.productId == id)) return;
+        if (saving || lines.length >= 50 || lines.any((row) => row.productId == id)) return;
         final product=productDoc(id).data();
         await editSelected(SaleLine(productId:id,unitPrice:(product['price'] as num?)?.toDouble() ?? 0),adding:true);
       }
@@ -930,13 +934,14 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           unitCosts:{for(final product in products) product.id:product.data()['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
           products:[for(final product in products) if(!lines.any((row)=>row.productId == product.id))
             (id:product.id,name:'${product.data()['name'] ?? ''}')],
-          enabled:!saving && lines.length < (owner ? 50 : 4),onSelect:addSelected,
+          enabled:!saving && lines.length < 50,onSelect:addSelected,
           onSearch:() async {
             final id=await selectSaleProduct(c,products,lines.map((row)=>row.productId).whereType<String>().toSet());
             if(id != null && c.mounted) addSelected(id);
           },
         ),
         body:checkout ? ListView(children:[
+          if(!owner && lines.length > 4) const Padding(padding:EdgeInsets.all(8),child:Text('أكثر من ٤ بنود: تُرسل للمدير، ولا تخصم المخزون أو تسجل الحسابات حتى الاعتماد.')),
           PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
             paid:paid,enabled:!saving,partyLabel:'العميل',
             onModeChanged:(value)=>update(() => credit=value),onChanged:()=>update(() {})),
@@ -975,16 +980,12 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           TextButton(onPressed:saving ? null : () {if(checkout) {update(()=>checkout=false);} else {Navigator.pop(c);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
             FocusScope.of(c).unfocus();
-            if (!owner && lines.length > 4) {
-              await showInvoiceSaveProblem(c, 'فاتورة الموظف تقبل حتى 4 أصناف مختلفة لضمان حفظ المخزون والحسابات معًا. استخدم فاتورة أخرى لباقي الأصناف.');
-              return;
-            }
             if (lines.isEmpty) {
               await showInvoiceSaveProblem(c, 'أضف منتجًا واحدًا على الأقل قبل حفظ الفاتورة');
               return;
             }
             if (!checkout) {update(() => checkout=true);return;}
-            final entries = <({String id, String name, int qty, double price, double? cost, double discount, double basePrice})>[];
+            final entries = <SaleEntry>[];
             double total = 0;
 
             for (final row in lines) {
@@ -1022,186 +1023,18 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
             update(() => saving = true);
             try {
-                final savedInvoice = await db.runTransaction<Map<String, dynamic>>((tx) async {
-                final actor = FirebaseAuth.instance.currentUser!.uid;
-                final actorProfile = (await tx.get(db.collection('users').doc(actor))).data();
-                if (actorProfile?['active'] != true || (!owner && actorProfile?['role'] != 'employee')) {
-                  throw Exception('الحساب غير مفعل');
-                }
-                final actualBranch = owner ? branchId : '${actorProfile?['branchId'] ?? ''}';
-                if (actualBranch.isEmpty || (!owner && entries.length > 4)) {
-                  throw Exception('فاتورة الموظف تقبل حتى 4 أصناف مختلفة');
-                }
-                final requestKey = jsonEncode({'customerId': customerId, 'credit': credit, 'paid': payment,
-                  if(owner) 'note':note.text.trim(),
-                  'items': entries.map((e) => {'id': e.id, 'qty': e.qty, 'price': e.price}).toList()});
-                final priorSale = (await tx.get(saleRef)).data();
-                if (priorSale != null) {
-                  if (priorSale['employeeId'] != actor || priorSale['requestKey'] != requestKey) {
-                    throw Exception('الفاتورة محفوظة بالفعل ببيانات مختلفة');
-                  }
-                  return priorSale;
-                }
-                final liveProducts = <String, Map<String, dynamic>>{};
-                for (final e in entries) {
-                  final product = (await tx.get(db.collection('products').doc(e.id))).data();
-                  if (product == null || product['active'] != true) throw Exception('الصنف غير متاح');
-                  if (!owner && actorProfile?['canEditSalePrice']!=true && ((product['price'] as num?)?.toDouble() != e.basePrice || (e.price-e.basePrice*(1-e.discount/100)).abs()>0.000001)) {
-                    throw Exception('سعر الصنف اتغير؛ افتح الفاتورة من جديد');
-                  }
-                  final cost = (product['purchasePrice'] as num?)?.toDouble();
-                  if (cost != null && e.price < cost && !(owner && allowBelowCost)) {
-                    throw Exception('سعر البيع أقل من التكلفة');
-                  }
-                  liveProducts[e.id] = product;
-                }
-                final stockSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
-                for (final e in entries) {
-                  stockSnaps[e.id] = await tx.get(db.collection('stock').doc('main_${e.id}'));
-                }
-
-                DocumentSnapshot<Map<String, dynamic>>? customerSnap;
-                if (customerId.isNotEmpty) customerSnap = await tx.get(db.collection('customers').doc(customerId));
-
-                DocumentSnapshot<Map<String, dynamic>>? cashSnap;
-                if (payment > 0) cashSnap = await tx.get(db.collection('settings').doc('cash'));
-
-                final invoiceSerial=owner ? await readInvoiceSerial(tx,'sales',saleRef.id) : null;
-                if(invoiceSerial!=null)writeInvoiceSerial(tx,invoiceSerial);
-                final items = <Map<String, dynamic>>[];
-                for (final e in entries) {
-                  final current = (stockSnaps[e.id]?.data()?['quantity'] as num?)?.toInt() ?? 0;
-                  if (current < e.qty && !(owner && allowShortage)) {
-                    throw Exception('الكمية غير متاحة للصنف ${e.name}');
-                  }
-                  final after = current - e.qty;
-                  final lineTotal = e.qty * e.price;
-
-                  items.add({
-                    'productId': e.id,
-                    'productName': '${liveProducts[e.id]!['name']}',
-                    'quantity': e.qty,
-                    'unitPrice':e.price,
-                    'basePrice':e.basePrice,'discountPercent':e.discount,
-                    'lineTotal': lineTotal,
-                    'purchasePriceAtSale': (liveProducts[e.id]!['purchasePrice'] as num?)?.toDouble() ?? 0,
-                  });
-
-                  tx.set(db.collection('stock').doc('main_${e.id}'), {
-                    'branchId': 'main',
-                    'productId': e.id,
-                    'quantity': after,
-                    'lastSaleId': saleRef.id,
-                  }, SetOptions(merge: true));
-
-                  tx.set(db.collection('stockMovements').doc('${saleRef.id}_${e.id}'), {
-                    'productId': e.id,
-                    'productName': '${liveProducts[e.id]!['name']}',
-                    'branchId': 'main',
-                    'kind': 'sale',
-                    'quantity': -e.qty,
-                    'balanceAfter': after,
-                    'referenceId': saleRef.id,
-                    'actorId': actor,
-                    'createdAt': FieldValue.serverTimestamp(),
-                  });
-                }
-
-                double previousCustomerBalance = 0;
-                double customerBalanceAfter = 0;
-                String customerName = '';
-                String customerPhone = '';
-
-                if (customerId.isNotEmpty) {
-                  if (customerSnap == null || !customerSnap.exists || customerSnap.data()?['active'] == false) throw Exception('العميل غير موجود أو غير نشط');
-                  previousCustomerBalance = (customerSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
-                  customerBalanceAfter = previousCustomerBalance + due;
-                  customerName = '${customerSnap.data()?['name'] ?? ''}';
-                  customerPhone = '${customerSnap.data()?['phone'] ?? ''}';
-                  if (due > 0) {
-                    tx.update(db.collection('customers').doc(customerId), {
-                      'balance': customerBalanceAfter,
-                      'lastSaleId': saleRef.id,
-                      'updatedAt': FieldValue.serverTimestamp(),
-                    });
-                    tx.set(db.collection('accountMovements').doc('${saleRef.id}_customer'), {
-                      'accountType': 'customers',
-                      'accountId': customerId,
-                      'accountName': customerName,
-                      'kind': 'sale',
-                      'amount': due,
-                      'balanceBefore': previousCustomerBalance,
-                      'balanceAfter': customerBalanceAfter,
-                      'referenceId': saleRef.id,
-                      'createdAt': FieldValue.serverTimestamp(),
-                      'actorId': actor,
-                    });
-                  }
-                }
-
-                if (payment > 0) {
-                  final beforeCash = (cashSnap?.data()?['balance'] as num?)?.toDouble() ?? 0;
-                  final afterCash = beforeCash + payment;
-                  tx.set(db.collection('settings').doc('cash'), {
-                    'balance': afterCash,
-                    'lastSaleId': saleRef.id,
-                    'updatedAt': FieldValue.serverTimestamp(),
-                  }, SetOptions(merge: true));
-                  tx.set(db.collection('accountMovements').doc('${saleRef.id}_cash'), {
-                    'accountType': 'cash',
-                    'kind': 'sale',
-                    'accountId': customerId,
-                    'accountName': customerName,
-                    'amount': payment,
-                    'delta': payment,
-                    'balanceBefore': beforeCash,
-                    'balanceAfter': afterCash,
-                    'referenceId': saleRef.id,
-                    'reason': 'تحصيل فاتورة مبيعات',
-                    'actorId': actor,
-                    'createdAt': FieldValue.serverTimestamp(),
-                  });
-                }
-
-                final invoiceData = <String, dynamic>{
-                  'id': saleRef.id,
-                  if(invoiceSerial!=null)'internalNumber':invoiceSerial.data['internalNumber'],
-                  if(invoiceSerial!=null)'invoiceBarcode':invoiceSerial.data['invoiceBarcode'],
-                  'branchId': actualBranch,
-                  'stockBranchId': 'main',
-                  'requestKey': requestKey,
-                  'stockIndex': {for (var i = 0; i < items.length; i++) items[i]['productId'] as String: i},
-                  'cashBefore': (cashSnap?.data()?['balance'] as num?)?.toDouble() ?? 0,
-                  'cashAfter': ((cashSnap?.data()?['balance'] as num?)?.toDouble() ?? 0) + payment,
-                  'employeeId': actor,
-                  'customerId': customerId,
-                  'customerName': customerName,
-                  'customerPhone': customerPhone,
-                  if(owner && note.text.trim().isNotEmpty) 'note':note.text.trim(),
-                  'customerPreviousBalance': previousCustomerBalance,
-                  'customerBalanceAfter': customerBalanceAfter,
-                  'items': items,
-                  'itemCount': items.length,
-                  'total': total,
-                  'paid': payment,
-                  'due': due,
-                  'paymentStatus': due > 0 ? 'credit' : 'cash',
-                  'status': 'completed',
-                  'createdAt': FieldValue.serverTimestamp(),
-                  if (items.length == 1) 'productId': items.first['productId'],
-                  if (items.length == 1) 'productName': items.first['productName'],
-                  if (items.length == 1) 'quantity': items.first['quantity'],
-                  if (items.length == 1) 'unitPrice': items.first['unitPrice'],
-                  if (owner && (allowShortage || allowBelowCost)) 'managerOverride': {
-                    'reason': reason.text.trim(),
-                    'allowShortage': allowShortage,
-                    'allowBelowCost': allowBelowCost,
-                    'actorId': actor,
-                  },
-                };
-                tx.set(saleRef, invoiceData);
-                return {...invoiceData, 'createdAt': Timestamp.now()};
-                });
+              if (!owner && entries.length > 4) {
+                await submitPendingSale(saleRef.id, entries, customerId, credit, payment, total);
+                if (c.mounted) Navigator.pop(c);
+                if (context.mounted) await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
+                  title:const Text('تم إرسال الفاتورة للمدير'),
+                  content:const Text('في انتظار الاعتماد. لم يتم خصم المخزون أو تسجيل الحسابات بعد. تابع الحالة من المبيعات ← فواتير الموظف.'),
+                  actions:[TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('تم'))]));
+                return;
+              }
+              final savedInvoice = await commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
+                total:total,payment:payment,credit:credit,customerId:customerId,saleRef:saleRef,
+                invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
 
               if (c.mounted) Navigator.pop(c);
               if (context.mounted) await showInvoiceSavedActions(context, 'sales', saleRef.id, savedInvoice);
@@ -1212,7 +1045,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 await showInvoiceSaveProblem(c, message);
               }
             }
-          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? 'تأكيد الحفظ' : 'حفظ الفاتورة')),
+          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? (!owner && lines.length > 4 ? 'إرسال للمدير' : 'تأكيد الحفظ') : (!owner && lines.length > 4 ? 'مراجعة وإرسال' : 'حفظ الفاتورة'))),
         ],
       );
     }),
@@ -1256,6 +1089,7 @@ class _SalesState extends State<Sales> {
       ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
     return Column(children: [
       Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة'), onPressed: () => newSaleDialog(context, owner, branchId))),
+      Padding(padding:const EdgeInsets.symmetric(horizontal:12),child: PendingSalesShortcut(owner:owner)),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Wrap(spacing: 8, runSpacing: 8, children: [
         OutlinedButton.icon(icon: const Icon(Icons.calendar_month), label: const Text('فواتير المبيعات'), onPressed: () async {
           final date = await showDatePicker(context: context, initialDate: selectedDate, firstDate: DateTime(2020), lastDate: DateTime.now().add(const Duration(days: 365)));

@@ -413,3 +413,78 @@ for(const n of [1,4])test('staff percentage discount without manual price permis
 });
 test('discount base cannot disguise unauthorized manual price',async()=>assertFails(saleBatch(env.authenticatedContext('staff').firestore(),{unitPrice:11,mutate:s=>Object.assign(s.items[0],{basePrice:15,discountPercent:10})})));
 test('invalid discount percentage rejected',async()=>assertFails(saleBatch(env.authenticatedContext('staff').firestore(),{mutate:s=>Object.assign(s.items[0],{discountPercent:-1})})));
+
+function pendingDraft({n=5,mutate=()=>{}}={}) {
+  const r={id:'request',employeeId:'staff',employeeName:'Staff',branchId:'staffbranch',customerId:'customer',customerName:'Customer',
+    credit:true,paid:10,total:n*24.7,items:Array.from({length:n},(_,i)=>({productId:'p'+i,productName:'Product'+i,
+      quantity:2,unitPrice:12.35,basePrice:12.35,discountPercent:0})),status:'pending',createdAt:serverTimestamp(),requestKey:'draft'};
+  mutate(r);return r;
+}
+async function approvePending(db,{shortage=false}={}) {
+  return runTransaction(db,async tx=>{
+    const ref=doc(db,'pendingSales/request'),r=(await tx.get(ref)).data(),saleRef=doc(db,'sales/request');
+    const prior=await tx.get(saleRef);if(prior.exists())return prior.data();
+    if(r.status!=='pending')throw new Error('Not pending');
+    const stocks=await Promise.all(r.items.map(x=>tx.get(doc(db,'stock/main_'+x.productId))));
+    const c=(await tx.get(doc(db,'customers/customer'))).data(),cash=(await tx.get(doc(db,'settings/cash'))).data();
+    for(let i=0;i<r.items.length;i++)if(stocks[i].data().quantity<r.items[i].quantity || shortage)throw new Error('Shortage');
+    const total=r.items.reduce((sum,x)=>sum+x.quantity*x.unitPrice,0),due=total-r.paid;
+    const s={id:'request',sourceRequestId:'request',employeeId:r.employeeId,approvedBy:'owner',branchId:r.branchId,status:'completed',
+      customerId:r.customerId,total,paid:r.paid,due,itemCount:r.items.length,items:r.items,createdAt:serverTimestamp()};
+    tx.set(saleRef,s);
+    for(let i=0;i<r.items.length;i++)tx.update(doc(db,'stock/main_'+r.items[i].productId),{quantity:stocks[i].data().quantity-r.items[i].quantity,lastSaleId:'request'});
+    tx.update(doc(db,'customers/customer'),{balance:c.balance+due,lastSaleId:'request'});
+    tx.update(doc(db,'settings/cash'),{balance:cash.balance+r.paid,lastSaleId:'request'});
+    tx.update(ref,{status:'approved',saleId:'request',reviewedBy:'owner',reviewedAt:serverTimestamp()});
+    return s;
+  });
+}
+test('five and fifty item drafts have no financial effect before owner approval',async()=>{
+  const db=env.authenticatedContext('staff').firestore();
+  for(const n of [5,50])await assertSucceeds(setDoc(doc(db,'pendingSales/'+(n===5?'request':'large')),
+    pendingDraft({n,mutate:r=>r.id=n===5?'request':'large'})));
+  assert.equal((await getDoc(doc(db,'stock/main_p0'))).data().quantity,10);
+  assert.equal((await getDoc(doc(db,'settings/cash'))).data().balance,500);
+  assert.equal((await getDoc(doc(db,'customers/customer'))).data().balance,100);
+  assert.equal((await getDoc(doc(db,'sales/request'))).exists(),false);
+});
+test('only submitting staff or owner can read drafts; employees cannot approve, edit or delete',async()=>{
+  const db=env.authenticatedContext('staff').firestore(),ref=doc(db,'pendingSales/request');await setDoc(ref,pendingDraft());
+  const other=env.authenticatedContext('other',{role:'employee'}).firestore();
+  await assertFails(getDoc(doc(other,'pendingSales/request')));
+  await assertFails(setDoc(ref,{status:'approved'},{merge:true}));
+  await assertFails(setDoc(ref,{paid:0},{merge:true}));await assertFails(deleteDoc(ref));
+  await assertSucceeds(getDocs(query(collection(db,'pendingSales'),require('firebase/firestore').where('employeeId','==','staff'))));
+  await assertFails(getDocs(collection(db,'pendingSales')));
+});
+for(const [name,mutate] of [['forged actor',r=>r.employeeId='owner'],['forged branch',r=>r.branchId='other'],
+  ['completed draft',r=>r.status='approved'],['negative payment',r=>r.paid=-1],['too many items',r=>r.items=Array(51).fill({})]])
+  test('pending draft rejects '+name,async()=>assertFails(setDoc(doc(env.authenticatedContext('staff').firestore(),'pendingSales/request'),pendingDraft({mutate}))));
+test('owner approval posts five items once across retries, retaining submitting employee',async()=>{
+  await setDoc(doc(env.authenticatedContext('staff').firestore(),'pendingSales/request'),pendingDraft());
+  const db=env.authenticatedContext('owner').firestore();
+  await assertSucceeds(approvePending(db));await assertSucceeds(approvePending(db));
+  assert.equal((await getDoc(doc(db,'stock/main_p4'))).data().quantity,8);
+  assert.ok(Math.abs((await getDoc(doc(db,'customers/customer'))).data().balance-213.5)<.000001);
+  assert.equal((await getDoc(doc(db,'settings/cash'))).data().balance,510);
+  assert.equal((await getDoc(doc(db,'pendingSales/request'))).data().status,'approved');
+  assert.equal((await getDoc(doc(db,'sales/request'))).data().employeeId,'staff');
+});
+test('failed approval leaves proposal pending and all balances unchanged',async()=>{
+  await setDoc(doc(env.authenticatedContext('staff').firestore(),'pendingSales/request'),pendingDraft());
+  const db=env.authenticatedContext('owner').firestore();await assert.rejects(approvePending(db,{shortage:true}));
+  assert.equal((await getDoc(doc(db,'pendingSales/request'))).data().status,'pending');
+  assert.equal((await getDoc(doc(db,'sales/request'))).exists(),false);
+  assert.equal((await getDoc(doc(db,'stock/main_p0'))).data().quantity,10);
+  assert.equal((await getDoc(doc(db,'settings/cash'))).data().balance,500);
+});
+test('owner rejection is final and requires a reason; approval requires linked completed sale',async()=>{
+  await setDoc(doc(env.authenticatedContext('staff').firestore(),'pendingSales/request'),pendingDraft());
+  const db=env.authenticatedContext('owner').firestore(),ref=doc(db,'pendingSales/request');
+  await assertFails(setDoc(ref,{status:'approved',saleId:'request',reviewedBy:'owner',reviewedAt:serverTimestamp()},{merge:true}));
+  await assertFails(setDoc(ref,{status:'rejected',reviewedBy:'owner',reviewedAt:serverTimestamp(),rejectionReason:''},{merge:true}));
+  await assertSucceeds(setDoc(ref,{status:'rejected',reviewedBy:'owner',reviewedAt:serverTimestamp(),rejectionReason:'Stock shortage'},{merge:true}));
+  await assertFails(setDoc(ref,{status:'pending'},{merge:true}));
+  await assert.rejects(approvePending(db));
+  assert.equal((await getDoc(doc(db,'sales/request'))).exists(),false);
+});
