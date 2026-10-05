@@ -10,4 +10,4 @@ The `Build free VIB Staff web app` workflow builds and uploads `VIB-STAFF-WEB` e
 
 Publishing verifies that billing is disabled before doing anything, creates/reuses `VIB Staff Web`, rebuilds with its registered app ID, then deploys **Hosting only** to `https://vib-sales.web.app`. It does not change Firestore rules, existing customer data, billing, Cloud Storage, Functions or SMS. If billing cannot be verified, deployment stops. Spark quotas apply across Android and web; quota exhaustion can interrupt the service but does not upgrade the project or charge it.
 
-The bundle built without credentials uses the existing staff Firebase app ID as a development fallback. The publication step replaces it with the registered web app ID. Do not describe the URL as live until deployment succeeds.
+The bundle uses the registered VIB Staff Web configuration. The publication step also explicitly selects that web app ID. Do not describe the URL as live until deployment succeeds.

@@ -8,8 +8,8 @@ s=s.replace('show AudioPlayer, DeviceFileSource;', 'show AudioPlayer, DeviceFile
 s=s.replace("  final packageName = (await PackageInfo.fromPlatform()).packageName;", """  if (kIsWeb) {
     staffApp = true;
     return const FirebaseOptions(
-      apiKey: _vibApiKey,
-      appId: String.fromEnvironment('FIREBASE_WEB_APP_ID', defaultValue: _staffFirebaseAppId),
+      apiKey: String.fromEnvironment('FIREBASE_WEB_API_KEY', defaultValue: 'AIzaSyAhQPcgPFJHeVO3WfHFbXl5C8LjPw8MlpM'),
+      appId: String.fromEnvironment('FIREBASE_WEB_APP_ID', defaultValue: '1:200962643703:web:f11fbe2ff566c7352c65f2'),
       messagingSenderId: _vibSenderId, projectId: _vibProjectId,
       authDomain: 'vib-sales.firebaseapp.com',
     );
