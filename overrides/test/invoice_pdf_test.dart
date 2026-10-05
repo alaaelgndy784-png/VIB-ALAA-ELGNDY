@@ -390,7 +390,7 @@ void main() {
     expect(text, isNot(contains('تم حفظ')));
   });
   final rows = [
-    {'productName': 'حنفية غسالة تركي', 'quantity': 2, 'unitPrice': 175, 'lineTotal': 350},
+    {'productName': 'حنفية غسالة تركي', 'quantity':2,'unitPrice':157.5,'lineTotal':315,'basePrice':175,'discountPercent':10},
     {'productName': 'حنفية نصف بوصة الحياة', 'quantity': 3, 'unitPrice': 195, 'lineTotal': 585},
     {'productName': 'طاسة دش الحياة مقاس 20 × 20', 'quantity': 1, 'unitPrice': 325, 'lineTotal': 325},
   ];

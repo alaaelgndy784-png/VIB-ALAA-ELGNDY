@@ -79,7 +79,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
         decoration: pw.BoxDecoration(color: i.isEven ? pale : PdfColors.white), children: [
           money(items[i]['lineTotal'] ?? ((items[i]['quantity'] as num?) ?? 0) * ((items[i][isSale ? 'unitPrice' : 'unitCost'] as num?) ?? 0)),
           money(items[i][isSale ? 'unitPrice' : 'unitCost']), '${items[i]['quantity'] ?? 0}',
-          '${items[i]['productName'] ?? ''}', '${i + 1}',
+          '${items[i]['productName'] ?? ''}${((items[i]['discountPercent'] as num?) ?? 0)>0 ? '\nخصم ${items[i]['discountPercent']}%' : ''}', '${i + 1}',
         ].asMap().entries.map((entry) => pw.Padding(
           padding: pw.EdgeInsets.symmetric(horizontal:thermal ? 2 : 5,vertical:thermal ? 5 : 8),
           child: txt(entry.value, align: entry.key == 3 ? pw.TextAlign.right : pw.TextAlign.center))).toList()),
