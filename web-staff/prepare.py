@@ -9,8 +9,9 @@ p=root/'lib/main.dart'
 s=p.read_text()
 s=s.replace("import 'package:flutter/material.dart';", "import 'package:flutter/material.dart';\nimport 'package:flutter/foundation.dart' show kIsWeb;")
 s=s.replace('show AudioPlayer, DeviceFileSource;', 'show AudioPlayer, DeviceFileSource, UrlSource;')
-s=s.replace("  final packageName = (await PackageInfo.fromPlatform()).packageName;", """  if (kIsWeb) {
-    staffApp = " + ("true" if is_staff else "false") + ";
+web_staff_value = "true" if is_staff else "false"
+s=s.replace("  final packageName = (await PackageInfo.fromPlatform()).packageName;", f"""  if (kIsWeb) {{
+    staffApp = {web_staff_value};
     return const FirebaseOptions(
       apiKey: String.fromEnvironment('FIREBASE_WEB_API_KEY', defaultValue: 'AIzaSyAhQPcgPFJHeVO3WfHFbXl5C8LjPw8MlpM'),
       appId: String.fromEnvironment('FIREBASE_WEB_APP_ID', defaultValue: '1:200962643703:web:f11fbe2ff566c7352c65f2'),
