@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        app: [manager, staff]
+        app: [manager]
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -61,15 +61,14 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          pattern: VIB-SALES-*-WEB
+          name: VIB-SALES-manager-WEB
           path: web-artifacts
       - name: Assemble manager and staff Hosting paths
         run: |
-          mkdir -p public/manager public/staff
+          mkdir -p public/manager
           cp -R web-artifacts/VIB-SALES-manager-WEB/. public/manager/
-          cp -R web-artifacts/VIB-SALES-staff-WEB/. public/staff/
           cat > firebase.json <<'JSON'
-          {"hosting":{"site":"vib-sales","public":"public","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"/manager/**","destination":"/manager/index.html"},{"source":"/staff/**","destination":"/staff/index.html"}],"headers":[{"source":"/manager/index.html","headers":[{"key":"Cache-Control","value":"no-cache"}]},{"source":"/staff/index.html","headers":[{"key":"Cache-Control","value":"no-cache"}]}]}}
+          {"hosting":{"site":"vib-sales","public":"public","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"/manager/**","destination":"/manager/index.html"}],"headers":[{"source":"/manager/index.html","headers":[{"key":"Cache-Control","value":"no-cache"}]}]}}
           JSON
       - name: Check Firebase Hosting credentials
         id: hosting
