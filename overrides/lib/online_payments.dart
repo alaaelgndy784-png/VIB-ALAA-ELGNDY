@@ -96,7 +96,7 @@ class _GeideaPaymentsState extends State<GeideaPayments> {
       const SizedBox(height:10),
       if(loading)const LinearProgressIndicator(),
       if(error.isNotEmpty)Padding(padding:const EdgeInsets.symmetric(vertical:8),child:Text(error,style:const TextStyle(color:Colors.orangeAccent))),
-      if(!enabled)const Padding(padding:EdgeInsets.symmetric(vertical:8),child:Text('الخدمة غير مفعّلة بعد. يلزم حساب تاجر جيديا وربط حساب بنك مصر، ثم إعداد مفاتيح الربط على السيرفر.',style:TextStyle(color:Colors.orangeAccent))),
+      if(!enabled)const Padding(padding:EdgeInsets.symmetric(vertical:8),child:Text('إدخال بياناتك في موقع جيديا لا يفعّل الربط داخل البرنامج تلقائيًا. يلزم تفعيل حساب التاجر ثم ضبط المفتاح العام وكلمة API السرية بأمان على خادم البرنامج. لا ترسل كلمة السر هنا ولا تكتبها في التطبيق؛ بعد الإعداد نختبر وضع Sandbox ثم نفعّل التشغيل الحقيقي.',style:TextStyle(color:Colors.orangeAccent))),
       if(enabled && mode=='test')const Text('وضع الاختبار — لا يغيّر أرصدة العملاء',style:TextStyle(color:Colors.orangeAccent)),
       OutlinedButton.icon(onPressed:()=>launchUrl(Uri.parse('https://www.geidea.net/egy/en/'),mode:LaunchMode.externalApplication),icon:const Icon(Icons.open_in_new),label:const Text('موقع جيديا وتفعيل حساب التاجر')),
       TextField(controller:invoice,readOnly:widget.invoiceId!=null,onChanged:(_)=>requestId='',decoration:const InputDecoration(labelText:'رقم فاتورة المبيعات')),

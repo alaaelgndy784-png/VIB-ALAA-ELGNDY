@@ -2323,16 +2323,47 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
 class AccountMovements extends StatelessWidget {
   const AccountMovements({super.key});
   @override
-  Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-    stream: db.collection('accountMovements').orderBy('createdAt', descending: true).limit(500).snapshots(),
-    builder: (context, snap) {
-      if (snap.hasError) return const Center(child: Text('تعذر تحميل الحركات'));
-      if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-      final rows = snap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
-      if (rows.isEmpty) return const Center(child: Text('لا توجد حركات بعد'));
-      return ListView(children: rows.map((d) { final m = d.data(); return ListTile(title: Text('${m['accountName'] ?? ''} • ${movementName('${m['kind']}')}'), subtitle: Text(formatDate(m['createdAt'])), trailing: Text('${m['amount'] ?? 0} ج.م')); }).toList());
-    },
-  );
+  Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
+    stream: db.collection('sales').orderBy('createdAt',descending:true).limit(500).snapshots(),
+    builder:(context,salesSnap){
+      if(salesSnap.hasError)return const Center(child:Text('تعذر تحميل فواتير المبيعات'));
+      if(!salesSnap.hasData)return const Center(child:CircularProgressIndicator());
+      return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
+        stream:db.collection('purchases').orderBy('createdAt',descending:true).limit(500).snapshots(),
+        builder:(context,purchaseSnap){
+          if(purchaseSnap.hasError)return const Center(child:Text('تعذر تحميل فواتير المشتريات'));
+          if(!purchaseSnap.hasData)return const Center(child:CircularProgressIndicator());
+          final sales=salesSnap.data!.docs.where((d)=>visibleAfterReset(d.data())&&d.data()['status']=='completed').toList();
+          final purchases=purchaseSnap.data!.docs.where((d)=>visibleAfterReset(d.data())&&d.data()['status']=='completed').toList();
+          double val(Map<String,dynamic> d,String key)=>((d[key] as num?)?.toDouble()??0);
+          double total(List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,String key)=>rows.fold(0,(s,d)=>s+val(d.data(),key));
+          final st=total(sales,'total'), sp=total(sales,'paid'), sd=total(sales,'due');
+          final pt=total(purchases,'total'), pp=total(purchases,'paid'), pd=total(purchases,'due');
+          Widget pane(String title,List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,Color color,String kind){
+            return SizedBox(width:340,child:Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+              Text(title,textAlign:TextAlign.center,style:TextStyle(color:color,fontWeight:FontWeight.bold,fontSize:18)),
+              const Divider(),
+              SizedBox(height:340,child:rows.isEmpty?const Center(child:Text('لا توجد فواتير')):ListView(children:rows.map((d){
+                final x=d.data(); return ListTile(dense:true,title:Text('${x['customerName']??x['supplierName']??'طرف غير محدد'}'),subtitle:Text('فاتورة: ${x['invoiceNumber']??d.id}\n${formatDate(x['createdAt'])}'),trailing:Text('${val(x,'total').toStringAsFixed(2)} ج.م'));
+              }).toList())),
+            ]))));
+          }
+          return ListView(padding:const EdgeInsets.all(8),children:[
+            SingleChildScrollView(scrollDirection:Axis.horizontal,child:Row(crossAxisAlignment:CrossAxisAlignment.start,children:[
+              pane('فواتير المبيعات',sales,Colors.lightBlueAccent,'sale'),pane('فواتير المشتريات',purchases,Colors.orangeAccent,'purchase')
+            ])),
+            Card(child:Padding(padding:const EdgeInsets.all(14),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+              const Text('إجمالي الحركة خلال الفترة المعروضة',style:TextStyle(color:gold,fontWeight:FontWeight.bold,fontSize:18)),
+              Text('المبيعات • إجمالي الفواتير: ${st.toStringAsFixed(2)} ج.م | المدفوع: ${sp.toStringAsFixed(2)} ج.م | المتبقي: ${sd.toStringAsFixed(2)} ج.م'),
+              Text('المشتريات • إجمالي الفواتير: ${pt.toStringAsFixed(2)} ج.م | المدفوع: ${pp.toStringAsFixed(2)} ج.م | المتبقي: ${pd.toStringAsFixed(2)} ج.م'),
+              const Divider(),
+              Text('صافي المبيعات بعد المشتريات: ${(st-pt).toStringAsFixed(2)} ج.م'),
+              Text('صافي المدفوع نقدًا: ${(sp-pp).toStringAsFixed(2)} ج.م'),
+              Text('عدد فواتير المبيعات: ${sales.length} | عدد فواتير المشتريات: ${purchases.length}')
+            ])))
+          ]);
+        });
+    });
 }
 
 String movementName(String kind) => switch (kind) { 'purchase' => 'مشتريات', 'payment' => 'سداد مورد', 'collection' => 'تحصيل عميل', 'sale' => 'مبيعات', 'sales_return' => 'مرتجع مبيعات', 'purchase_return' => 'مرتجع مشتريات', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر', 'adjustment' => 'تسوية مخزون', 'saleCorrection' => 'تعديل فاتورة بيع', 'purchaseCorrection' => 'تعديل فاتورة مشتريات', 'purchasePayment' => 'سداد فاتورة مشتريات', 'supplierPayment' => 'سداد مورد', 'customerCollection' => 'تحصيل عميل', 'deposit' => 'إيداع بالصندوق', 'withdrawal' => 'سحب من الصندوق', 'expense' => 'مصروف', 'opening' => 'رصيد افتتاحي', _ => kind };
@@ -2546,6 +2577,18 @@ ReceiptDayReport summarizeReceiptBetween(List<Map<String,dynamic>> receipts,Date
   return ReceiptDayReport(customers, count, totalCents);
 }
 
+List<Map<String,dynamic>> receiptRowsForCustomer(List<Map<String,dynamic>> rows,String customerId)=>
+  rows.where((row)=>'${row['customerId']??''}'==customerId).toList();
+
+String receiptDisplayNumber(Map<String,dynamic> row) {
+  final existing='${row['receiptNumber']??''}'.trim();
+  if(existing.isNotEmpty)return existing;
+  final stamp=receiptEffectiveTimestamp(row);
+  final date=stamp is Timestamp?DateFormat('yyyyMMdd').format(stamp.toDate().toLocal()):'';
+  final id='${row['id']??''}';
+  return 'VIB-RC-$date-${id.length>6?id.substring(0,6).toUpperCase():id.toUpperCase()}';
+}
+
 Timestamp? receiptEffectiveTimestamp(Map<String,dynamic> row)=>(row['receiptDate'] ?? row['createdAt']) as Timestamp?;
 
 double? parseReceiptAmount(String value) {
@@ -2564,68 +2607,60 @@ class CustomerPaymentReport extends StatefulWidget {
 }
 
 class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
-  late DateTime day, endDay;
-  late final Stream<QuerySnapshot<Map<String, dynamic>>> receipts;
-  @override
-  void initState() {
-    super.initState();
-    final now=tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
+  late DateTime day,endDay;
+  late final Stream<QuerySnapshot<Map<String,dynamic>>> receipts;
+  late final Stream<QuerySnapshot<Map<String,dynamic>>> customers;
+  String? selectedCustomerId;
+  @override void initState(){
+    super.initState(); final now=tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
     day=endDay=DateTime(now.year,now.month,now.day);
-    Query<Map<String, dynamic>> query = db.collection('receipts');
-    if (!widget.owner) query = query.where('actorId', isEqualTo: FirebaseAuth.instance.currentUser!.uid);
-    receipts = query.snapshots(includeMetadataChanges:true);
+    Query<Map<String,dynamic>> q=db.collection('receipts');
+    if(!widget.owner)q=q.where('actorId',isEqualTo:FirebaseAuth.instance.currentUser!.uid);
+    receipts=q.snapshots(includeMetadataChanges:true);
+    customers=db.collection('customers').snapshots();
   }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('حركة سداد العملاء')),
-    body: Column(children: [
-      MovementPeriodControls(from:day,to:endDay,enabled:true,onConfirm:(from,to)=>setState(() {day=from;endDay=to;})),
-      Text('الفترة المعروضة: ${DateFormat('dd/MM/yyyy').format(day)} - ${DateFormat('dd/MM/yyyy').format(endDay)}'),
-      Text(widget.owner ? 'سندات القبض من جميع الموظفين والمدير' : 'سندات القبض التي سجلتها فقط',
-        textAlign: TextAlign.center),
-      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: receipts,
-        builder: (context, snapshot) {
-          if (snapshot.hasError) return const Center(child: Text('تعذر تحميل تقرير السداد؛ راجع الاتصال وصلاحيات سندات القبض'));
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final rows = snapshot.data!.docs.where((d) => visibleAfterReset(d.data()))
-            .map((d) => <String, dynamic>{...d.data(), 'id': d.id}).toList();
-          final ReceiptDayReport report;
-          try { report = summarizeReceiptPeriod(rows, day, endDay); }
-          on StateError catch (e) { return Center(child: Text('${e.message}', textAlign: TextAlign.center)); }
-          final pending = snapshot.data!.metadata.hasPendingWrites;
-          final cached = snapshot.data!.metadata.isFromCache;
-          return Column(children: [
-            Card(child: Padding(padding: const EdgeInsets.all(14), child: Column(children: [
-              Text('إجمالي سداد الفترة: ${receiptReportMoney(report.totalCents)}',
-                textAlign: TextAlign.center, style: const TextStyle(color: gold, fontSize: 20, fontWeight: FontWeight.bold)),
-              Text('عدد التجار: ${report.customers.length} • عدد سندات القبض: ${report.receiptCount}'),
-              if (cached || pending) const Text('البيانات لم تُؤكد من الخادم بعد؛ انتظر اكتمال المزامنة', textAlign: TextAlign.center),
-            ]))),
-            Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Row(children: [
-              Expanded(child: OutlinedButton.icon(icon: const Icon(Icons.picture_as_pdf), label: const Text('طباعة A4'),
-                onPressed: report.receiptCount == 0 || cached || pending ? null : () => printCustomerPaymentReport(context, day, report, owner: widget.owner,to:endDay))),
-              const SizedBox(width: 8),
-              Expanded(child: OutlinedButton.icon(icon: const Icon(Icons.receipt_long), label: const Text('طباعة 80 مللي'),
-                onPressed: report.receiptCount == 0 || cached || pending ? null : () => printCustomerPaymentReport(context, day, report, owner: widget.owner, thermal: true, to:endDay))),
-            ])),
-            Expanded(child: report.customers.isEmpty ? const Center(child: Text('لا توجد سدادات مسجلة بسندات قبض في الفترة المختارة'))
-              : ListView.builder(itemCount: report.customers.length, itemBuilder: (context, index) {
-                final customer = report.customers[index];
-                return Card(child: ExpansionTile(
-                  leading: Text('${index + 1}', style: const TextStyle(color: gold)),
-                  title: Text(customer.name),
-                  subtitle: Text('إجمالي السداد: ${receiptReportMoney(customer.amountCents)} • ${customer.receipts.length} سند'),
-                  children: customer.receipts.map((row) => ListTile(
-                    title: Text('${DateFormat('dd/MM/yyyy HH:mm').format(tz.TZDateTime.from(receiptEffectiveTimestamp(row)!.toDate(),tz.getLocation('Africa/Cairo')))} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
-                    subtitle: Text('سند: ${row['id']}\nالمحصّل: ${row['actorName'] ?? ''}${'${row['note'] ?? ''}'.isEmpty ? '' : '\n${row['note']}'}'),
-                  )).toList(),
-                ));
-              })),
-          ]);
-        })),
-    ]),
-  );
+  @override Widget build(BuildContext context)=>Scaffold(
+    appBar:AppBar(title:const Text('حركة سداد عميل محدد')),
+    body:Column(children:[
+      StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:customers,builder:(context,snap){
+        if(snap.hasError)return const Padding(padding:EdgeInsets.all(12),child:Text('تعذر تحميل قائمة العملاء'));
+        if(!snap.hasData)return const LinearProgressIndicator();
+        final list=snap.data!.docs.toList()..sort((a,b)=>'${a.data()['name']??''}'.compareTo('${b.data()['name']??''}'));
+        final valid=list.any((d)=>d.id==selectedCustomerId);
+        return Padding(padding:const EdgeInsets.fromLTRB(12,12,12,0),child:DropdownButtonFormField<String>(
+          value:valid?selectedCustomerId:null,decoration:const InputDecoration(labelText:'اختر العميل'),
+          items:list.map((d)=>DropdownMenuItem(value:d.id,child:Text('${d.data()['name']??'عميل'}'))).toList(),
+          onChanged:(v)=>setState(()=>selectedCustomerId=v)));
+      }),
+      MovementPeriodControls(from:day,to:endDay,enabled:true,onConfirm:(a,b)=>setState((){day=a;endDay=b;})),
+      Expanded(child:selectedCustomerId==null?const Center(child:Text('اختر عميلًا لعرض سندات سداده فقط')):
+       StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:receipts,builder:(context,snapshot){
+        if(snapshot.hasError)return const Center(child:Text('تعذر تحميل تقرير السداد؛ راجع الاتصال والصلاحيات'));
+        if(!snapshot.hasData)return const Center(child:CircularProgressIndicator());
+        final rows=receiptRowsForCustomer(snapshot.data!.docs.where((d)=>visibleAfterReset(d.data()))
+          .map((d)=><String,dynamic>{...d.data(),'id':d.id}).toList(),selectedCustomerId!);
+        final report=summarizeReceiptPeriod(rows,day,endDay);
+        final selectedName=rows.isNotEmpty?'${rows.first['customerName']??''}':'العميل المحدد';
+        final pending=snapshot.data!.metadata.hasPendingWrites,cached=snapshot.data!.metadata.isFromCache;
+        return Column(children:[
+          Padding(padding:const EdgeInsets.all(10),child:Text('حركة سداد: $selectedName\n${DateFormat('dd/MM/yyyy').format(day)} - ${DateFormat('dd/MM/yyyy').format(endDay)}',
+            textAlign:TextAlign.center,style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
+          Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(children:[
+            Text('إجمالي ما سدده العميل: ${receiptReportMoney(report.totalCents)}',style:const TextStyle(color:gold,fontSize:19,fontWeight:FontWeight.bold)),
+            Text('عدد سندات القبض: ${report.receiptCount}'),
+            if(cached||pending)const Text('انتظر تأكيد مزامنة البيانات قبل الطباعة')
+          ]))),
+          Row(children:[
+            Expanded(child:OutlinedButton.icon(onPressed:report.receiptCount==0||cached||pending?null:()=>printCustomerPaymentReport(context,day,report,owner:widget.owner,to:endDay),icon:const Icon(Icons.picture_as_pdf),label:const Text('طباعة A4'))),
+            Expanded(child:OutlinedButton.icon(onPressed:report.receiptCount==0||cached||pending?null:()=>printCustomerPaymentReport(context,day,report,owner:widget.owner,thermal:true,to:endDay),icon:const Icon(Icons.receipt_long),label:const Text('طباعة 80 مم')))
+          ]),
+          Expanded(child:report.receiptCount==0?const Center(child:Text('لا توجد سندات قبض لهذا العميل في الفترة المختارة')):ListView(children:report.customers.expand((customer)=>customer.receipts.map((row)=>Card(child:ListTile(
+            title:Text('${receiptReportStamp(row,endDay)} • ${receiptReportMoney(((row['amount'] as num)*100).round())}'),
+            subtitle:Text('رقم السند: ${receiptDisplayNumber(row)}\nالمحصّل: ${row['actorName']??''}\nطريقة الدفع: ${row['paymentMethod']??'غير محددة'}\n${row['note']??''}')
+          )))).toList()))
+        ]);
+       }))
+    ]));
 }
 
 String receiptReportStamp(Map<String,dynamic> row,DateTime? to) {
@@ -2724,6 +2759,7 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
   final cashMovement = db.collection('accountMovements').doc();
   String? customerId = initialCustomerId;
   bool saving = false;
+  String paymentMethod='نقدي';
   String? saveError;
   await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(
     builder: (dialog, update) => AlertDialog(
@@ -2750,6 +2786,10 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
             final time=await showTimePicker(context:dialog,initialTime:TimeOfDay.fromDateTime(selectedReceiptDate));
             if(time!=null && dialog.mounted)update(()=>selectedReceiptDate=tz.TZDateTime(tz.getLocation('Africa/Cairo'),day.year,day.month,day.day,time.hour,time.minute));
           }),
+        DropdownButtonFormField<String>(value:paymentMethod,decoration:const InputDecoration(labelText:'طريقة الدفع / البيان'),
+          items:const ['نقدي','تحويل إنستا باي','تحويل فودافون كاش','تحويل محفظة X','تحويل عن طريق الحساب البنكي']
+            .map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),
+          onChanged:saving?null:(v)=>update(()=>paymentMethod=v??'نقدي')),
         TextField(controller: note, enabled: !saving, decoration: const InputDecoration(labelText: 'البيان / ملاحظات')),
         const SizedBox(height: 12),
         Text(owner ? 'يُخصم المبلغ من مديونية العميل ويُضاف للصندوق عند حفظ السند.' : 'بعد الإرسال سيظهر السند في نسخة المدير، ويُحدّث رصيد العميل والصندوق.'),
@@ -2787,7 +2827,7 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
                 'customerId':id,'customerName':customerName,'customerPhone':'${customer.data()?['phone'] ?? ''}',
                 'receiptDate':receiptDate,'createdAt':receiptDate,'amount':paid,'balanceBefore':balance,
                 'balanceAfter':balance-paid,'actorId':actor,'actorName':'${profile?['name'] ?? ''}',
-                'branchId':branchId,'note':note.text.trim(),
+                'branchId':branchId,'note':note.text.trim(),'paymentMethod':paymentMethod,'receiptNumber':'VIB-RC-${DateFormat('yyyyMMdd').format(selectedReceiptDate)}-${receiptRef.id.substring(0,6).toUpperCase()}',
               };
               tx.update(customerRef, {'balance': balance - paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now});
               tx.set(cashRef, {'balance': beforeCash + paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now}, SetOptions(merge: true));
@@ -2797,7 +2837,7 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
                 'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
                 'cashBefore': beforeCash, 'cashAfter': beforeCash + paid,
                 'actorId': actor, 'actorName': '${profile?['name'] ?? ''}', 'branchId': branchId,
-                'note': note.text.trim(), 'createdAt': now,
+                'note': note.text.trim(), 'paymentMethod':paymentMethod,'receiptNumber':'VIB-RC-${DateFormat('yyyyMMdd').format(selectedReceiptDate)}-${receiptRef.id.substring(0,6).toUpperCase()}', 'createdAt': now,
                 'customerMovementId': customerMovement.id, 'cashMovementId': cashMovement.id,
               });
               tx.set(customerMovement, {
@@ -2851,23 +2891,78 @@ Future<void> shareReceiptVoucher(BuildContext context,String id,Map<String,dynam
 }
 
 Future<Uint8List> createReceiptVoucherPdf(String id,Map<String,dynamic> data,pw.Font font) async {
-    final pdf = pw.Document();
-    pdf.addPage(pw.Page(pageFormat: PdfPageFormat.a4, theme: pw.ThemeData.withFont(base: font, bold: font),
-      build: (_) => pw.Directionality(textDirection: pw.TextDirection.rtl,
-        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-          pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 22)),
-          pw.SizedBox(height: 16), pw.Text('سند قبض', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 20)),
-          pw.SizedBox(height: 20),
-          for (final line in [
-            'رقم السند: $id', 'التاريخ: ${formatDate(receiptEffectiveTimestamp(data))}',
-            'استلمنا من: ${data['customerName']}', 'الهاتف: ${data['customerPhone'] ?? ''}',
-            'المبلغ: ${data['amount']} ج.م', 'رصيد العميل قبل القبض: ${data['balanceBefore']} ج.م',
-            'رصيد العميل بعد القبض: ${data['balanceAfter']} ج.م',
-            'الموظف: ${data['actorName'] ?? ''}', 'البيان: ${data['note'] ?? ''}',
-          ]) pw.Padding(padding: const pw.EdgeInsets.symmetric(vertical: 7), child: pw.Text(line)),
-          pw.SizedBox(height: 30), pw.Text('توقيع المستلم: __________________'),
-        ]))));
-    return pdf.save();
+  final pdf=pw.Document();
+  Map<String,dynamic> brand={};
+  try {
+    if(Firebase.apps.isNotEmpty) {
+    final a=(await db.collection('settings').doc('invoiceBranding').get()).data();
+    final b=(await db.collection('settings').doc('main').get()).data();
+    brand={...?b,...?a};
+    }
+  } catch (_) {}
+  pw.ImageProvider? logo;
+  final encoded='${brand['logoBase64']??''}';
+  try {
+    if(encoded.isNotEmpty)logo=pw.MemoryImage(base64Decode(encoded));
+    else logo=pw.MemoryImage((await rootBundle.load('assets/vip-logo.png')).buffer.asUint8List());
+  } catch (_) {}
+  final stamp=receiptEffectiveTimestamp(data);
+  final date=stamp is Timestamp?DateFormat('dd/MM/yyyy').format(stamp.toDate().toLocal()):DateFormat('dd/MM/yyyy').format(DateTime.now());
+  final name='${brand['companyName']??'VIB للتجارة والتوزيع'}';
+  final before=(data['balanceBefore'] as num?)?.toDouble()??0;
+  final paid=(data['amount'] as num?)?.toDouble()??0;
+  final after=(data['balanceAfter'] as num?)?.toDouble()??(before-paid);
+  final number='${data['receiptNumber']??'VIB-RC-$date-${id.length>6?id.substring(0,6).toUpperCase():id.toUpperCase()}'}';
+  pw.Widget detail(String label,String value,{bool strong=false})=>pw.Container(
+    margin:const pw.EdgeInsets.only(bottom:8),padding:const pw.EdgeInsets.symmetric(horizontal:12,vertical:10),
+    decoration:pw.BoxDecoration(color:strong?const PdfColor(0.97,0.94,0.87):const PdfColor(0.99,0.99,0.99),
+      border:pw.Border.all(color:const PdfColor(0.78,0.62,0.29),width:strong?1.2:.6),borderRadius:pw.BorderRadius.circular(5)),
+    child:pw.Row(children:[pw.Expanded(child:pw.Text(label,style:pw.TextStyle(fontWeight:pw.FontWeight.bold))),
+      pw.Text(value,style:pw.TextStyle(fontWeight:pw.FontWeight.bold,fontSize:strong?13:11))]));
+  pdf.addPage(pw.Page(pageFormat:PdfPageFormat.a4,theme:pw.ThemeData.withFont(base:font,bold:font),
+    margin:const pw.EdgeInsets.all(32),build:(_)=>pw.Directionality(textDirection:pw.TextDirection.rtl,
+      child:pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.stretch,children:[
+        pw.Container(padding:const pw.EdgeInsets.all(15),decoration:pw.BoxDecoration(
+          border:pw.Border.all(color:const PdfColor(0.72,0.53,0.18),width:2),borderRadius:pw.BorderRadius.circular(8)),
+          child:pw.Row(crossAxisAlignment:pw.CrossAxisAlignment.center,children:[
+            pw.SizedBox(width:110,child:logo==null?pw.Text('VIB',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:30,fontWeight:pw.FontWeight.bold,color:const PdfColor(0.72,0.53,0.18))):pw.Image(logo!,height:78,fit:pw.BoxFit.contain)),
+            pw.SizedBox(width:16),
+            pw.Expanded(child:pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.start,children:[
+              pw.Text(name,style:pw.TextStyle(fontSize:20,fontWeight:pw.FontWeight.bold,color:const PdfColor(0.12,0.12,0.12))),
+              pw.SizedBox(height:7),
+              for(final line in [
+                if('${brand['taxNumber']??''}'.isNotEmpty)'البطاقة الضريبية: ${brand['taxNumber']}',
+                if('${brand['commercialRegister']??''}'.isNotEmpty)'السجل التجاري: ${brand['commercialRegister']}',
+                if('${brand['phone']??''}'.isNotEmpty)'تليفون: ${brand['phone']}',
+                if('${brand['phone2']??''}'.isNotEmpty)'تليفون إضافي: ${brand['phone2']}',
+                if('${brand['address']??''}'.isNotEmpty)'العنوان: ${brand['address']}',
+              ])pw.Padding(padding:const pw.EdgeInsets.only(bottom:3),child:pw.Text(line,style:const pw.TextStyle(fontSize:9))),
+            ]))
+          ])),
+        pw.SizedBox(height:18),
+        pw.Container(padding:const pw.EdgeInsets.symmetric(vertical:9),decoration:const pw.BoxDecoration(color:PdfColor(0.10,0.10,0.10)),
+          child:pw.Text('سند قبض',textAlign:pw.TextAlign.center,style:pw.TextStyle(color:const PdfColor(0.88,0.71,0.39),fontSize:21,fontWeight:pw.FontWeight.bold))),
+        pw.SizedBox(height:12),
+        detail('تاريخ السند',date,strong:true),
+        detail('رقم السند',number,strong:true),
+        pw.SizedBox(height:8),
+        pw.Text('استلمنا من العميل /',style:pw.TextStyle(fontSize:14,fontWeight:pw.FontWeight.bold)),
+        detail('اسم العميل','${data['customerName']??''}'),
+        detail('رقم التليفون','${data['customerPhone']??'غير مسجل'}'),
+        detail('المبلغ المستحق قبل السداد','${before.toStringAsFixed(2)} ج.م'),
+        detail('المبلغ المدفوع','${paid.toStringAsFixed(2)} ج.م',strong:true),
+        detail('الرصيد المتبقي بعد الدفع','${after.toStringAsFixed(2)} ج.م',strong:true),
+        detail('طريقة الدفع','${data['paymentMethod']??'نقدي'}'),
+        if('${data['note']??''}'.trim().isNotEmpty)detail('البيان','${data['note']}'),
+        pw.SizedBox(height:20),
+        pw.Row(children:[pw.Expanded(child:pw.Text('توقيع المستلم: ____________________')),pw.Text('ختم الشركة: ______________')]),
+        pw.Spacer(),
+        pw.Container(padding:const pw.EdgeInsets.all(12),decoration:pw.BoxDecoration(
+          color:const PdfColor(0.97,0.94,0.87),border:pw.Border.all(color:const PdfColor(0.78,0.62,0.29))),
+          child:pw.Text('شكراً لثقتكم وتعاملكم الكريم مع VIB للتجارة والتوزيع.\nنسعد دائمًا بخدمتكم ونتمنى لكم دوام النجاح والتوفيق.',
+            textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:11,fontWeight:pw.FontWeight.bold))),
+      ]))));
+  return pdf.save();
 }
 
 class Accounts extends StatefulWidget {
