@@ -63,10 +63,10 @@ jobs:
         with:
           name: VIB-SALES-manager-WEB
           path: web-artifacts
-      - name: Assemble manager and staff Hosting paths
+      - name: Assemble manager Hosting path
         run: |
           mkdir -p public/manager
-          cp -R web-artifacts/VIB-SALES-manager-WEB/. public/manager/
+          cp -R web-artifacts/. public/manager/
           cat > firebase.json <<'JSON'
           {"hosting":{"site":"vib-sales","public":"public","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"/manager/**","destination":"/manager/index.html"}],"headers":[{"source":"/manager/index.html","headers":[{"key":"Cache-Control","value":"no-cache"}]}]}}
           JSON
@@ -83,7 +83,7 @@ jobs:
             echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/vib-firebase.json" >> "$GITHUB_ENV"
             echo "available=true" >> "$GITHUB_OUTPUT"
           fi
-      - name: Publish both apps to Firebase Hosting
+      - name: Publish manager web app to Firebase Hosting
         if: steps.hosting.outputs.available == 'true'
         run: |
           npm install --prefix web-staff --no-save google-auth-library firebase-tools
