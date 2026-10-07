@@ -18,7 +18,7 @@ s=s.replace("  final packageName = (await PackageInfo.fromPlatform()).packageNam
       messagingSenderId: _vibSenderId, projectId: _vibProjectId,
       authDomain: 'vib-sales.firebaseapp.com',
     );
-  }
+  }}
   final packageName = (await PackageInfo.fromPlatform()).packageName;""")
 if is_staff:
     s=s.replace("          activeResetAt = data['resetAt'] as Timestamp?;", """          if (kIsWeb && data['role'] != 'employee') {
