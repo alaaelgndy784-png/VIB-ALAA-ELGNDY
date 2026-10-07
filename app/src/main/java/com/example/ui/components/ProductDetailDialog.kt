@@ -1,6 +1,9 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -30,6 +33,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -40,6 +47,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import com.example.model.Product
 import com.example.ui.theme.BlackBackground
 import com.example.ui.theme.GoldBorder
@@ -60,6 +71,9 @@ fun ProductDetailDialog(
   onDeleteProduct: (Product) -> Unit = {},
   modifier: Modifier = Modifier
 ) {
+  val galleryUrls = product.imageUrls.ifEmpty { listOf(product.imageUrl).filter { it.isNotBlank() } }
+  var selectedImageIndex by remember(product.id) { mutableIntStateOf(0) }
+
   Dialog(
     onDismissRequest = onDismiss,
     properties = DialogProperties(usePlatformDefaultWidth = false)
@@ -107,9 +121,44 @@ fun ProductDetailDialog(
             .height(230.dp)
             .clip(RoundedCornerShape(14.dp))
         ) {
-          ProductImageDisplay(
-            product = product,
-            modifier = Modifier.fillMaxWidth().height(230.dp)
+          if (galleryUrls.isNotEmpty()) {
+            AsyncImage(
+              model = ImageRequest.Builder(LocalContext.current)
+                .data(galleryUrls[selectedImageIndex.coerceIn(galleryUrls.indices)])
+                .crossfade(true)
+                .build(),
+              contentDescription = "صورة المنتج",
+              modifier = Modifier.fillMaxWidth().height(230.dp),
+              contentScale = ContentScale.Crop
+            )
+          } else {
+            ProductImageDisplay(
+              product = product,
+              modifier = Modifier.fillMaxWidth().height(230.dp)
+            )
+          }
+        }
+
+        if (galleryUrls.size > 1) {
+          Spacer(modifier = Modifier.height(8.dp))
+          LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            itemsIndexed(galleryUrls) { index, imageUrl ->
+              AsyncImage(
+                model = imageUrl,
+                contentDescription = "الصورة ${index + 1} من ${galleryUrls.size}",
+                modifier = Modifier
+                  .size(58.dp)
+                  .clip(RoundedCornerShape(8.dp))
+                  .clickable { selectedImageIndex = index },
+                contentScale = ContentScale.Crop
+              )
+            }
+          }
+          Text(
+            text = "صور المنتج: ${galleryUrls.size}",
+            color = GoldLight,
+            fontSize = 11.sp,
+            modifier = Modifier.padding(top = 4.dp)
           )
         }
 
