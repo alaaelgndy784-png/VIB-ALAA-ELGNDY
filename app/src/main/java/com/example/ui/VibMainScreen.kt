@@ -1,5 +1,7 @@
 package com.example.ui
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.ShoppingCart
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -49,9 +52,12 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -91,6 +97,8 @@ import com.example.ui.components.QuickImageDialog
 import com.example.ui.components.QuickPriceDialog
 import com.example.ui.components.QuickStockDialog
 import com.example.ui.theme.BlackBackground
+import com.example.util.AppUpdateChecker
+import com.example.util.AppUpdateInfo
 import com.example.ui.theme.BlackSurfaceCard
 import com.example.ui.theme.GoldBorder
 import com.example.ui.theme.GoldLight
@@ -108,6 +116,11 @@ fun VibMainScreen(
   val context = LocalContext.current
   val snackbarHostState = remember { SnackbarHostState() }
   val adminFeaturesEnabled = BuildConfig.ADMIN_FEATURES_ENABLED
+  var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
+
+  LaunchedEffect(Unit) {
+    availableUpdate = AppUpdateChecker.check(adminFeaturesEnabled)
+  }
 
   val products by viewModel.filteredProducts.collectAsState()
   val allProducts by viewModel.allProducts.collectAsState()
@@ -611,6 +624,37 @@ fun VibMainScreen(
         product = prod,
         onDismiss = { viewModel.closeQuickStock() },
         onConfirmStock = { inStock, qty -> viewModel.updateProductStock(prod.id, inStock, qty) }
+      )
+    }
+
+    availableUpdate?.let { update ->
+      AlertDialog(
+        onDismissRequest = { availableUpdate = null },
+        title = { Text("يتوفر تحديث جديد لتطبيق VIB", color = GoldPrimary, fontWeight = FontWeight.Bold) },
+        text = {
+          Text(
+            "الإصدار الجديد رقم ${update.versionCode} جاهز. اضغط تنزيل لتحديث التطبيق، ثم افتح ملف التثبيت.",
+            color = WhitePrimary
+          )
+        },
+        confirmButton = {
+          TextButton(onClick = {
+            try {
+              context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.downloadUrl)))
+            } catch (_: Exception) {
+              availableUpdate = null
+            }
+            availableUpdate = null
+          }) {
+            Text("تنزيل التحديث", color = GoldPrimary)
+          }
+        },
+        dismissButton = {
+          TextButton(onClick = { availableUpdate = null }) {
+            Text("لاحقاً", color = WhiteMuted)
+          }
+        },
+        containerColor = BlackSurfaceCard
       )
     }
 
