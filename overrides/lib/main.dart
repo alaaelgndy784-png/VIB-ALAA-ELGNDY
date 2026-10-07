@@ -2888,7 +2888,7 @@ Future<String?> createAccountDialog(BuildContext context, String collection, boo
 
 Future<void> accountDialog(BuildContext context, String collection, String id, Map<String, dynamic> account) async {
   if (collection == 'customers') {
-    await createReceiptVoucher(context, 'main', initialCustomerId: id);
+    await createReceiptVoucher(context, 'main', owner: true, initialCustomerId: id);
     return;
   }
   await createSupplierPaymentVoucher(context, initialSupplierId: id);
