@@ -41,6 +41,7 @@ class FirebaseRepository(val context: Context) {
     private const val DEFAULT_FIREBASE_PROJECT_ID = "vib-alaaelgndy"
     private const val DEFAULT_FIREBASE_API_KEY = "AIzaSyASUi-6xrJDrd8NWunLvEWvD3uR08LOuLs"
     private const val DEFAULT_FIREBASE_APP_ID = "1:984952125141:android:9f0c3e79cdebbf0b6f945c"
+    private const val DEFAULT_FIREBASE_MESSAGING_SENDER_ID = "984952125141"
     private const val DEFAULT_FIREBASE_STORAGE_BUCKET = "vib-alaaelgndy.firebasestorage.app"
     private const val DEFAULT_ADMIN_WHATSAPP = "201013631323"
   }
@@ -109,6 +110,7 @@ class FirebaseRepository(val context: Context) {
         .setProjectId(projectId)
         .setApiKey(apiKey)
         .setApplicationId(appId)
+        .setGcmSenderId(DEFAULT_FIREBASE_MESSAGING_SENDER_ID)
         .setStorageBucket(bucket)
         .build()
 
