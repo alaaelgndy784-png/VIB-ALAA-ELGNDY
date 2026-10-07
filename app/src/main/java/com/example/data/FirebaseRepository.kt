@@ -507,7 +507,7 @@ class FirebaseRepository(val context: Context) {
       category = category,
       description = description,
       imageUrl = finalImageUrls.firstOrNull().orEmpty(),
-      imageUrls = finalImageUrls,
+      imageUrls = finalImageUrls.take(4),
       inStock = inStock,
       stockQuantity = stockQuantity,
       createdAt = System.currentTimeMillis()
