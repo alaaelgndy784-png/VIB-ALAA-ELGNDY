@@ -1218,7 +1218,7 @@ class Management extends StatelessWidget {
     option(context, 'الصندوق', Icons.account_balance_wallet_outlined, const CashBox()),
     option(context, 'المصروفات', Icons.receipt_long_outlined, const Expenses()),
     option(context, 'تقرير الأرباح', Icons.bar_chart_outlined, const ProfitReport()),
-    option(context, 'حركة المنتجات', Icons.swap_vert, const ItemMovementReport()),
+    option(context, 'تقرير بيع وشراء المنتج', Icons.swap_vert, const ItemMovementReport()),
     option(context, 'سجل حركات الحسابات', Icons.history, const AccountMovements()),
     option(context, 'الإعدادات والطباعة', Icons.settings_outlined, const AppSettings()),
     Padding(padding: const EdgeInsets.only(bottom: 10), child: Material(color: const Color(0xFF30283B),
@@ -4320,6 +4320,7 @@ class ItemMovementReport extends StatefulWidget {
 class _ItemMovementReportState extends State<ItemMovementReport> {
   String? productId, branchId='main';
   DateTimeRange? range;
+  String movementView='sales';
 
   Future<Map<String,String>> _movementCounterparties(List<QueryDocumentSnapshot<Map<String,dynamic>>> rows) async {
     final result=<String,String>{},invoices=<String,Map<String,dynamic>?>{},people=<String,String>{};
@@ -4453,6 +4454,14 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                   ..sort((a, b) => ((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
                       .compareTo((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
 
+                final reportRows = rows.where((d) {
+                  final kind='\u0024{d.data()['kind'] ?? ''}';
+                  final sales = kind=='sale' || kind=='saleCorrection' || kind=='correction_sale' ||
+                      kind=='correction_return' || kind=='sales_return';
+                  final purchases = kind=='purchase' || kind=='purchaseCorrection' || kind=='purchase_return';
+                  return movementView=='sales' ? sales : purchases;
+                }).toList();
+                final reportQuantity = reportRows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).abs()));
                 final incoming = rows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).clamp(0, 999999999)));
                 final outgoing = rows.fold<num>(0, (sum, d) => sum + ((-((d.data()['quantity'] as num?) ?? 0)).clamp(0, 999999999)));
 
@@ -4512,14 +4521,35 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                           ]),
                         ),
                       ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: Column(children: [
+                          Row(children: [
+                            Expanded(child: ChoiceChip(
+                              label: const Text('العملاء اللي اشتروا'),
+                              selected: movementView=='sales',
+                              onSelected: (_) => setState(() => movementView='sales'),
+                            )),
+                            const SizedBox(width: 6),
+                            Expanded(child: ChoiceChip(
+                              label: const Text('الموردين اللي اشتريت منهم'),
+                              selected: movementView=='purchases',
+                              onSelected: (_) => setState(() => movementView='purchases'),
+                            )),
+                          ]),
+                          Text('عدد الحركات: \u0024{reportRows.length} • إجمالي الكمية: \u0024reportQuantity'),
+                        ]),
+                      ),
                       Expanded(
-                        child: rows.isEmpty
-                            ? const Center(child: Text('لا توجد حركات لهذا المنتج في الفترة المختارة'))
+                        child: reportRows.isEmpty
+                            ? Center(child: Text(movementView=='sales'
+                                ? 'لا توجد فواتير بيع لهذا الصنف في الفترة المختارة'
+                                : 'لا توجد فواتير شراء لهذا الصنف في الفترة المختارة'))
                             : ListView.builder(
                                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                                itemCount: rows.length,
+                                itemCount: reportRows.length,
                                 itemBuilder: (context, index) {
-                                  final row = rows[index];
+                                  final row = reportRows[index];
                                   final x = row.data();
                                   final qty = (x['quantity'] as num?) ?? 0;
                                   final positive = qty >= 0;
