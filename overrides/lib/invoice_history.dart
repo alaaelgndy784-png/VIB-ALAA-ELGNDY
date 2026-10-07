@@ -7,7 +7,7 @@ class InvoiceHistoryPage extends StatefulWidget {
 }
 
 class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBindingObserver {
-  late DateTime day;
+  late DateTime from, to;
   bool numbering=true;String numberError='';
   bool _showYesterdayAndToday = true;
   Timer? _dayRolloverTimer;
@@ -17,7 +17,8 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
   @override void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    selectDay(DateTime.now(), includeYesterday: true);
+    final now = DateTime.now();
+    selectRange(DateTime(now.year, now.month, now.day - 1), DateTime(now.year, now.month, now.day), includeYesterday: true);
     _scheduleDayRollover();
     prepareInvoiceSerials(widget.type).then((_){if(mounted)setState(()=>numbering=false);}).catchError((Object e){if(mounted)setState((){numbering=false;numberError='تعذر تجهيز أرقام الفواتير: $e';});});
   }
@@ -31,8 +32,8 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
   @override void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed || !mounted) return;
     final now = DateTime.now();
-    if (_showYesterdayAndToday && !_sameDay(day, now)) {
-      setState(() => selectDay(now, includeYesterday: true));
+    if (_showYesterdayAndToday && !_sameDay(to, now)) {
+      setState(() => selectRange(DateTime(now.year, now.month, now.day - 1), DateTime(now.year, now.month, now.day), includeYesterday: true));
     } else {
       // Rebuild so the selected day's color is recalculated after returning to the app.
       setState(() {});
@@ -53,7 +54,7 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
         final today = DateTime.now();
         setState(() {
           if (_showYesterdayAndToday) {
-            selectDay(today, includeYesterday: true);
+            selectRange(DateTime(today.year, today.month, today.day - 1), today, includeYesterday: true);
           }
           // For a manually chosen date, rebuild to refresh its today/yesterday color.
         });
@@ -80,23 +81,16 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
     return gold;
   }
 
-  void selectDay(DateTime date, {bool includeYesterday = false}) {
-    day = DateTime(date.year, date.month, date.day);
+  void selectRange(DateTime start, DateTime end, {bool includeYesterday = false}) {
+    from = DateTime(start.year, start.month, start.day);
+    to = DateTime(end.year, end.month, end.day);
     _showYesterdayAndToday = includeYesterday;
-    final fromDay = includeYesterday
-        ? DateTime(day.year, day.month, day.day - 1)
-        : day;
-    final nextDay = DateTime(day.year, day.month, day.day + 1);
+    final fromDay = movementReportBoundary(from);
+    final nextDay = movementReportBoundary(to, next: true);
     invoices = db.collection(widget.type)
       .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(fromDay))
       .where('createdAt', isLessThan: Timestamp.fromDate(nextDay))
       .orderBy('createdAt', descending: true).snapshots();
-  }
-
-  Future<void> pickDate() async {
-    final picked = await showDatePicker(context: context, initialDate: day,
-      firstDate: DateTime(2000), lastDate: DateTime.now().add(const Duration(days: 365)));
-    if (picked != null && mounted) setState(() => selectDay(picked));
   }
 
   Widget _legend(Color color, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
@@ -109,13 +103,13 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
     Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, runSpacing: 8, children: [
       OutlinedButton.icon(onPressed: () => openVibReport(context, sales ? 'تقرير حركة المبيعات' : 'تقرير حركة المشتريات',
         InvoiceMovementReportPage(type:widget.type)), icon:const Icon(Icons.summarize_outlined),label:Text(sales ? 'تقرير حركة المبيعات' : 'تقرير حركة المشتريات')),
-      OutlinedButton.icon(onPressed: pickDate, icon: const Icon(Icons.calendar_month), label: const Text('اختيار التاريخ')),
-      TextButton.icon(onPressed: () => setState(() => selectDay(DateTime.now(), includeYesterday: true)),
+      TextButton.icon(onPressed: () { final now=DateTime.now(); setState(() => selectRange(DateTime(now.year,now.month,now.day-1),DateTime(now.year,now.month,now.day),includeYesterday:true)); },
         icon: const Icon(Icons.today), label: const Text('فواتير اليوم')),
     ])),
+    MovementPeriodControls(key:ValueKey('${from.toIso8601String()}-${to.toIso8601String()}'),from:from,to:to,enabled:true,onConfirm:(start,end)=>setState(()=>selectRange(start,end))),
     Text(_showYesterdayAndToday
         ? 'فواتير ${sales ? 'المبيعات' : 'المشتريات'} • امبارح واليوم'
-        : 'فواتير ${sales ? 'المبيعات' : 'المشتريات'} • ${DateFormat('dd/MM/yyyy').format(day)}',
+        : 'فواتير ${sales ? 'المبيعات' : 'المشتريات'} • من ${DateFormat('dd/MM/yyyy').format(from)} إلى ${DateFormat('dd/MM/yyyy').format(to)}',
       style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
     if (_showYesterdayAndToday)
       Padding(padding: const EdgeInsets.only(top: 6, bottom: 2), child: Wrap(spacing: 16, children: [
@@ -130,10 +124,10 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
       if (snapshot.hasError) return const Center(child: Text('تعذر تحميل الفواتير؛ راجع اتصال الإنترنت وحاول مرة أخرى'));
       if (!snapshot.hasData || snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
       final rows = snapshot.data!.docs.where((row) => visibleAfterReset(row.data())).toList();
-      if (rows.isEmpty) return const Center(child: Text('لا توجد فواتير في هذا التاريخ'));
+      final totalCents=rows.fold<int>(0,(sum,row){final value=row.data()['total'];if(value is! num || !value.isFinite)return sum;return sum+(value*100).round();});
       return Column(children: [
-        Padding(padding: const EdgeInsets.only(bottom: 8), child: Text('عدد الفواتير: ${rows.length}')),
-        Expanded(child: ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
+        Padding(padding: const EdgeInsets.only(bottom: 8), child: Text('عدد الفواتير: ${rows.length} • إجمالي الفترة: ${movementReportMoney(totalCents)}',style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
+        Expanded(child: rows.isEmpty ? const Center(child:Text('لا توجد فواتير في الفترة المختارة')) : ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
           final row = rows[index], data = row.data();
           final dayColor = _invoiceDayColor(data);
           final number=invoiceDisplayNumber(widget.type,row.id,data);

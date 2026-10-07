@@ -1070,7 +1070,8 @@ class Sales extends StatefulWidget {
 }
 class _SalesState extends State<Sales> {
   @override void initState(){super.initState();if(widget.owner)prepareInvoiceSerials('sales').then((_){if(mounted)setState((){});}).catchError((Object e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر تجهيز أرقام المبيعات: $e')));});}
-  DateTime selectedDate = DateTime.now();
+  DateTime selectedFrom = DateTime.now();
+  DateTime selectedTo = DateTime.now();
   bool get owner => widget.owner;
   String get branchId => widget.branchId;
   @override
@@ -1083,24 +1084,23 @@ class _SalesState extends State<Sales> {
         .where((d) {
           final date = (d.data()['createdAt'] as Timestamp?)?.toDate();
           return visibleAfterReset(d.data()) && (owner || d.data()['branchId'] == branchId) &&
-            date != null && date.year == selectedDate.year && date.month == selectedDate.month && date.day == selectedDate.day;
+            date != null && !date.isBefore(movementReportBoundary(selectedFrom)) && date.isBefore(movementReportBoundary(selectedTo,next:true));
         })
         .toList()
       ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
     return Column(children: [
-      Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة'), onPressed: () => newSaleDialog(context, owner, branchId))),
+      Padding(padding: const EdgeInsets.fromLTRB(12,12,12,4), child: FilledButton.icon(icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة'), onPressed: () => newSaleDialog(context, owner, branchId))),
+      Padding(padding: const EdgeInsets.fromLTRB(12,4,12,8),child:SizedBox(width:double.infinity,child:OutlinedButton.icon(
+        icon:const Icon(Icons.payments_outlined),label:const Text('سند قبض بدون فاتورة بيع'),
+        onPressed:()=>createReceiptVoucher(context,branchId,owner:owner)))),
       Padding(padding:const EdgeInsets.symmetric(horizontal:12),child: PendingSalesShortcut(owner:owner)),
+      MovementPeriodControls(key:ValueKey('${selectedFrom.toIso8601String()}-${selectedTo.toIso8601String()}'),from:selectedFrom,to:selectedTo,enabled:true,onConfirm:(from,to)=>setState(() {selectedFrom=from;selectedTo=to;})),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Wrap(spacing: 8, runSpacing: 8, children: [
-        OutlinedButton.icon(icon: const Icon(Icons.calendar_month), label: const Text('فواتير المبيعات'), onPressed: () async {
-          final date = await showDatePicker(context: context, initialDate: selectedDate, firstDate: DateTime(2020), lastDate: DateTime.now().add(const Duration(days: 365)));
-          if (date != null && mounted) setState(() => selectedDate = date);
-        }),
-        TextButton(onPressed: () => setState(() => selectedDate = DateTime.now()), child: const Text('فواتير اليوم')),
         if (owner) OutlinedButton.icon(icon: const Icon(Icons.summarize_outlined), label: const Text('تقرير حركة المبيعات'),
           onPressed: () => openVibReport(context, 'تقرير حركة المبيعات', const InvoiceMovementReportPage(type: 'sales'))),
         if (owner) OutlinedButton.icon(icon: const Icon(Icons.edit_note), label: const Text('تعديل فاتورة مبيعات'), onPressed: () => editSaleByNumber(context)),
       ])),
-      Padding(padding: const EdgeInsets.all(8), child: Text('فواتير ${selectedDate.day}/${selectedDate.month}/${selectedDate.year} • العدد: ${rows.length}')),
+      Padding(padding: const EdgeInsets.all(8), child: Text('فواتير المبيعات • من ${DateFormat('dd/MM/yyyy').format(selectedFrom)} إلى ${DateFormat('dd/MM/yyyy').format(selectedTo)} • العدد: ${rows.length} • الإجمالي: ${movementReportMoney(rows.fold<int>(0,(sum,row){final value=row.data()['total'];return value is num && value.isFinite ? sum+(value*100).round() : sum;}))}',textAlign:TextAlign.center,style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
       Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد فواتير في هذا التاريخ')) : ListView(children: rows.map((d) {
         final sale = d.data();
         final paymentText = sale.containsKey('paid') ? ' • مدفوع ${sale['paid'] ?? 0} • باقي ${sale['due'] ?? 0}' : '';
@@ -2457,8 +2457,12 @@ class ReceiptVouchers extends StatelessWidget {
               title: Text('${data['customerName']} • ${data['amount']} ج.م'),
               subtitle: Text('سند: ${row.id}\n${formatDate(receiptEffectiveTimestamp(data))} • ${data['actorName'] ?? ''}\nالرصيد بعد القبض: ${data['balanceAfter']} ج.م'),
               isThreeLine: true,
-              trailing: IconButton(tooltip: 'طباعة / حفظ PDF', icon: const Icon(Icons.picture_as_pdf),
-                onPressed: () => printReceiptVoucher(context, row.id, data)),
+              trailing: Wrap(mainAxisSize:MainAxisSize.min,children:[
+                IconButton(tooltip:'إرسال سند القبض PDF للعميل',icon:const Icon(Icons.share,color:Colors.greenAccent),
+                  onPressed:()=>shareReceiptVoucher(context,row.id,data)),
+                IconButton(tooltip: 'طباعة / حفظ PDF', icon: const Icon(Icons.picture_as_pdf),
+                  onPressed: () => printReceiptVoucher(context, row.id, data)),
+              ]),
             ));
           });
         },
@@ -2749,6 +2753,7 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
             final actor = FirebaseAuth.instance.currentUser!.uid;
             final profile = (await db.collection('users').doc(actor).get()).data();
             final receiptDate=Timestamp.fromDate(selectedReceiptDate);
+            Map<String,dynamic>? savedReceipt;
             await db.runTransaction((tx) async {
               final existing = await tx.get(receiptRef);
               if (existing.exists) return;
@@ -2762,6 +2767,12 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
               final beforeCash = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
               final now = FieldValue.serverTimestamp();
               final customerName = '${customer.data()?['name'] ?? ''}';
+              savedReceipt={
+                'customerId':id,'customerName':customerName,'customerPhone':'${customer.data()?['phone'] ?? ''}',
+                'receiptDate':receiptDate,'createdAt':receiptDate,'amount':paid,'balanceBefore':balance,
+                'balanceAfter':balance-paid,'actorId':actor,'actorName':'${profile?['name'] ?? ''}',
+                'branchId':branchId,'note':note.text.trim(),
+              };
               tx.update(customerRef, {'balance': balance - paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now});
               tx.set(cashRef, {'balance': beforeCash + paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now}, SetOptions(merge: true));
               tx.set(receiptRef, {
@@ -2784,8 +2795,12 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
                 'referenceId': receiptRef.id, 'reason': 'سند قبض من عميل', 'actorId': actor, 'branchId': branchId, 'createdAt': now, 'receiptDate':receiptDate,
               });
             });
+            final saved=savedReceipt;
             if (dialog.mounted) Navigator.pop(dialog);
-            if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(owner ? 'تم حفظ سند القبض وتحديث رصيد العميل والصندوق.' : 'تم حفظ سند القبض وإرساله للمدير، وتحديث رصيد العميل والصندوق.')));
+            if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text(owner ? 'تم حفظ سند القبض وتحديث رصيد العميل والصندوق.' : 'تم حفظ سند القبض وإرساله للمدير، وتحديث رصيد العميل والصندوق.'),
+              action:saved==null?null:SnackBarAction(label:'إرسال PDF للعميل',onPressed:()=>shareReceiptVoucher(context,receiptRef.id,saved)),
+            ));
           } catch (e) {
             if (dialog.mounted) {
               update(() { saving = false; saveError = 'تعذر حفظ/إرسال سند القبض: $e'; });
@@ -2802,6 +2817,24 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
 Future<void> printReceiptVoucher(BuildContext context, String id, Map<String, dynamic> data) async {
   try {
     final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final bytes=await createReceiptVoucherPdf(id,data,font);
+    await Printing.layoutPdf(name: 'VIB-RECEIPT-$id.pdf', onLayout: (_) async => bytes);
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر طباعة سند القبض: $e')));
+  }
+}
+
+Future<void> shareReceiptVoucher(BuildContext context,String id,Map<String,dynamic> data) async {
+  try {
+    final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final bytes=await createReceiptVoucherPdf(id,data,font);
+    await Printing.sharePdf(bytes:bytes,filename:'VIB-RECEIPT-$id.pdf');
+  } catch(e) {
+    if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر إرسال سند القبض PDF: $e')));
+  }
+}
+
+Future<Uint8List> createReceiptVoucherPdf(String id,Map<String,dynamic> data,pw.Font font) async {
     final pdf = pw.Document();
     pdf.addPage(pw.Page(pageFormat: PdfPageFormat.a4, theme: pw.ThemeData.withFont(base: font, bold: font),
       build: (_) => pw.Directionality(textDirection: pw.TextDirection.rtl,
@@ -2818,10 +2851,7 @@ Future<void> printReceiptVoucher(BuildContext context, String id, Map<String, dy
           ]) pw.Padding(padding: const pw.EdgeInsets.symmetric(vertical: 7), child: pw.Text(line)),
           pw.SizedBox(height: 30), pw.Text('توقيع المستلم: __________________'),
         ]))));
-    await Printing.layoutPdf(name: 'VIB-RECEIPT-$id.pdf', onLayout: (_) => pdf.save());
-  } catch (e) {
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر طباعة سند القبض: $e')));
-  }
+    return pdf.save();
 }
 
 class Accounts extends StatefulWidget {
@@ -2864,11 +2894,11 @@ class _AccountsState extends State<Accounts> {
             final d = docs[index], account = d.data();
             return ListTile(
               title: Text('${account['name'] ?? ''}'),
-              subtitle: Text('هاتف: ${account['phone'] ?? 'غير مسجل'}'),
-              trailing: Column(mainAxisAlignment: MainAxisAlignment.center, mainAxisSize: MainAxisSize.min, children: [
-                Text('${account['balance'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
-                Text(accountBalanceLabel((account['balance'] as num?) ?? 0, supplier: suppliers)),
-              ]),
+              subtitle: Text('هاتف: ${account['phone'] ?? 'غير مسجل'} • الرصيد: ${account['balance'] ?? 0} ج.م\n${accountBalanceLabel((account['balance'] as num?) ?? 0, supplier: suppliers)}'),
+              isThreeLine:true,
+              trailing: TextButton.icon(style:TextButton.styleFrom(visualDensity:VisualDensity.compact,padding:const EdgeInsets.symmetric(horizontal:4)),
+                icon:const Icon(Icons.summarize_outlined,size:16),label:const Text('كشف الحساب'),
+                onPressed:()=>openVibReport(context,'كشف حساب ${account['name'] ?? ''}',AccountStatementPage(collection:collection,id:d.id))),
               onTap: () => showModalBottomSheet<void>(context:context,builder:(c)=>SafeArea(child:Column(mainAxisSize:MainAxisSize.min,children:[
                 ListTile(leading:const Icon(Icons.summarize),title:const Text('كشف حساب من تاريخ لتاريخ'),onTap:(){Navigator.pop(c);openVibReport(context,'كشف حساب ${account['name'] ?? ''}',AccountStatementPage(collection:collection,id:d.id));}),
                 ListTile(leading:const Icon(Icons.payments),title:Text(suppliers?'سند صرف للمورد':'سند قبض من العميل'),onTap:(){Navigator.pop(c);accountDialog(context,collection,d.id,account);}),
@@ -5074,7 +5104,3 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
 }
-
-
-
-
