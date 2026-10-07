@@ -1,7 +1,12 @@
 package com.example.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -68,6 +73,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -116,6 +122,16 @@ fun VibMainScreen(
   val context = LocalContext.current
   val snackbarHostState = remember { SnackbarHostState() }
   val adminFeaturesEnabled = BuildConfig.ADMIN_FEATURES_ENABLED
+  val notificationPermissionRequest = rememberLauncherForActivityResult(
+    contract = ActivityResultContracts.RequestPermission()
+  ) { }
+  LaunchedEffect(adminFeaturesEnabled) {
+    if (!adminFeaturesEnabled && Build.VERSION.SDK_INT >= 33 &&
+      ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+    ) {
+      notificationPermissionRequest.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+  }
   var availableUpdate by remember { mutableStateOf<AppUpdateInfo?>(null) }
 
   LaunchedEffect(Unit) {
