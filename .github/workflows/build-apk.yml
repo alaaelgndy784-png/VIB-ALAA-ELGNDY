@@ -54,6 +54,7 @@ jobs:
         run: |
           gh release view customer-latest >/dev/null 2>&1 || gh release create customer-latest --title "VIB Customer" --notes "نسخة العملاء الرسمية من تطبيق VIB"
           gh release upload customer-latest VIB-CUSTOMER.apk --clobber
+          gh release edit customer-latest --notes "نسخة العملاء الرسمية من تطبيق VIB | versionCode=${GITHUB_RUN_NUMBER}"
 
       - name: Publish Permanent Admin Download
         env:
@@ -61,3 +62,4 @@ jobs:
         run: |
           gh release view admin-latest >/dev/null 2>&1 || gh release create admin-latest --title "VIB Admin" --notes "نسخة المدير الرسمية من تطبيق VIB"
           gh release upload admin-latest VIB-ADMIN.apk --clobber
+          gh release edit admin-latest --notes "نسخة المدير الرسمية من تطبيق VIB | versionCode=${GITHUB_RUN_NUMBER}"
