@@ -4455,7 +4455,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                       .compareTo((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
 
                 final reportRows = rows.where((d) {
-                  final kind='\u0024{d.data()['kind'] ?? ''}';
+                  final kind='${d.data()['kind'] ?? ''}';
                   final sales = kind=='sale' || kind=='saleCorrection' || kind=='correction_sale' ||
                       kind=='correction_return' || kind=='sales_return';
                   final purchases = kind=='purchase' || kind=='purchaseCorrection' || kind=='purchase_return';
@@ -4537,7 +4537,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                               onSelected: (_) => setState(() => movementView='purchases'),
                             )),
                           ]),
-                          Text('عدد الحركات: \u0024{reportRows.length} • إجمالي الكمية: \u0024reportQuantity'),
+                          Text('عدد الحركات: ${reportRows.length} • إجمالي الكمية: $reportQuantity'),
                         ]),
                       ),
                       Expanded(
