@@ -1,0 +1,55 @@
+name: Build VIB Sales Web for computers
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'VIB-SALES-INDEPENDENT-SOURCE.zip'
+      - 'overrides/**'
+      - 'web-staff/**'
+      - '.github/workflows/build-vib-sales-web.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [manager, staff]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          channel: stable
+          cache: true
+      - name: Extract app and apply web mode
+        run: |
+          mkdir web-project
+          unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d web-project
+          cp overrides/lib/*.dart web-project/lib/
+          cp overrides/pubspec.yaml web-project/pubspec.yaml
+          cp overrides/assets/vip-logo.png web-project/assets/vip-logo.png
+          mkdir -p web-project/assets/tessdata web-project/assets/fonts web-project/test
+          printf '%s\n' '{"files":[]}' > web-project/assets/tessdata_config.json
+          touch web-project/assets/tessdata/.keep
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf web-project/assets/fonts/DejaVuSans.ttf
+          cp overrides/test/*.dart web-project/test/
+          cd web-project
+          flutter create --platforms=web --project-name vib_sales .
+          cd ..
+          python3 web-staff/prepare.py web-project ${{ matrix.app }}
+      - name: Verify invoice and account calculations
+        working-directory: web-project
+        run: flutter test test/accounting_test.dart test/invoice_serial_core_test.dart test/invoice_pdf_test.dart
+      - name: Build browser app
+        working-directory: web-project
+        run: flutter build web --release --no-wasm-dry-run --base-href /${{ matrix.app }}/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VIB-SALES-${{ matrix.app }}-WEB
+          path: web-project/build/web/
+          if-no-files-found: error
