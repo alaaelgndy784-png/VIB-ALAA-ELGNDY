@@ -2435,8 +2435,8 @@ class ReceiptVouchers extends StatelessWidget {
     if (!owner) query = query.where('actorId', isEqualTo: FirebaseAuth.instance.currentUser!.uid);
     return Column(children: [
       Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity,
-        child: FilledButton.icon(onPressed: () => createReceiptVoucher(context, branchId),
-          icon: const Icon(Icons.add), label: const Text('إنشاء سند قبض')))),
+        child: FilledButton.icon(onPressed: () => createReceiptVoucher(context, branchId, owner: owner),
+          icon: const Icon(Icons.add), label: Text(owner ? 'إنشاء سند قبض' : 'إنشاء وإرسال سند قبض للمدير')))),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: SizedBox(width: double.infinity,
         child: OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
           Directionality(textDirection: TextDirection.rtl, child: CustomerPaymentReport(owner: owner)))),
@@ -2527,6 +2527,12 @@ ReceiptDayReport summarizeReceiptBetween(List<Map<String,dynamic>> receipts,Date
 }
 
 Timestamp? receiptEffectiveTimestamp(Map<String,dynamic> row)=>(row['receiptDate'] ?? row['createdAt']) as Timestamp?;
+
+double? parseReceiptAmount(String value) {
+  final normalized = _ocrNumber(value.trim()).replaceAll(',', '.');
+  final amount = double.tryParse(normalized);
+  return amount != null && amount.isFinite ? amount : null;
+}
 
 String receiptReportMoney(int cents) => '${(cents / 100).toStringAsFixed(2)} ج.م';
 
@@ -2689,7 +2695,7 @@ Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, Rece
   }
 }
 
-Future<void> createReceiptVoucher(BuildContext context, String branchId, {String? initialCustomerId}) async {
+Future<void> createReceiptVoucher(BuildContext context, String branchId, {required bool owner, String? initialCustomerId}) async {
   final amount = TextEditingController(), note = TextEditingController();
   DateTime selectedReceiptDate=tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
   // Reuse this ID on transaction retries and after an uncertain network response.
@@ -2698,9 +2704,10 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
   final cashMovement = db.collection('accountMovements').doc();
   String? customerId = initialCustomerId;
   bool saving = false;
+  String? saveError;
   await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(
     builder: (dialog, update) => AlertDialog(
-      title: const Text('سند قبض من عميل'),
+      title: Text(owner ? 'سند قبض من عميل' : 'إرسال سند قبض للمدير'),
       content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
         OutlinedButton.icon(icon: const Icon(Icons.person_search),
           label: const Text('اختيار عميل مسجل / تغيير العميل'),
@@ -2714,6 +2721,7 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
         ),
         TextField(controller: amount, enabled: !saving,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          onChanged: (_) { if (saveError != null) update(() => saveError = null); },
           decoration: const InputDecoration(labelText: 'المبلغ المقبوض')),
         OutlinedButton.icon(icon:const Icon(Icons.calendar_month),label:Text('تاريخ ووقت السداد: ${DateFormat('dd/MM/yyyy HH:mm').format(selectedReceiptDate)}'),
           onPressed:saving ? null : () async {
@@ -2724,18 +2732,19 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
           }),
         TextField(controller: note, enabled: !saving, decoration: const InputDecoration(labelText: 'البيان / ملاحظات')),
         const SizedBox(height: 12),
-        const Text('يُخصم المبلغ من مديونية العميل ويُضاف للصندوق عند حفظ السند.'),
+        Text(owner ? 'يُخصم المبلغ من مديونية العميل ويُضاف للصندوق عند حفظ السند.' : 'بعد الإرسال سيظهر السند في نسخة المدير، ويُحدّث رصيد العميل والصندوق.'),
+        if (saveError != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(saveError!, style: const TextStyle(color: Colors.redAccent)) ),
       ])),
       actions: [
         TextButton(onPressed: saving ? null : () => Navigator.pop(dialog), child: const Text('إلغاء')),
         FilledButton(onPressed: saving ? null : () async {
-          final paid = double.tryParse(amount.text.trim());
+          final paid = parseReceiptAmount(amount.text);
           final id = customerId;
           if (id == null || paid == null || !paid.isFinite || paid <= 0) {
-            ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content: Text('اختر العميل واكتب مبلغًا صحيحًا أكبر من صفر')));
+            update(() => saveError = 'اختر العميل واكتب مبلغًا صحيحًا أكبر من صفر.');
             return;
           }
-          update(() => saving = true);
+          update(() { saving = true; saveError = null; });
           try {
             final actor = FirebaseAuth.instance.currentUser!.uid;
             final profile = (await db.collection('users').doc(actor).get()).data();
@@ -2776,14 +2785,13 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {String
               });
             });
             if (dialog.mounted) Navigator.pop(dialog);
-            if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ سند القبض وتحديث رصيد العميل والصندوق')));
+            if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(owner ? 'تم حفظ سند القبض وتحديث رصيد العميل والصندوق.' : 'تم حفظ سند القبض وإرساله للمدير، وتحديث رصيد العميل والصندوق.')));
           } catch (e) {
             if (dialog.mounted) {
-              update(() => saving = false);
-              ScaffoldMessenger.of(dialog).showSnackBar(SnackBar(content: Text('تعذر حفظ سند القبض: $e')));
+              update(() { saving = false; saveError = 'تعذر حفظ/إرسال سند القبض: $e'; });
             }
           }
-        }, child: Text(saving ? 'جاري الحفظ…' : 'حفظ سند القبض')),
+        }, child: Text(saving ? (owner ? 'جارٍ الحفظ…' : 'جارٍ الإرسال…') : (owner ? 'حفظ سند القبض' : 'حفظ وإرسال للمدير'))),
       ],
     ),
   ));
