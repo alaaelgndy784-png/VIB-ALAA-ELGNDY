@@ -47,10 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import com.example.model.Product
 import com.example.ui.theme.BlackBackground
 import com.example.ui.theme.GoldBorder
@@ -102,7 +99,7 @@ fun ProductDetailDialog(
 
           IconButton(
             onClick = onDismiss,
-            modifier = Modifier.testTag("close_detail_button")
+            modifier = Modifier.size(36.dp).testTag("close_detail_button")
           ) {
             Icon(
               imageVector = Icons.Default.Close,
@@ -114,27 +111,25 @@ fun ProductDetailDialog(
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Large Image
+        // Large Image. ProductImageDisplay decodes Firestore data URLs as well as web URLs.
         Box(
           modifier = Modifier
             .fillMaxWidth()
-            .height(230.dp)
+            .height(200.dp)
             .clip(RoundedCornerShape(14.dp))
         ) {
           if (galleryUrls.isNotEmpty()) {
-            AsyncImage(
-              model = ImageRequest.Builder(LocalContext.current)
-                .data(galleryUrls[selectedImageIndex.coerceIn(galleryUrls.indices)])
-                .crossfade(true)
-                .build(),
-              contentDescription = "صورة المنتج",
-              modifier = Modifier.fillMaxWidth().height(230.dp),
-              contentScale = ContentScale.Crop
+            val selectedUrl = galleryUrls[selectedImageIndex.coerceIn(galleryUrls.indices)]
+            ProductImageDisplay(
+              product = product.copy(imageUrl = selectedUrl, imageUrls = listOf(selectedUrl)),
+              modifier = Modifier.fillMaxSize(),
+              contentScale = ContentScale.Fit
             )
           } else {
             ProductImageDisplay(
               product = product,
-              modifier = Modifier.fillMaxWidth().height(230.dp)
+              modifier = Modifier.fillMaxSize(),
+              contentScale = ContentScale.Fit
             )
           }
         }
@@ -143,11 +138,10 @@ fun ProductDetailDialog(
           Spacer(modifier = Modifier.height(8.dp))
           LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             itemsIndexed(galleryUrls) { index, imageUrl ->
-              AsyncImage(
-                model = imageUrl,
-                contentDescription = "الصورة ${index + 1} من ${galleryUrls.size}",
+              ProductImageDisplay(
+                product = product.copy(imageUrl = imageUrl, imageUrls = listOf(imageUrl)),
                 modifier = Modifier
-                  .size(58.dp)
+                  .size(48.dp)
                   .clip(RoundedCornerShape(8.dp))
                   .clickable { selectedImageIndex = index },
                 contentScale = ContentScale.Crop
@@ -237,7 +231,7 @@ fun ProductDetailDialog(
           },
           modifier = Modifier
             .fillMaxWidth()
-            .height(50.dp)
+            .height(46.dp)
             .testTag("detail_add_cart_button"),
           shape = RoundedCornerShape(12.dp),
           colors = ButtonDefaults.buttonColors(containerColor = GoldPrimary)
@@ -281,7 +275,7 @@ fun ProductDetailDialog(
                 onDismiss()
                 onEditProduct(product)
               },
-              modifier = Modifier.weight(1f).height(42.dp),
+              modifier = Modifier.weight(1f).height(38.dp),
               shape = RoundedCornerShape(10.dp),
               colors = ButtonDefaults.buttonColors(containerColor = GoldPrimary)
             ) {
