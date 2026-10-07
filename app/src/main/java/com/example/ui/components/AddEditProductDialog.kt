@@ -218,6 +218,26 @@ fun AddEditProductDialog(
           }
         }
 
+        if (existingImageUrls.isNotEmpty() || selectedImageUris.isNotEmpty()) {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Text(
+              text = "الصور الحالية: ${existingImageUrls.size} — الصور الجديدة: ${selectedImageUris.size}",
+              color = GoldLight,
+              fontSize = 10.sp
+            )
+            Text(
+              text = "مسح الصور الحالية",
+              color = WhiteMuted,
+              fontSize = 10.sp,
+              modifier = Modifier.clickable { existingImageUrls = emptyList() }
+            )
+          }
+        }
+
         // Toggle Direct URL Field
         Row(
           modifier = Modifier
