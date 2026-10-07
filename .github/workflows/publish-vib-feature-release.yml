@@ -1,0 +1,45 @@
+name: Publish VIB Sales 0.2.6 receipts and date range
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Select latest successful main build
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run list --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --workflow build-vib-sales-independent.yml --branch main --status success --limit 20 --json databaseId,headSha --jq '.[0] | "run_id=\(.databaseId)\nsha=\(.headSha)"' >> "$GITHUB_OUTPUT"
+      - name: Download manager APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          run-id: ${{ steps.build.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: download
+      - name: Download employee APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-STAFF-APK
+          run-id: ${{ steps.build.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: download
+      - name: Validate and publish both APKs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_SHA: ${{ steps.build.outputs.sha }}
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          for path in ['download/VIB-SALES-MANAGER.apk','download/VIB-SALES-STAFF.apk']:
+              with zipfile.ZipFile(path) as apk:
+                  assert apk.testzip() is None, path
+                  assert 'AndroidManifest.xml' in apk.namelist(), path
+          PY
+          sha256sum download/*.apk > download/SHA256SUMS.txt
+          gh release view vib-independent-receipts-date-range-20261007 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-independent-receipts-date-range-20261007 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target "$BUILD_SHA" --title 'VIB Sales 0.2.6 — receipt PDF and date range' --notes 'Manager and employee apps, version 0.2.6 build 2008. Adds an independent customer receipt button in sales, a PDF share action for receipts, sales invoice totals for a chosen inclusive date range, and direct customer/supplier statement buttons with date range controls. Includes the rolling invoice color view from 0.2.5. Install over the matching existing manager or employee app.'
+          gh release upload vib-independent-receipts-date-range-20261007 download/VIB-SALES-MANAGER.apk download/VIB-SALES-STAFF.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber

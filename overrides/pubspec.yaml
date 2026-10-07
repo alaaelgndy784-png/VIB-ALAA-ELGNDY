@@ -1,5 +1,5 @@
 name: vib_sales
-version: 0.2.4+2006
+version: 0.2.6+2008
 publish_to: none
 description: VIB sales, inventory and branches
 
@@ -41,5 +41,4 @@ flutter:
     - assets/tessdata/
     - assets/fonts/DejaVuSans.ttf
     - assets/icons/manager/mipmap-xxxhdpi/ic_launcher.png
-
 
