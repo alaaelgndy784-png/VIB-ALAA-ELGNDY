@@ -30,6 +30,7 @@ data class Product(
   val category: String = SanitaryCategory.BRASS,
   val description: String = "",
   val imageUrl: String = "",
+  val imageUrls: List<String> = emptyList(),
   val drawableRes: Int? = null,
   val inStock: Boolean = true,
   val stockQuantity: Int = 10,
@@ -42,7 +43,8 @@ data class Product(
       "price" to price,
       "category" to category,
       "description" to description,
-      "imageUrl" to imageUrl,
+      "imageUrl" to (imageUrls.firstOrNull() ?: imageUrl),
+      "imageUrls" to (imageUrls.ifEmpty { listOf(imageUrl).filter { it.isNotBlank() } }),
       "inStock" to inStock,
       "stockQuantity" to stockQuantity,
       "createdAt" to createdAt
@@ -58,6 +60,8 @@ data class Product(
         category = map["category"] as? String ?: SanitaryCategory.BRASS,
         description = map["description"] as? String ?: "",
         imageUrl = map["imageUrl"] as? String ?: "",
+        imageUrls = ((map["imageUrls"] as? List<*>)?.mapNotNull { it as? String }?.filter { it.isNotBlank() }?.takeIf { it.isNotEmpty() })
+          ?: listOfNotNull((map["imageUrl"] as? String)?.takeIf { it.isNotBlank() }),
         inStock = map["inStock"] as? Boolean ?: true,
         stockQuantity = (map["stockQuantity"] as? Number)?.toInt() ?: 10,
         createdAt = (map["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
