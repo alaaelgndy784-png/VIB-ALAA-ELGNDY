@@ -58,6 +58,9 @@ shutil.copyfile('web-staff/index.html',web/'index.html')
 shutil.copyfile('web-staff/flutter_bootstrap.js',web/'flutter_bootstrap.js')
 shutil.copyfile('web-staff/_headers',web/'_headers')
 shutil.copyfile('web-staff/manifest.json',web/'manifest.json')
+p=web/'manifest.json'
+manifest=p.read_text().replace('"start_url": "/"', f'"start_url": "/{mode}/"').replace('"scope": "/"', f'"scope": "/{mode}/"')
+p.write_text(manifest)
 (web/'icons').mkdir(exist_ok=True)
 icon = 'overrides/assets/staff-icon.png' if is_staff else 'overrides/assets/manager-icon.png'
 for size in (512,):
