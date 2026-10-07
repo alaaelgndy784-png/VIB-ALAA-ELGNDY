@@ -22,15 +22,8 @@ class VibMessagingService : FirebaseMessagingService() {
       ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
     ) return
 
+    createChannel(this)
     val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-      manager.createNotificationChannel(
-        NotificationChannel(CHANNEL_ID, "تنبيهات منتجات VIB", NotificationManager.IMPORTANCE_HIGH).apply {
-          description = "تنبيه العملاء عند إضافة منتج جديد"
-          enableVibration(true)
-        }
-      )
-    }
 
     val title = message.notification?.title ?: "منتج جديد من VIB"
     val body = message.notification?.body ?: "تمت إضافة منتج جديد إلى الكتالوج"
@@ -57,5 +50,17 @@ class VibMessagingService : FirebaseMessagingService() {
 
   companion object {
     const val CHANNEL_ID = "vib_catalog_updates"
+
+    fun createChannel(context: Context) {
+      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        manager.createNotificationChannel(
+          NotificationChannel(CHANNEL_ID, "تنبيهات منتجات VIB", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "تنبيه العملاء عند إضافة منتج جديد"
+            enableVibration(true)
+          }
+        )
+      }
+    }
   }
 }
