@@ -178,7 +178,7 @@ fun ProductCard(
               shape = RoundedCornerShape(20.dp),
               color = Color.Black,
               border = BorderStroke(1.dp, GoldPrimary),
-              modifier = Modifier.height(36.dp)
+              modifier = Modifier.height(32.dp)
             ) {
               Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -186,7 +186,7 @@ fun ProductCard(
               ) {
                 IconButton(
                   onClick = onDecreaseQuantity,
-                  modifier = Modifier.size(28.dp).testTag("cart_minus_${product.id}")
+                  modifier = Modifier.size(24.dp).testTag("cart_minus_${product.id}")
                 ) {
                   Icon(
                     imageVector = Icons.Default.Remove,
@@ -229,7 +229,7 @@ fun ProductCard(
             ) {
               Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(horizontal = 12.dp)
+                modifier = Modifier.padding(horizontal = 9.dp)
               ) {
                 Icon(
                   imageVector = Icons.Default.ShoppingCart,
@@ -286,7 +286,7 @@ fun ProductCard(
               ) {
                 Icon(Icons.Default.Edit, contentDescription = null, tint = Color.Black, modifier = Modifier.size(13.dp))
                 Spacer(modifier = Modifier.width(4.dp))
-                Text("تعديل شامل", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                Text("تعديل شامل", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
               }
             }
 
