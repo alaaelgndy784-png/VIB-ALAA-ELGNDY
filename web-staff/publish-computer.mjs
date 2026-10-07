@@ -12,4 +12,3 @@ if (billing.data.billingEnabled !== false) {
 const cli=resolve('web-staff/node_modules/.bin/firebase');
 execFileSync(cli,['deploy','--only','hosting','--project',project,'--non-interactive'],{stdio:'inherit'});
 console.log('Manager: https://vib-sales.web.app/manager/');
-console.log('Staff: https://vib-sales.web.app/staff/');
