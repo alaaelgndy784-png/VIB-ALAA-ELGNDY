@@ -181,7 +181,12 @@ class Gate extends StatelessWidget {
           if(saleCostVisible.value!=showCost)WidgetsBinding.instance.addPostFrameCallback((_)=>saleCostVisible.value=showCost);
           final editPrice=data['role']=='owner' || data['canEditSalePrice']==true;
           if(salePriceEditable.value!=editPrice)WidgetsBinding.instance.addPostFrameCallback((_)=>salePriceEditable.value=editPrice);
-          final home = Home(canPurchase:data['canPurchase']==true,key:ValueKey('${auth.data!.uid}:${data['role']}'), uid: auth.data!.uid, role: data['role'] as String, branchId: (data['branchId'] ?? '') as String, name: (data['name'] ?? '') as String);
+          final home = Home(canPurchase:data['canPurchase']==true,
+            canViewCustomerBalance:data['canViewCustomerBalance']!=false,
+            canViewCustomerStatement:data['canViewCustomerStatement']==true,
+            key:ValueKey('${auth.data!.uid}:${data['role']}'), uid: auth.data!.uid,
+            role: data['role'] as String, branchId: (data['branchId'] ?? '') as String,
+            name: (data['name'] ?? '') as String);
           return data['role'] == 'owner' ? FutureBuilder<void>(future:initializeRequestedInvoiceSeries(),builder:(context,ready){
             if(ready.hasError)return Scaffold(body:Center(child:Column(mainAxisSize:MainAxisSize.min,children:[Text('تعذر تجهيز تسلسل الفواتير: ${ready.error}'),FilledButton(onPressed:()=>FirebaseAuth.instance.signOut(),child:const Text('خروج وإعادة المحاولة'))])));
             if(ready.connectionState!=ConnectionState.done)return const Scaffold(body:Center(child:CircularProgressIndicator()));
@@ -474,8 +479,9 @@ ThemeData managerTheme(BuildContext context) => Theme.of(context).copyWith(
 
 class Home extends StatefulWidget {
   final String uid, role, branchId, name;
-  final bool canPurchase;
-  const Home({super.key, required this.uid, required this.role, required this.branchId, required this.name,this.canPurchase=false});
+  final bool canPurchase,canViewCustomerBalance,canViewCustomerStatement;
+  const Home({super.key, required this.uid, required this.role, required this.branchId, required this.name,
+    this.canPurchase=false,this.canViewCustomerBalance=true,this.canViewCustomerStatement=false});
   @override
   State<Home> createState() => _HomeState();
 }
@@ -525,7 +531,7 @@ class _HomeState extends State<Home> {
           : page == 1
               ? Sales(owner: false, branchId: widget.branchId)
               : page == 2
-                  ? const StaffCustomers()
+                  ? StaffCustomers(canViewBalance:widget.canViewCustomerBalance,canViewStatement:widget.canViewCustomerStatement)
                   : ReceiptVouchers(owner: false, branchId: widget.branchId),
       bottomNavigationBar: NavigationBar(
         selectedIndex: page,
@@ -2346,6 +2352,8 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
   bool canPurchase=data['canPurchase']==true;
   bool showSaleCost=data['showSaleCost']==true;
   bool canEditSalePrice=data['canEditSalePrice']==true;
+  bool canViewCustomerBalance=data['canViewCustomerBalance']!=false;
+  bool canViewCustomerStatement=data['canViewCustomerStatement']==true;
   await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(
     builder: (c, setDialogState) => AlertDialog(
       title: const Text('صلاحيات الموظف'),
@@ -2362,6 +2370,11 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
         SwitchListTile(title:const Text('السماح بعمل فواتير مشتريات'),value:canPurchase,onChanged:(v)=>setDialogState(()=>canPurchase=v)),
         SwitchListTile(title: const Text('السماح بطباعة الفواتير'), value: canPrint,
           onChanged: (v) => setDialogState(() => canPrint = v)),
+        const Divider(),
+        SwitchListTile(title:const Text('عرض أرصدة العملاء'),value:canViewCustomerBalance,
+          onChanged:(v)=>setDialogState(()=>canViewCustomerBalance=v)),
+        SwitchListTile(title:const Text('السماح بكشف حساب العميل من تاريخ إلى تاريخ'),value:canViewCustomerStatement,
+          onChanged:(v)=>setDialogState(()=>canViewCustomerStatement=v)),
       ])),
       actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')),
         FilledButton(onPressed: () async {
@@ -2369,7 +2382,10 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
           try {
             await db.collection('users').doc(uid).update({
               'name': name.text.trim(), 'role': 'employee', 'branchId': selected,
-              'active': enabled, 'canPrint': canPrint, 'canPurchase':canPurchase, 'showSaleCost':showSaleCost, 'canEditSalePrice':canEditSalePrice,
+              'active': enabled, 'canPrint': canPrint, 'canPurchase':canPurchase,
+              'showSaleCost':showSaleCost, 'canEditSalePrice':canEditSalePrice,
+              'canViewCustomerBalance':canViewCustomerBalance,
+              'canViewCustomerStatement':canViewCustomerStatement,
             });
             if (c.mounted) Navigator.pop(c);
           } catch (_) {
@@ -2900,7 +2916,7 @@ class _AccountsState extends State<Accounts> {
                 icon:const Icon(Icons.summarize_outlined,size:16),label:const Text('كشف الحساب'),
                 onPressed:()=>openVibReport(context,'كشف حساب ${account['name'] ?? ''}',AccountStatementPage(collection:collection,id:d.id))),
               onTap: () => showModalBottomSheet<void>(context:context,builder:(c)=>SafeArea(child:Column(mainAxisSize:MainAxisSize.min,children:[
-                ListTile(leading:const Icon(Icons.summarize),title:const Text('كشف حساب من تاريخ لتاريخ'),onTap:(){Navigator.pop(c);openVibReport(context,'كشف حساب ${account['name'] ?? ''}',AccountStatementPage(collection:collection,id:d.id));}),
+                ListTile(leading:const Icon(Icons.summarize),title:const Text('كشف حساب من تاريخ إلى تاريخ'),onTap:(){Navigator.pop(c);openVibReport(context,'كشف حساب ${account['name'] ?? ''}',AccountStatementPage(collection:collection,id:d.id));}),
                 ListTile(leading:const Icon(Icons.payments),title:Text(suppliers?'سند صرف للمورد':'سند قبض من العميل'),onTap:(){Navigator.pop(c);accountDialog(context,collection,d.id,account);}),
               ]))),
             );
@@ -4669,7 +4685,8 @@ Future<String?> selectSaleProduct(BuildContext context, List<QueryDocumentSnapsh
   );
 
 class StaffCustomers extends StatefulWidget {
-  const StaffCustomers({super.key});
+  final bool canViewBalance,canViewStatement;
+  const StaffCustomers({super.key,this.canViewBalance=true,this.canViewStatement=false});
   @override
   State<StaffCustomers> createState() => _StaffCustomersState();
 }
@@ -4686,8 +4703,14 @@ class _StaffCustomersState extends State<StaffCustomers> {
       if (rows.isEmpty) return const Center(child: Text('لا يوجد عملاء مطابقون'));
       return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
         final data = rows[index].data();
-        return ListTile(title: Text('${data['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent)), subtitle: Text('${data['phone'] ?? ''}'),
-          trailing: Text('الرصيد: ${data['balance'] ?? 0} ج.م', style: const TextStyle(color: Colors.redAccent)));
+        return ListTile(title: Text('${data['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent)),
+          subtitle: Text('${data['phone'] ?? ''}'),
+          trailing: Wrap(crossAxisAlignment:WrapCrossAlignment.center,children:[
+            if(widget.canViewBalance)Text('الرصيد: ${data['balance'] ?? 0} ج.م',style:const TextStyle(color:Colors.redAccent)),
+            if(widget.canViewStatement)IconButton(tooltip:'كشف حساب من تاريخ إلى تاريخ',icon:const Icon(Icons.summarize_outlined),
+              onPressed:()=>openVibReport(context,'كشف حساب العميل ${data['name'] ?? ''}',
+                AccountStatementPage(collection:'customers',id:rows[index].id))),
+          ]));
       });
     })),
   ]);
