@@ -85,6 +85,7 @@ import androidx.compose.ui.unit.sp
 import com.example.BuildConfig
 import com.example.R
 import com.example.model.SanitaryCategory
+import com.example.notifications.VibMessagingService
 import com.example.security.AdminSecurityManager
 import com.example.security.findFragmentActivity
 import com.example.ui.components.AddEditProductDialog
@@ -126,6 +127,7 @@ fun VibMainScreen(
     contract = ActivityResultContracts.RequestPermission()
   ) { }
   LaunchedEffect(adminFeaturesEnabled) {
+    VibMessagingService.createChannel(context)
     if (!adminFeaturesEnabled && Build.VERSION.SDK_INT >= 33 &&
       ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
     ) {
