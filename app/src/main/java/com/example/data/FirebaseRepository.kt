@@ -580,10 +580,7 @@ class FirebaseRepository(val context: Context) {
       }
     }
 
-    // Safely delete old image from Firebase Storage if replaced
-    if (imageWasChanged && oldImageUrl.isNotBlank() && oldImageUrl != finalImageUrl) {
-      deleteImageFromStorage(oldImageUrl)
-    }
+    // Product images are compact Firestore data URLs; no Storage object cleanup is required.
 
     return@withContext true
   }
