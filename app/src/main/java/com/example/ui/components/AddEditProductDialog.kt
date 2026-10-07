@@ -459,7 +459,7 @@ fun AddEditProductDialog(
                 description.trim(),
                 selectedImageUris,
                 existingImageUrls,
-                if (customImageUrl.isNotBlank()) customImageUrl.trim() else null,
+                if (showUrlField && customImageUrl.isNotBlank()) customImageUrl.trim() else null,
                 inStock,
                 qty
               )
