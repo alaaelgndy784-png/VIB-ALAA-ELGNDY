@@ -1,5 +1,8 @@
 name: Build Independent VIB Sales Apps
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   push:
@@ -192,3 +195,26 @@ jobs:
           path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-STAFF.apk
           if-no-files-found: error
 
+
+
+  publish-direct-apks:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download manager and staff APKs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: VIB-SALES-*-APK
+          path: release-files
+          merge-multiple: true
+
+      - name: Publish direct APK downloads
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-sales-manager-staff-latest
+          name: VIB Sales Manager and Staff
+          target_commitish: ${{ github.sha }}
+          body: "آخر نسخة مباشرة لتطبيقي المدير والموظف."
+          files: release-files/VIB-SALES-*.apk
+          overwrite_files: true
+          make_latest: false
