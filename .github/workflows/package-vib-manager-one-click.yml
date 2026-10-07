@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   package:
-    runs-on: windows-latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -25,34 +25,32 @@ jobs:
           cache: true
 
       - name: Prepare manager web build
-        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force web-project | Out-Null
-          Expand-Archive -Path VIB-SALES-INDEPENDENT-SOURCE.zip -DestinationPath web-project -Force
-          Copy-Item overrides/lib/*.dart web-project/lib/ -Force
-          Copy-Item overrides/pubspec.yaml web-project/pubspec.yaml -Force
-          Copy-Item overrides/assets/vip-logo.png web-project/assets/vip-logo.png -Force
-          New-Item -ItemType Directory -Force web-project/assets/tessdata, web-project/assets/fonts, web-project/test | Out-Null
-          '{"files":[]}' | Set-Content web-project/assets/tessdata_config.json
-          New-Item -ItemType File -Force web-project/assets/tessdata/.keep | Out-Null
-          Copy-Item overrides/test/*.dart web-project/test/ -Force
-          Push-Location web-project
+          mkdir -p web-project
+          unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d web-project
+          cp overrides/lib/*.dart web-project/lib/
+          cp overrides/pubspec.yaml web-project/pubspec.yaml
+          cp overrides/assets/vip-logo.png web-project/assets/vip-logo.png
+          mkdir -p web-project/assets/tessdata web-project/assets/fonts web-project/test
+          printf '%s\n' '{"files":[]}' > web-project/assets/tessdata_config.json
+          touch web-project/assets/tessdata/.keep
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf web-project/assets/fonts/DejaVuSans.ttf
+          cp overrides/test/*.dart web-project/test/
+          cd web-project
           flutter create --platforms=web --project-name vib_sales .
-          Pop-Location
-          python web-staff/prepare.py web-project manager
+          cd ..
+          python3 web-staff/prepare.py web-project manager
 
       - name: Build manager web
-        shell: pwsh
         working-directory: web-project
         run: flutter build web --release --no-wasm-dry-run --base-href /manager/
 
       - name: Create one-click Windows launcher
-        shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force package/manager | Out-Null
-          Copy-Item web-project/build/web/* package/manager/ -Recurse -Force
+          mkdir -p package/manager
+          cp -R web-project/build/web/. package/manager/
 
-          @'
+          cat > package/VIB-Server.ps1 <<'PS1'
           $ErrorActionPreference = "Stop"
           $root = Split-Path -Parent $MyInvocation.MyCommand.Path
           $port = 8787
@@ -120,18 +118,18 @@ jobs:
               $listener.Stop()
               $listener.Close()
           }
-          '@ | Set-Content package/VIB-Server.ps1 -Encoding UTF8
+          PS1
 
-          @'
+          cat > "package/START VIB MANAGER.bat" <<'BAT'
           @echo off
           chcp 65001 >nul
           title VIB Manager
           cd /d "%~dp0"
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0VIB-Server.ps1"
           pause
-          '@ | Set-Content 'package/START VIB MANAGER.bat' -Encoding ASCII
+          BAT
 
-          @'
+          cat > package/README-AR.txt <<'TXT'
           VIB SALES MANAGER - تشغيل على الكمبيوتر
 
           1) فك ضغط الملف بالكامل.
@@ -139,7 +137,7 @@ jobs:
           3) اضغط مرتين على START VIB MANAGER.bat
           4) البرنامج سيفتح تلقائيا في المتصفح.
           5) اترك النافذة السوداء مفتوحة أثناء الاستخدام.
-          '@ | Set-Content package/README-AR.txt -Encoding UTF8
+          TXT
 
       - name: Upload one-click package
         uses: actions/upload-artifact@v4
