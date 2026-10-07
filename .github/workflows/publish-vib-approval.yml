@@ -1,4 +1,4 @@
-name: Publish VIB Sales 0.2.4 receipt update
+name: Publish VIB Sales 0.2.5 invoice history colors
 on:
   workflow_dispatch:
   push:
@@ -15,19 +15,19 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test "$(gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37619323208 --jq '[.head_sha,.conclusion] | join(" ")')" = "54bfa1ba08a30a74de88a8b865b9c7307a7b2c29 success"
+          test "$(gh api repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/actions/runs/37622921301 --jq '[.head_sha,.conclusion] | join(" ")')" = "e114dae2fbad708b40b9247684e6fe9abfe194d5 success"
       - name: Download manager APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
-          run-id: 37619323208
+          run-id: 37622921301
           github-token: ${{ github.token }}
           path: download
       - name: Download employee APK
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
-          run-id: 37619323208
+          run-id: 37622921301
           github-token: ${{ github.token }}
           path: download
       - name: Validate and publish both APKs
@@ -42,5 +42,5 @@ jobs:
                   assert 'AndroidManifest.xml' in apk.namelist(), path
           PY
           sha256sum download/*.apk > download/SHA256SUMS.txt
-          gh release view vib-sales-receipt-send-20261007 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-sales-receipt-send-20261007 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB Sales 0.2.4 — employee receipt sending' --notes 'Manager and employee apps, version 0.2.4 build 2006. Employee receipt vouchers now have an explicit save-and-send action, support Arabic amount digits, and show a visible save error if Firestore rejects the transaction. The shared voucher updates customer balance and cash and appears in the manager app after saving. Rules and Flutter tests passed. Install over the matching existing manager and employee apps; manager and employee apps must keep their matching application IDs.'
-          gh release upload vib-sales-receipt-send-20261007 download/VIB-SALES-MANAGER.apk download/VIB-SALES-STAFF.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
+          gh release view vib-invoice-history-day-colors-20261007 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY >/dev/null 2>&1 || gh release create vib-invoice-history-day-colors-20261007 --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --target ${{ github.sha }} --title 'VIB Sales 0.2.5 — invoice day colors' --notes 'Manager and employee apps, version 0.2.5 build 2007. Invoice history defaults to a rolling two-day view: today is fluorescent green and yesterday is red. The list refreshes at local midnight and when reopening after midnight. Sales and purchases are both included. Install over the matching existing manager and employee apps; manager and employee apps must keep their matching application IDs.'
+          gh release upload vib-invoice-history-day-colors-20261007 download/VIB-SALES-MANAGER.apk download/VIB-SALES-STAFF.apk download/SHA256SUMS.txt --repo alaaelgndy784-png/VIB-ALAA-ELGNDY --clobber
