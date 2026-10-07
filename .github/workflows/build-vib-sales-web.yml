@@ -53,3 +53,39 @@ jobs:
           name: VIB-SALES-${{ matrix.app }}-WEB
           path: web-project/build/web/
           if-no-files-found: error
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: VIB-SALES-*-WEB
+          path: web-artifacts
+      - name: Assemble manager and staff Hosting paths
+        run: |
+          mkdir -p public/manager public/staff
+          cp -R web-artifacts/VIB-SALES-manager-WEB/. public/manager/
+          cp -R web-artifacts/VIB-SALES-staff-WEB/. public/staff/
+          cat > firebase.json <<'JSON'
+          {"hosting":{"site":"vib-sales","public":"public","ignore":["firebase.json","**/.*","**/node_modules/**"],"rewrites":[{"source":"/manager/**","destination":"/manager/index.html"},{"source":"/staff/**","destination":"/staff/index.html"}],"headers":[{"source":"/manager/index.html","headers":[{"key":"Cache-Control","value":"no-cache"}]},{"source":"/staff/index.html","headers":[{"key":"Cache-Control","value":"no-cache"}]}]}}
+          JSON
+      - name: Check Firebase Hosting credentials
+        id: hosting
+        env:
+          SERVICE_ACCOUNT: ${{ secrets.FIREBASE_HOSTING_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$SERVICE_ACCOUNT" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Web builds are ready, but publishing needs the FIREBASE_HOSTING_SERVICE_ACCOUNT repository secret."
+          else
+            printf '%s' "$SERVICE_ACCOUNT" > "$RUNNER_TEMP/vib-firebase.json"
+            echo "GOOGLE_APPLICATION_CREDENTIALS=$RUNNER_TEMP/vib-firebase.json" >> "$GITHUB_ENV"
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish both apps to Firebase Hosting
+        if: steps.hosting.outputs.available == 'true'
+        run: |
+          npm install --prefix web-staff --no-save google-auth-library firebase-tools
+          node web-staff/publish-computer.mjs
