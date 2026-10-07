@@ -181,7 +181,12 @@ class Gate extends StatelessWidget {
           if(saleCostVisible.value!=showCost)WidgetsBinding.instance.addPostFrameCallback((_)=>saleCostVisible.value=showCost);
           final editPrice=data['role']=='owner' || data['canEditSalePrice']==true;
           if(salePriceEditable.value!=editPrice)WidgetsBinding.instance.addPostFrameCallback((_)=>salePriceEditable.value=editPrice);
-          final home = Home(canPurchase:data['canPurchase']==true,key:ValueKey('${auth.data!.uid}:${data['role']}'), uid: auth.data!.uid, role: data['role'] as String, branchId: (data['branchId'] ?? '') as String, name: (data['name'] ?? '') as String);
+          final home = Home(canPurchase:data['canPurchase']==true,
+            canViewCustomerBalance:data['canViewCustomerBalance']!=false,
+            canViewCustomerStatement:data['canViewCustomerStatement']==true,
+            key:ValueKey('${auth.data!.uid}:${data['role']}'), uid: auth.data!.uid,
+            role: data['role'] as String, branchId: (data['branchId'] ?? '') as String,
+            name: (data['name'] ?? '') as String);
           return data['role'] == 'owner' ? FutureBuilder<void>(future:initializeRequestedInvoiceSeries(),builder:(context,ready){
             if(ready.hasError)return Scaffold(body:Center(child:Column(mainAxisSize:MainAxisSize.min,children:[Text('تعذر تجهيز تسلسل الفواتير: ${ready.error}'),FilledButton(onPressed:()=>FirebaseAuth.instance.signOut(),child:const Text('خروج وإعادة المحاولة'))])));
             if(ready.connectionState!=ConnectionState.done)return const Scaffold(body:Center(child:CircularProgressIndicator()));
@@ -474,8 +479,9 @@ ThemeData managerTheme(BuildContext context) => Theme.of(context).copyWith(
 
 class Home extends StatefulWidget {
   final String uid, role, branchId, name;
-  final bool canPurchase;
-  const Home({super.key, required this.uid, required this.role, required this.branchId, required this.name,this.canPurchase=false});
+  final bool canPurchase,canViewCustomerBalance,canViewCustomerStatement;
+  const Home({super.key, required this.uid, required this.role, required this.branchId, required this.name,
+    this.canPurchase=false,this.canViewCustomerBalance=true,this.canViewCustomerStatement=false});
   @override
   State<Home> createState() => _HomeState();
 }
@@ -525,7 +531,7 @@ class _HomeState extends State<Home> {
           : page == 1
               ? Sales(owner: false, branchId: widget.branchId)
               : page == 2
-                  ? const StaffCustomers()
+                  ? StaffCustomers(canViewBalance:widget.canViewCustomerBalance,canViewStatement:widget.canViewCustomerStatement)
                   : ReceiptVouchers(owner: false, branchId: widget.branchId),
       bottomNavigationBar: NavigationBar(
         selectedIndex: page,
@@ -1218,7 +1224,7 @@ class Management extends StatelessWidget {
     option(context, 'الصندوق', Icons.account_balance_wallet_outlined, const CashBox()),
     option(context, 'المصروفات', Icons.receipt_long_outlined, const Expenses()),
     option(context, 'تقرير الأرباح', Icons.bar_chart_outlined, const ProfitReport()),
-    option(context, 'حركة المنتجات', Icons.swap_vert, const ItemMovementReport()),
+    option(context, 'تقرير بيع وشراء المنتج', Icons.swap_vert, const ItemMovementReport()),
     option(context, 'سجل حركات الحسابات', Icons.history, const AccountMovements()),
     option(context, 'الإعدادات والطباعة', Icons.settings_outlined, const AppSettings()),
     Padding(padding: const EdgeInsets.only(bottom: 10), child: Material(color: const Color(0xFF30283B),
@@ -2346,6 +2352,8 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
   bool canPurchase=data['canPurchase']==true;
   bool showSaleCost=data['showSaleCost']==true;
   bool canEditSalePrice=data['canEditSalePrice']==true;
+  bool canViewCustomerBalance=data['canViewCustomerBalance']!=false;
+  bool canViewCustomerStatement=data['canViewCustomerStatement']==true;
   await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(
     builder: (c, setDialogState) => AlertDialog(
       title: const Text('صلاحيات الموظف'),
@@ -2362,6 +2370,11 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
         SwitchListTile(title:const Text('السماح بعمل فواتير مشتريات'),value:canPurchase,onChanged:(v)=>setDialogState(()=>canPurchase=v)),
         SwitchListTile(title: const Text('السماح بطباعة الفواتير'), value: canPrint,
           onChanged: (v) => setDialogState(() => canPrint = v)),
+        const Divider(),
+        SwitchListTile(title:const Text('عرض أرصدة العملاء'),value:canViewCustomerBalance,
+          onChanged:(v)=>setDialogState(()=>canViewCustomerBalance=v)),
+        SwitchListTile(title:const Text('السماح بكشف حساب العميل من تاريخ إلى تاريخ'),value:canViewCustomerStatement,
+          onChanged:(v)=>setDialogState(()=>canViewCustomerStatement=v)),
       ])),
       actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')),
         FilledButton(onPressed: () async {
@@ -2369,7 +2382,10 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
           try {
             await db.collection('users').doc(uid).update({
               'name': name.text.trim(), 'role': 'employee', 'branchId': selected,
-              'active': enabled, 'canPrint': canPrint, 'canPurchase':canPurchase, 'showSaleCost':showSaleCost, 'canEditSalePrice':canEditSalePrice,
+              'active': enabled, 'canPrint': canPrint, 'canPurchase':canPurchase,
+              'showSaleCost':showSaleCost, 'canEditSalePrice':canEditSalePrice,
+              'canViewCustomerBalance':canViewCustomerBalance,
+              'canViewCustomerStatement':canViewCustomerStatement,
             });
             if (c.mounted) Navigator.pop(c);
           } catch (_) {
@@ -2900,7 +2916,7 @@ class _AccountsState extends State<Accounts> {
                 icon:const Icon(Icons.summarize_outlined,size:16),label:const Text('كشف الحساب'),
                 onPressed:()=>openVibReport(context,'كشف حساب ${account['name'] ?? ''}',AccountStatementPage(collection:collection,id:d.id))),
               onTap: () => showModalBottomSheet<void>(context:context,builder:(c)=>SafeArea(child:Column(mainAxisSize:MainAxisSize.min,children:[
-                ListTile(leading:const Icon(Icons.summarize),title:const Text('كشف حساب من تاريخ لتاريخ'),onTap:(){Navigator.pop(c);openVibReport(context,'كشف حساب ${account['name'] ?? ''}',AccountStatementPage(collection:collection,id:d.id));}),
+                ListTile(leading:const Icon(Icons.summarize),title:const Text('كشف حساب من تاريخ إلى تاريخ'),onTap:(){Navigator.pop(c);openVibReport(context,'كشف حساب ${account['name'] ?? ''}',AccountStatementPage(collection:collection,id:d.id));}),
                 ListTile(leading:const Icon(Icons.payments),title:Text(suppliers?'سند صرف للمورد':'سند قبض من العميل'),onTap:(){Navigator.pop(c);accountDialog(context,collection,d.id,account);}),
               ]))),
             );
@@ -4320,6 +4336,7 @@ class ItemMovementReport extends StatefulWidget {
 class _ItemMovementReportState extends State<ItemMovementReport> {
   String? productId, branchId='main';
   DateTimeRange? range;
+  String movementView='sales';
 
   Future<Map<String,String>> _movementCounterparties(List<QueryDocumentSnapshot<Map<String,dynamic>>> rows) async {
     final result=<String,String>{},invoices=<String,Map<String,dynamic>?>{},people=<String,String>{};
@@ -4453,6 +4470,14 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                   ..sort((a, b) => ((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
                       .compareTo((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
 
+                final reportRows = rows.where((d) {
+                  final kind='${d.data()['kind'] ?? ''}';
+                  final sales = kind=='sale' || kind=='saleCorrection' || kind=='correction_sale' ||
+                      kind=='correction_return' || kind=='sales_return';
+                  final purchases = kind=='purchase' || kind=='purchaseCorrection' || kind=='purchase_return';
+                  return movementView=='sales' ? sales : purchases;
+                }).toList();
+                final reportQuantity = reportRows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).abs()));
                 final incoming = rows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).clamp(0, 999999999)));
                 final outgoing = rows.fold<num>(0, (sum, d) => sum + ((-((d.data()['quantity'] as num?) ?? 0)).clamp(0, 999999999)));
 
@@ -4512,14 +4537,35 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                           ]),
                         ),
                       ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: Column(children: [
+                          Row(children: [
+                            Expanded(child: ChoiceChip(
+                              label: const Text('العملاء اللي اشتروا'),
+                              selected: movementView=='sales',
+                              onSelected: (_) => setState(() => movementView='sales'),
+                            )),
+                            const SizedBox(width: 6),
+                            Expanded(child: ChoiceChip(
+                              label: const Text('الموردين اللي اشتريت منهم'),
+                              selected: movementView=='purchases',
+                              onSelected: (_) => setState(() => movementView='purchases'),
+                            )),
+                          ]),
+                          Text('عدد الحركات: ${reportRows.length} • إجمالي الكمية: $reportQuantity'),
+                        ]),
+                      ),
                       Expanded(
-                        child: rows.isEmpty
-                            ? const Center(child: Text('لا توجد حركات لهذا المنتج في الفترة المختارة'))
+                        child: reportRows.isEmpty
+                            ? Center(child: Text(movementView=='sales'
+                                ? 'لا توجد فواتير بيع لهذا الصنف في الفترة المختارة'
+                                : 'لا توجد فواتير شراء لهذا الصنف في الفترة المختارة'))
                             : ListView.builder(
                                 padding: const EdgeInsets.symmetric(horizontal: 8),
-                                itemCount: rows.length,
+                                itemCount: reportRows.length,
                                 itemBuilder: (context, index) {
-                                  final row = rows[index];
+                                  final row = reportRows[index];
                                   final x = row.data();
                                   final qty = (x['quantity'] as num?) ?? 0;
                                   final positive = qty >= 0;
@@ -4639,7 +4685,8 @@ Future<String?> selectSaleProduct(BuildContext context, List<QueryDocumentSnapsh
   );
 
 class StaffCustomers extends StatefulWidget {
-  const StaffCustomers({super.key});
+  final bool canViewBalance,canViewStatement;
+  const StaffCustomers({super.key,this.canViewBalance=true,this.canViewStatement=false});
   @override
   State<StaffCustomers> createState() => _StaffCustomersState();
 }
@@ -4656,8 +4703,14 @@ class _StaffCustomersState extends State<StaffCustomers> {
       if (rows.isEmpty) return const Center(child: Text('لا يوجد عملاء مطابقون'));
       return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
         final data = rows[index].data();
-        return ListTile(title: Text('${data['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent)), subtitle: Text('${data['phone'] ?? ''}'),
-          trailing: Text('الرصيد: ${data['balance'] ?? 0} ج.م', style: const TextStyle(color: Colors.redAccent)));
+        return ListTile(title: Text('${data['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent)),
+          subtitle: Text('${data['phone'] ?? ''}'),
+          trailing: Wrap(crossAxisAlignment:WrapCrossAlignment.center,children:[
+            if(widget.canViewBalance)Text('الرصيد: ${data['balance'] ?? 0} ج.م',style:const TextStyle(color:Colors.redAccent)),
+            if(widget.canViewStatement)IconButton(tooltip:'كشف حساب من تاريخ إلى تاريخ',icon:const Icon(Icons.summarize_outlined),
+              onPressed:()=>openVibReport(context,'كشف حساب العميل ${data['name'] ?? ''}',
+                AccountStatementPage(collection:'customers',id:rows[index].id))),
+          ]));
       });
     })),
   ]);
