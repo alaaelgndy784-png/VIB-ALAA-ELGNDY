@@ -581,8 +581,8 @@ fun VibMainScreen(
         
       
         
-        onSaveProduct = { name, price, category, description, imageUri, customImageUrl, inStock, stockQuantity ->
-          viewModel.saveProduct(name, price, category, description, imageUri, customImageUrl, inStock, stockQuantity)
+        onSaveProduct = { name, price, category, description, imageUris, imageUrlsToKeep, customImageUrl, inStock, stockQuantity ->
+          viewModel.saveProduct(name, price, category, description, imageUris, imageUrlsToKeep, customImageUrl, inStock, stockQuantity)
         }
       )
     }

@@ -18,35 +18,35 @@ object WhatsAppHelper {
     val currentDate = dateFormat.format(Date(order.createdAt))
 
     val sb = StringBuilder()
-    sb.append("✨ *طلب جديد من تطبيق VIB ALAA ELGNDY* ✨\n")
-    sb.append("للأدوات الصحية والسباكة الفاخرة\n")
+    sb.append("🧾 *فاتورة طلب من VIB للتجارة والتوزيع*\n")
+    sb.append("*ALAA ELGNDY*\n")
     sb.append("━━━━━━━━━━━━━━━━━━━━\n")
-    sb.append("👤 *بيانات العميل:*\n")
-    sb.append("• الاسم: ${customer.name}\n")
-    sb.append("• رقم الهاتف: ${customer.phone}\n")
-    if (customer.address.isNotBlank()) {
-      sb.append("• العنوان: ${customer.address}\n")
-    }
-    if (customer.notes.isNotBlank()) {
-      sb.append("• ملاحظات: ${customer.notes}\n")
-    }
+    sb.append("*رقم الفاتورة:* ${order.id}\n")
+    sb.append("*التاريخ:* $currentDate\n")
     sb.append("━━━━━━━━━━━━━━━━━━━━\n")
-    sb.append("🛒 *تفاصيل الأصناف المطلوبة:*\n")
+    sb.append("*بيانات العميل*\n")
+    sb.append("الاسم: ${customer.name}\n")
+    sb.append("الهاتف: ${customer.phone}\n")
+    if (customer.address.isNotBlank()) sb.append("العنوان: ${customer.address}\n")
+    if (customer.notes.isNotBlank()) sb.append("ملاحظات: ${customer.notes}\n")
+    sb.append("━━━━━━━━━━━━━━━━━━━━\n")
+    sb.append("*الأصناف*\n")
+    sb.append("رقم | الصنف | الكمية × السعر | الإجمالي\n")
 
     order.items.forEachIndexed { index, item ->
-      val unitPriceStr = "%,.0f".format(Locale.US, item.product.price)
-      val subtotalStr = "%,.0f".format(Locale.US, item.subtotal)
-      sb.append("${index + 1}. *${item.product.name}*\n")
-      sb.append("   القسم: ${item.product.category}\n")
-      sb.append("   الكمية: ${item.quantity} × $unitPriceStr ج.م = *$subtotalStr ج.م*\n\n")
+      val unitPriceStr = "%,.2f".format(Locale.US, item.product.price)
+      val subtotalStr = "%,.2f".format(Locale.US, item.subtotal)
+      sb.append("${index + 1} | *${item.product.name}*\n")
+      sb.append("   ${item.quantity} × $unitPriceStr ج.م = *$subtotalStr ج.م*\n")
     }
 
-    val totalStr = "%,.0f".format(Locale.US, order.totalAmount)
+    val totalStr = "%,.2f".format(Locale.US, order.totalAmount)
     sb.append("━━━━━━━━━━━━━━━━━━━━\n")
-    sb.append("💰 *الإجمالي النهائي: $totalStr ج.م*\n")
-    sb.append("📅 تاريخ الطلب: $currentDate\n")
+    sb.append("*إجمالي الفاتورة: $totalStr ج.م*\n")
+    sb.append("عدد الأصناف: ${order.items.sumOf { it.quantity }}\n")
+    sb.append("الحالة: طلب جديد بانتظار تأكيد الإدارة\n")
     sb.append("━━━━━━━━━━━━━━━━━━━━\n")
-    sb.append("شكراً لاختياركم VIB ALAA ELGNDY للأدوات الصحية 🌟")
+    sb.append("VIB للتجارة والتوزيع — ALAA ELGNDY")
 
     return sb.toString()
   }

@@ -312,7 +312,8 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
     price: Double,
     category: String,
     description: String,
-    imageUri: Uri?,
+    imageUris: List<Uri>,
+    imageUrlsToKeep: List<String>,
     customImageUrl: String? = null,
     inStock: Boolean = true,
     stockQuantity: Int = 10
@@ -330,18 +331,23 @@ class VibViewModel(private val repository: FirebaseRepository) : ViewModel() {
           inStock = inStock,
           stockQuantity = stockQuantity
         )
-        repository.updateProduct(updated, imageUri, customImageUrl)
-        _statusMessage.value = "تم حفظ التعديلات في Firebase ومزامنة الصور بنجاح"
+        val saved = repository.updateProduct(updated, customImageUrl = customImageUrl, imageUris = imageUris, imageUrlsToKeep = imageUrlsToKeep)
+        if (!saved) {
+          shouldClose = false
+          _statusMessage.value = "تعذر حفظ صور المنتج. لم يتم نشر التعديل، حاول مرة أخرى"
+        } else {
+          _statusMessage.value = "تم حفظ التعديلات ومزامنة صور المنتج"
+        }
       } else {
         val success = repository.addProduct(
           name = name,
           price = price,
           category = category,
           description = description,
-          imageUri = imageUri,
           customImageUrl = customImageUrl,
           inStock = inStock,
-          stockQuantity = stockQuantity
+          stockQuantity = stockQuantity,
+          imageUris = imageUris
         )
         if (success) {
           _statusMessage.value = "تم رفع المنتج والصورة بنجاح"

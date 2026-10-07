@@ -2,7 +2,6 @@ package com.example.ui.components
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
@@ -82,7 +81,8 @@ fun AddEditProductDialog(
     price: Double,
     category: String,
     description: String,
-    imageUri: Uri?,
+    imageUris: List<Uri>,
+    imageUrlsToKeep: List<String>,
     customImageUrl: String?,
     inStock: Boolean,
     stockQuantity: Int
@@ -97,18 +97,17 @@ fun AddEditProductDialog(
   var description by remember { mutableStateOf(productToEdit?.description ?: "") }
   var inStock by remember { mutableStateOf(productToEdit?.inStock ?: true) }
   var stockQuantityStr by remember { mutableStateOf(productToEdit?.stockQuantity?.toString() ?: "10") }
-  var selectedImageUri by remember { mutableStateOf<Uri?>(null) }
+  var selectedImageUris by remember { mutableStateOf<List<Uri>>(emptyList()) }
+  var existingImageUrls by remember { mutableStateOf(productToEdit?.imageUrls?.ifEmpty { listOf(productToEdit.imageUrl).filter { it.isNotBlank() } } ?: emptyList()) }
   var customImageUrl by remember { mutableStateOf(productToEdit?.imageUrl ?: "") }
   var showUrlField by remember { mutableStateOf(false) }
   var errorMessage by remember { mutableStateOf<String?>(null) }
 
   // Modern Android Photo Picker (zero-permission)
   val photoPickerLauncher = rememberLauncherForActivityResult(
-    contract = ActivityResultContracts.PickVisualMedia()
-  ) { uri: Uri? ->
-    if (uri != null) {
-      selectedImageUri = uri
-    }
+    contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 4)
+  ) { uris: List<Uri> ->
+    selectedImageUris = uris.take((4 - existingImageUrls.size).coerceAtLeast(0))
   }
 
   Dialog(
@@ -164,19 +163,19 @@ fun AddEditProductDialog(
             .border(1.dp, GoldBorder, RoundedCornerShape(12.dp))
             .clickable {
               photoPickerLauncher.launch(
-                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                androidx.activity.result.PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
               )
             }
             .testTag("admin_pick_image_button"),
           contentAlignment = Alignment.Center
         ) {
-          if (selectedImageUri != null) {
+          if (selectedImageUris.isNotEmpty()) {
             AsyncImage(
               model = ImageRequest.Builder(LocalContext.current)
-                .data(selectedImageUri)
+                .data(selectedImageUris.first())
                 .crossfade(true)
                 .build(),
-              contentDescription = "صورة المنتج المختارة",
+              contentDescription = "صور المنتج المختارة",
               modifier = Modifier.fillMaxSize(),
               contentScale = ContentScale.Crop
             )
@@ -205,17 +204,37 @@ fun AddEditProductDialog(
               )
               Spacer(modifier = Modifier.height(6.dp))
               Text(
-                text = "اختر صورة المنتج من المعرض (Photo Picker)",
+                text = "اختر حتى ٤ صور لنفس المنتج",
                 color = GoldLight,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium
               )
               Text(
-                text = "سيتم رفعها لـ Firebase Storage لتظهر فوراً لجميع العملاء",
+                text = "تظهر الصور معاً في تفاصيل المنتج عند جميع العملاء",
                 color = WhiteMuted,
                 fontSize = 10.sp
               )
             }
+          }
+        }
+
+        if (existingImageUrls.isNotEmpty() || selectedImageUris.isNotEmpty()) {
+          Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+          ) {
+            Text(
+              text = "الصور الحالية: ${existingImageUrls.size} — الصور الجديدة: ${selectedImageUris.size}",
+              color = GoldLight,
+              fontSize = 10.sp
+            )
+            Text(
+              text = "مسح الصور الحالية",
+              color = WhiteMuted,
+              fontSize = 10.sp,
+              modifier = Modifier.clickable { existingImageUrls = emptyList() }
+            )
           }
         }
 
@@ -438,8 +457,9 @@ fun AddEditProductDialog(
                 price,
                 category,
                 description.trim(),
-                selectedImageUri,
-                if (customImageUrl.isNotBlank()) customImageUrl.trim() else null,
+                selectedImageUris,
+                existingImageUrls,
+                if (showUrlField && customImageUrl.isNotBlank()) customImageUrl.trim() else null,
                 inStock,
                 qty
               )
