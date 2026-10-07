@@ -1,16 +1,13 @@
 name: Publish VIB Sales 0.2.6 receipts and date range
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows: [Build Independent VIB Sales Apps]
-    types: [completed]
-    branches: [main]
+  push:
+    paths: ['.github/workflows/publish-vib-feature-release.yml']
 permissions:
   contents: write
   actions: read
 jobs:
   publish:
-    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Select latest successful main build
