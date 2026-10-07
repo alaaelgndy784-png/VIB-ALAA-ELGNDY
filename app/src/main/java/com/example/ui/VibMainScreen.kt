@@ -642,7 +642,7 @@ fun VibMainScreen(
             try {
               context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.downloadUrl)))
             } catch (_: Exception) {
-              snackbarHostState.showSnackbar("تعذر فتح رابط التحديث")
+              availableUpdate = null
             }
             availableUpdate = null
           }) {
