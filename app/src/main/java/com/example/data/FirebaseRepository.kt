@@ -229,6 +229,11 @@ class FirebaseRepository(val context: Context) {
           val category = obj.optString("category", "")
           val description = obj.optString("description", "")
           val imageUrl = obj.optString("imageUrl", "")
+          val imageArray = obj.optJSONArray("imageUrls")
+          val imageUrls = (0 until (imageArray?.length() ?: 0))
+            .map { imageArray?.optString(it).orEmpty() }
+            .filter { it.isNotBlank() }
+            .ifEmpty { listOfNotNull(imageUrl.takeIf { it.isNotBlank() }) }
           val inStock = obj.optBoolean("inStock", true)
           // Resolve drawable safely from current R constants to prevent obsolete/invalid AAPT IDs across builds
           val resolvedDrawable = InitialProducts.defaultCatalog.find { it.id == id }?.drawableRes
@@ -241,7 +246,8 @@ class FirebaseRepository(val context: Context) {
               price = price,
               category = category,
               description = description,
-              imageUrl = imageUrl,
+              imageUrl = imageUrls.firstOrNull() ?: imageUrl,
+              imageUrls = imageUrls,
               drawableRes = resolvedDrawable,
               inStock = inStock
             )
@@ -267,7 +273,9 @@ class FirebaseRepository(val context: Context) {
         obj.put("price", p.price)
         obj.put("category", p.category)
         obj.put("description", p.description)
-        obj.put("imageUrl", p.imageUrl)
+        val imageUrls = p.imageUrls.ifEmpty { listOf(p.imageUrl).filter { it.isNotBlank() } }
+        obj.put("imageUrl", imageUrls.firstOrNull().orEmpty())
+        obj.put("imageUrls", JSONArray(imageUrls))
         obj.put("inStock", p.inStock)
         // Intentionally do not write raw int drawableRes to avoid outdated AAPT IDs across builds
         array.put(obj)
@@ -413,20 +421,20 @@ class FirebaseRepository(val context: Context) {
         decoded
       }
 
-      var quality = 72
+      var quality = 68
       var bytes: ByteArray
       do {
         val output = ByteArrayOutputStream()
         resized.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, output)
         bytes = output.toByteArray()
         quality -= 8
-      } while (bytes.size > 520_000 && quality >= 32)
+      } while (bytes.size > 150_000 && quality >= 28)
 
       if (resized !== decoded) decoded.recycle()
       resized.recycle()
 
-      if (bytes.size > 700_000) {
-        Log.e(TAG, "Compressed image is still too large for Firestore")
+      if (bytes.size > 170_000) {
+        Log.e(TAG, "Compressed image is still too large for a multi-photo Firestore product")
         null
       } else {
         "data:image/jpeg;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
@@ -473,21 +481,23 @@ class FirebaseRepository(val context: Context) {
     price: Double,
     category: String,
     description: String,
-    imageUri: Uri?,
+    imageUri: Uri? = null,
     customImageUrl: String? = null,
     inStock: Boolean = true,
-    stockQuantity: Int = 10
+    stockQuantity: Int = 10,
+    imageUris: List<Uri> = emptyList()
   ): Boolean = withContext(Dispatchers.IO) {
     val id = "prod_${System.currentTimeMillis()}"
-    var finalImageUrl = if (!customImageUrl.isNullOrBlank()) customImageUrl.trim() else ""
-
-    if (imageUri != null) {
-      val uploadedImageUrl = uploadImageToStorage(imageUri)
-      if (uploadedImageUrl.isNullOrBlank() || !(uploadedImageUrl.startsWith("http") || uploadedImageUrl.startsWith("data:image/"))) {
-        Log.e(TAG, "Product image upload failed; refusing to publish an invisible product")
+    val allImageUris = (imageUris + listOfNotNull(imageUri)).distinct().take(4)
+    val finalImageUrls = mutableListOf<String>()
+    if (!customImageUrl.isNullOrBlank()) finalImageUrls += customImageUrl.trim()
+    for (uri in allImageUris) {
+      val uploaded = uploadImageToStorage(uri)
+      if (uploaded.isNullOrBlank() || !uploaded.startsWith("data:image/")) {
+        Log.e(TAG, "Product gallery upload failed; refusing to publish a partial gallery")
         return@withContext false
       }
-      finalImageUrl = uploadedImageUrl
+      finalImageUrls += uploaded
     }
 
     val newProduct = Product(
@@ -496,7 +506,8 @@ class FirebaseRepository(val context: Context) {
       price = price,
       category = category,
       description = description,
-      imageUrl = finalImageUrl,
+      imageUrl = finalImageUrls.firstOrNull().orEmpty(),
+      imageUrls = finalImageUrls,
       inStock = inStock,
       stockQuantity = stockQuantity,
       createdAt = System.currentTimeMillis()
@@ -524,28 +535,31 @@ class FirebaseRepository(val context: Context) {
 
   suspend fun updateProduct(
     product: Product,
-    newImageUri: Uri?,
-    customImageUrl: String? = null
+    newImageUri: Uri? = null,
+    customImageUrl: String? = null,
+    imageUris: List<Uri> = emptyList(),
+    imageUrlsToKeep: List<String> = product.imageUrls.ifEmpty { listOf(product.imageUrl).filter { it.isNotBlank() } }
   ): Boolean = withContext(Dispatchers.IO) {
-    val oldProduct = _products.value.find { it.id == product.id }
-    val oldImageUrl = oldProduct?.imageUrl ?: product.imageUrl
-
-    var finalImageUrl = if (!customImageUrl.isNullOrBlank()) customImageUrl.trim() else product.imageUrl
-    var imageWasChanged = false
-
-    if (newImageUri != null) {
-      val uploaded = uploadImageToStorage(newImageUri)
-      if (uploaded.isNullOrBlank()) {
-        Log.e(TAG, "Updated image could not be prepared; keeping edit dialog open")
-        return@withContext false
+    val allImageUris = (imageUris + listOfNotNull(newImageUri)).distinct().take(4)
+    val finalImageUrls = if (!customImageUrl.isNullOrBlank()) {
+      listOf(customImageUrl.trim())
+    } else {
+      imageUrlsToKeep.filter { it.isNotBlank() }.toMutableList().also { urls ->
+        for (uri in allImageUris) {
+          val uploaded = uploadImageToStorage(uri)
+          if (uploaded.isNullOrBlank() || !uploaded.startsWith("data:image/")) {
+            Log.e(TAG, "Updated product gallery could not be prepared; keeping product unchanged")
+            return@withContext false
+          }
+          urls += uploaded
+        }
       }
-      finalImageUrl = uploaded
-      imageWasChanged = true
-    } else if (!customImageUrl.isNullOrBlank() && customImageUrl != oldImageUrl) {
-      imageWasChanged = true
-    }
+    }.distinct().take(4)
 
-    val updatedProduct = product.copy(imageUrl = finalImageUrl)
+    val updatedProduct = product.copy(
+      imageUrl = finalImageUrls.firstOrNull().orEmpty(),
+      imageUrls = finalImageUrls
+    )
 
     val updated = _products.value.map {
       if (it.id == product.id) updatedProduct else it
@@ -586,7 +600,7 @@ class FirebaseRepository(val context: Context) {
 
   suspend fun updateProductImage(productId: String, newImageUri: Uri?, customImageUrl: String?): Boolean {
     val product = _products.value.find { it.id == productId } ?: return false
-    return updateProduct(product, newImageUri, customImageUrl)
+    return updateProduct(product, newImageUri, customImageUrl, imageUrlsToKeep = emptyList())
   }
 
   suspend fun deleteProduct(productId: String): Boolean = withContext(Dispatchers.IO) {
