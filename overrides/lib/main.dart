@@ -4380,6 +4380,53 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
     return '';
   }
 
+  Future<void> _chooseMovementProduct(List<QueryDocumentSnapshot<Map<String,dynamic>>> products) async {
+    var query = '';
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final q = query.trim().toLowerCase();
+          final filtered = products.where((d) =>
+            (d.data()['name']?.toString() ?? '').toLowerCase().contains(q)).toList();
+          return AlertDialog(
+            title: const Text('ابحث عن منتج'),
+            content: SizedBox(
+              width: double.maxFinite,
+              height: 420,
+              child: Column(children: [
+                TextField(
+                  autofocus: true,
+                  decoration: const InputDecoration(
+                    prefixIcon: Icon(Icons.search),
+                    hintText: 'اكتب اسم المنتج',
+                  ),
+                  onChanged: (value) => setDialogState(() => query = value),
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: filtered.isEmpty
+                    ? const Center(child: Text('لا توجد منتجات مطابقة'))
+                    : ListView.builder(
+                        itemCount: filtered.length,
+                        itemBuilder: (context, index) {
+                          final product = filtered[index];
+                          return ListTile(
+                            title: Text(product.data()['name']?.toString() ?? ''),
+                            onTap: () => Navigator.pop(dialogContext, product.id),
+                          );
+                        },
+                      ),
+                ),
+              ]),
+            ),
+          );
+        },
+      ),
+    );
+    if (selected != null && mounted) setState(() => productId = selected);
+  }
+
   Future<void> _printMovementReport(BuildContext context,String productName,List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,
       Map<String,String> parties,ProductPeriodTotals total) async {
     try {
@@ -4406,13 +4453,22 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
         return Padding(
           padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
           child: Column(children: [
-            DropdownButtonFormField<String>(
-              initialValue: productId,
-              isExpanded: true,
-              decoration: _vibInvoiceInput('اختر المنتج', icon: Icons.inventory_2_outlined),
-              items: products.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))).toList(),
-              onChanged: (v) => setState(() => productId = v),
-            ),
+            Builder(builder: (context) {
+              final selected = products.where((d) => d.id == productId).toList();
+              final selectedName = selected.isEmpty
+                  ? 'اضغط للبحث واختيار المنتج'
+                  : (selected.first.data()['name']?.toString() ?? '');
+              return InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: products.isEmpty ? null : () => _chooseMovementProduct(products),
+                child: InputDecorator(
+                  decoration: _vibInvoiceInput('اختر المنتج', icon: Icons.inventory_2_outlined)
+                      .copyWith(suffixIcon: const Icon(Icons.search)),
+                  child: Text(selectedName, maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: selected.isEmpty ? Colors.white54 : null)),
+                ),
+              );
+            }),
             const SizedBox(height: 6),
             Row(children: [
               Expanded(child: DropdownButtonFormField<String>(
