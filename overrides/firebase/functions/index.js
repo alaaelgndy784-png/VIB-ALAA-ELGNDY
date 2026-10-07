@@ -69,3 +69,35 @@ exports.appendInvoiceItems = onCall({region: 'us-central1', maxInstances: 5}, as
   if (!request.auth) throw new HttpsError('unauthenticated', 'سجل دخولك أولًا');
   return appendInvoice(getFirestore(), FieldValue, HttpsError, request.auth.uid, request.data);
 });
+
+const {onDocumentCreated} = require('firebase-functions/v2/firestore');
+const {getMessaging} = require('firebase-admin/messaging');
+
+exports.notifyCatalogProductCreated = onDocumentCreated(
+  {document: 'products/{productId}', region: 'us-central1'},
+  async (event) => {
+    const product = event.data?.data() || {};
+    const productName = String(product.name || '').trim();
+    if (!productName) return null;
+
+    await getMessaging().send({
+      topic: 'vib-catalog-customers',
+      notification: {
+        title: 'منتج جديد من VIB',
+        body: productName.slice(0, 110),
+      },
+      data: {
+        type: 'new_product',
+        productId: String(event.params.productId),
+      },
+      android: {
+        priority: 'high',
+        notification: {
+          channelId: 'vib_catalog_updates',
+          sound: 'default',
+        },
+      },
+    });
+    return null;
+  }
+);
