@@ -13,13 +13,14 @@ data class AppUpdateInfo(
 )
 
 object AppUpdateChecker {
-  private const val RELEASE_API =
-    "https://api.github.com/repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/releases/tags/customer-latest"
+  private const val RELEASES_API =
+    "https://api.github.com/repos/alaaelgndy784-png/VIB-ALAA-ELGNDY/releases/tags/"
 
   suspend fun check(isAdmin: Boolean): AppUpdateInfo? = withContext(Dispatchers.IO) {
     var connection: HttpURLConnection? = null
     try {
-      connection = (URL(RELEASE_API).openConnection() as HttpURLConnection).apply {
+      val releaseTag = if (isAdmin) "admin-latest" else "customer-latest"
+      connection = (URL(RELEASES_API + releaseTag).openConnection() as HttpURLConnection).apply {
         connectTimeout = 5000
         readTimeout = 5000
         setRequestProperty("Accept", "application/vnd.github+json")
