@@ -2457,7 +2457,7 @@ class ReceiptVouchers extends StatelessWidget {
               title: Text('${data['customerName']} • ${data['amount']} ج.م'),
               subtitle: Text('سند: ${row.id}\n${formatDate(receiptEffectiveTimestamp(data))} • ${data['actorName'] ?? ''}\nالرصيد بعد القبض: ${data['balanceAfter']} ج.م'),
               isThreeLine: true,
-              trailing: Wrap(mainAxisSize:MainAxisSize.min,children:[
+              trailing: Wrap(children:[
                 IconButton(tooltip:'إرسال سند القبض PDF للعميل',icon:const Icon(Icons.share,color:Colors.greenAccent),
                   onPressed:()=>shareReceiptVoucher(context,row.id,data)),
                 IconButton(tooltip: 'طباعة / حفظ PDF', icon: const Icon(Icons.picture_as_pdf),
