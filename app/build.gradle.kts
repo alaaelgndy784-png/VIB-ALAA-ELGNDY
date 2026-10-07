@@ -9,6 +9,9 @@ plugins {
   alias(libs.plugins.google.services)
 }
 
+val vibBuildNumber = (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1).coerceAtLeast(2)
+val vibVersionName = "1.0.$vibBuildNumber"
+
 android {
   namespace = "com.example"
   compileSdk { version = release(36) { minorApiLevel = 1 } }
@@ -17,8 +20,8 @@ android {
     applicationId = "com.aistudio.sanitaryware.vibalaaelgndy"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = vibBuildNumber
+    versionName = vibVersionName
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
