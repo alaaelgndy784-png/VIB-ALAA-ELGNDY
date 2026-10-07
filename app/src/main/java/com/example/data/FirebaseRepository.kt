@@ -13,6 +13,7 @@ import com.example.model.getCategoryDefaultDrawable
 import com.google.firebase.FirebaseApp
 import com.google.firebase.FirebaseOptions
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.CoroutineScope
@@ -75,6 +76,10 @@ class FirebaseRepository(val context: Context) {
         loadSavedAdminPhone()
         loadCachedProducts()
         ensureFirebaseApp()
+        if (!com.example.BuildConfig.ADMIN_FEATURES_ENABLED) {
+          FirebaseMessaging.getInstance().subscribeToTopic("vib-catalog-customers")
+            .addOnFailureListener { Log.w(TAG, "Customer notification subscription failed: ${it.message}") }
+        }
         initFirebaseSync()
       } catch (e: Exception) {
         Log.e(TAG, "Error in background repository initialization: ${e.message}")
