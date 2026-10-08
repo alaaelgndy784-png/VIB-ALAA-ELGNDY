@@ -168,6 +168,12 @@ class ManagerOfflineOutbox extends ChangeNotifier {
       case 'expense':
         await _commitExpense(command);
         return;
+      case 'receiptCancellation':
+        await _commitReceiptCancellation(command);
+        return;
+      case 'supplierPaymentCancellation':
+        await _commitSupplierPaymentCancellation(command);
+        return;
       default:
         throw StateError('نوع حركة مؤجلة غير معروف: ${command.kind}');
     }
@@ -291,6 +297,109 @@ class ManagerOfflineOutbox extends ChangeNotifier {
     });
   }
 
+  Future<void> _commitReceiptCancellation(ManagerOfflineCommand command) async {
+    final p = command.payload, actor = command.ownerUid;
+    final receiptId = p['voucherId'] as String;
+    final marker = db.collection('voucherCancellations').doc('receipt_$receiptId');
+    final receiptRef = db.collection('receipts').doc(receiptId);
+    final customerMovement = db.collection('accountMovements').doc(p['customerMovementId'] as String);
+    final cashMovement = db.collection('accountMovements').doc(p['cashMovementId'] as String);
+    await db.runTransaction((tx) async {
+      final markerSnap = await tx.get(marker), receiptSnap = await tx.get(receiptRef);
+      if (markerSnap.exists) {
+        final saved = markerSnap.data();
+        if (saved?['voucherId'] == receiptId && saved?['actorId'] == actor && saved?['reason'] == p['reason']) return;
+        throw StateError('السند ملغي بالفعل');
+      }
+      final user = (await tx.get(db.collection('users').doc(actor))).data();
+      if (!receiptSnap.exists) throw StateError('سند القبض غير موجود');
+      if (user?['role'] != 'owner' || user?['active'] != true) throw StateError('إلغاء السند متاح للمدير فقط');
+      final receipt = receiptSnap.data()!, customerId = '${receiptSnap.data()?['customerId'] ?? ''}';
+      final amountValue = receipt['amount'];
+      if (customerId.isEmpty || amountValue is! num || !amountValue.isFinite || amountValue <= 0) throw StateError('بيانات السند غير مكتملة');
+      final amountCents = (amountValue * 100).round(), amount = amountCents / 100;
+      final customerRef = db.collection('customers').doc(customerId), cashRef = db.collection('settings').doc('cash');
+      final customerSnap = await tx.get(customerRef), cashSnap = await tx.get(cashRef);
+      final invoiceId = '${receipt['invoiceId'] ?? ''}';
+      DocumentSnapshot<Map<String, dynamic>>? invoiceSnap;
+      if (invoiceId.isNotEmpty) invoiceSnap = await tx.get(db.collection('sales').doc(invoiceId));
+      if (!customerSnap.exists) throw StateError('العميل المرتبط بالسند غير موجود');
+      if (invoiceId.isNotEmpty && (invoiceSnap == null || !invoiceSnap.exists || invoiceSnap.data()?['receiptId'] != receiptId)) {
+        throw StateError('السند مرتبط بفاتورة تحتاج مراجعة المدير');
+      }
+      final customer = customerSnap.data()!, userName = '${user?['name'] ?? ''}';
+      final customerBefore = (customer['balance'] as num?)?.toDouble(), cashBefore = ((cashSnap.data()?['balance'] as num?) ?? 0).toDouble();
+      if (customerBefore == null || !customerBefore.isFinite || !cashBefore.isFinite) throw StateError('الرصيد الحالي غير صحيح');
+      final after = voucherCancellationBalances(customerBefore, cashBefore, amount, receipt: true), now = FieldValue.serverTimestamp();
+      tx.update(customerRef, {'balance': after.accountAfter, 'updatedAt': now});
+      tx.set(cashRef, {'balance': after.cashAfter, 'updatedAt': now}, SetOptions(merge: true));
+      tx.set(marker, {'voucherType': 'receipt', 'voucherId': receiptId, 'customerId': customerId,
+        'amount': amount, 'reason': p['reason'], 'actorId': actor, 'actorName': userName,
+        'createdAt': now, 'customerBalanceBefore': customerBefore, 'customerBalanceAfter': after.accountAfter,
+        'cashBefore': cashBefore, 'cashAfter': after.cashAfter});
+      tx.set(customerMovement, {'accountType': 'customers', 'accountId': customerId,
+        'accountName': receipt['customerName'] ?? customer['name'] ?? '', 'kind': 'receiptCancellation',
+        'amount': amount, 'balanceBefore': customerBefore, 'balanceAfter': after.accountAfter,
+        'referenceId': receiptId, 'reason': p['reason'], 'actorId': actor, 'actorName': userName, 'createdAt': now});
+      tx.set(cashMovement, {'accountType': 'cash', 'accountId': customerId,
+        'accountName': receipt['customerName'] ?? customer['name'] ?? '', 'kind': 'customerCollectionCancellation',
+        'amount': amount, 'delta': -amount, 'balanceBefore': cashBefore, 'balanceAfter': after.cashAfter,
+        'referenceId': receiptId, 'reason': p['reason'], 'actorId': actor, 'actorName': userName, 'createdAt': now});
+      if (invoiceId.isNotEmpty && invoiceSnap != null) {
+        final invoice = invoiceSnap.data()!, paid = (invoice['receiptPaid'] as num?)?.toDouble() ?? amount;
+        if (paid + 0.000001 < amount) throw StateError('قيمة التحصيل المرتبط لا تطابق السند');
+        tx.update(db.collection('sales').doc(invoiceId), {'receiptId': FieldValue.delete(),
+          'receiptPaid': ((paid * 100).round() - amountCents) / 100});
+      }
+    });
+  }
+
+  Future<void> _commitSupplierPaymentCancellation(ManagerOfflineCommand command) async {
+    final p = command.payload, actor = command.ownerUid;
+    final voucherId = p['voucherId'] as String;
+    final marker = db.collection('voucherCancellations').doc('supplierPayment_$voucherId');
+    final voucherRef = db.collection('accountMovements').doc(voucherId);
+    final supplierMovement = db.collection('accountMovements').doc(p['supplierMovementId'] as String);
+    final cashMovement = db.collection('accountMovements').doc(p['cashMovementId'] as String);
+    await db.runTransaction((tx) async {
+      final markerSnap = await tx.get(marker), voucherSnap = await tx.get(voucherRef);
+      if (markerSnap.exists) {
+        final saved = markerSnap.data();
+        if (saved?['voucherId'] == voucherId && saved?['actorId'] == actor && saved?['reason'] == p['reason']) return;
+        throw StateError('السند ملغي بالفعل');
+      }
+      final user = (await tx.get(db.collection('users').doc(actor))).data();
+      if (!voucherSnap.exists) throw StateError('سند الصرف غير موجود');
+      if (user?['role'] != 'owner' || user?['active'] != true) throw StateError('إلغاء السند متاح للمدير فقط');
+      final voucher = voucherSnap.data()!, supplierId = '${voucher['accountId'] ?? ''}', amountValue = voucher['amount'];
+      if (voucher['accountType'] != 'suppliers' || voucher['kind'] != 'payment' || supplierId.isEmpty ||
+          amountValue is! num || !amountValue.isFinite || amountValue <= 0) throw StateError('الحركة المحددة ليست سند صرف صالحًا');
+      final amount = ((amountValue * 100).round()) / 100;
+      final supplierRef = db.collection('suppliers').doc(supplierId), cashRef = db.collection('settings').doc('cash');
+      final supplierSnap = await tx.get(supplierRef), cashSnap = await tx.get(cashRef);
+      if (!supplierSnap.exists) throw StateError('المورد المرتبط بالسند غير موجود');
+      final supplier = supplierSnap.data()!, supplierBefore = (supplier['balance'] as num?)?.toDouble();
+      final cashBefore = ((cashSnap.data()?['balance'] as num?) ?? 0).toDouble();
+      if (supplierBefore == null || !supplierBefore.isFinite || !cashBefore.isFinite) throw StateError('الرصيد الحالي غير صحيح');
+      final after = voucherCancellationBalances(supplierBefore, cashBefore, amount, receipt: false);
+      final now = FieldValue.serverTimestamp(), userName = '${user?['name'] ?? ''}';
+      tx.update(supplierRef, {'balance': after.accountAfter, 'updatedAt': now});
+      tx.set(cashRef, {'balance': after.cashAfter, 'updatedAt': now}, SetOptions(merge: true));
+      tx.set(marker, {'voucherType': 'supplierPayment', 'voucherId': voucherId, 'supplierId': supplierId,
+        'amount': amount, 'reason': p['reason'], 'actorId': actor, 'actorName': userName,
+        'createdAt': now, 'supplierBalanceBefore': supplierBefore, 'supplierBalanceAfter': after.accountAfter,
+        'cashBefore': cashBefore, 'cashAfter': after.cashAfter});
+      tx.set(supplierMovement, {'accountType': 'suppliers', 'accountId': supplierId,
+        'accountName': voucher['accountName'] ?? supplier['name'] ?? '', 'kind': 'paymentCancellation',
+        'amount': amount, 'balanceBefore': supplierBefore, 'balanceAfter': after.accountAfter,
+        'referenceId': voucherId, 'reason': p['reason'], 'actorId': actor, 'actorName': userName, 'createdAt': now});
+      tx.set(cashMovement, {'accountType': 'cash', 'accountId': supplierId,
+        'accountName': voucher['accountName'] ?? supplier['name'] ?? '', 'kind': 'supplierPaymentCancellation',
+        'amount': amount, 'delta': amount, 'balanceBefore': cashBefore, 'balanceAfter': after.cashAfter,
+        'referenceId': voucherId, 'reason': p['reason'], 'actorId': actor, 'actorName': userName, 'createdAt': now});
+    });
+  }
+
   Future<void> dismissForReview(String id) async {
     _commands.removeWhere((x) => x.id == id && x.state == 'needsReview');
     await _save();
@@ -351,7 +460,7 @@ Future<void> showManagerOfflineQueue(BuildContext context) async {
             for (final item in box.commands) ListTile(
               leading: Icon(item.state == 'needsReview' ? Icons.error_outline : Icons.cloud_upload_outlined,
                 color: item.state == 'needsReview' ? Colors.orangeAccent : gold),
-              title: Text(item.kind == 'sale' ? 'فاتورة مبيعات' : item.kind == 'customerReceipt' ? 'سند قبض' : item.kind == 'supplierPayment' ? 'سند صرف مورد' : item.kind == 'expense' ? 'مصروف' : 'حركة صندوق'),
+              title: Text(item.kind == 'sale' ? 'فاتورة مبيعات' : item.kind == 'customerReceipt' ? 'سند قبض' : item.kind == 'supplierPayment' ? 'سند صرف مورد' : item.kind == 'expense' ? 'مصروف' : item.kind == 'receiptCancellation' ? 'إلغاء سند قبض' : item.kind == 'supplierPaymentCancellation' ? 'إلغاء سند صرف' : 'حركة صندوق'),
               subtitle: Text(item.error ?? 'بانتظار الاتصال والمزامنة'),
               trailing: item.state == 'needsReview' ? IconButton(tooltip: 'إزالة من قائمة المراجعة',
                 onPressed: () => box.dismissForReview(item.id), icon: const Icon(Icons.delete_outline)) : null,
