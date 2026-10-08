@@ -3,16 +3,29 @@ part of 'main.dart';
 class ManagerConnectionStatus extends StatelessWidget {
   const ManagerConnectionStatus({super.key});
   @override
-  Widget build(BuildContext context) => StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
-    stream: db.collection('settings').doc('cash').snapshots(includeMetadataChanges: true),
-    builder: (context, snapshot) {
-      final offline = snapshot.hasError || (snapshot.hasData && snapshot.data!.metadata.isFromCache);
-      final pending = snapshot.data?.metadata.hasPendingWrites == true;
-      final label = snapshot.hasError ? 'تعذر الاتصال بالخادم' : offline ? 'تعمل من البيانات المحفوظة؛ المزامنة عند رجوع الإنترنت' : pending ? 'جارٍ مزامنة التغييرات' : 'متصل بالخادم';
-      final icon = snapshot.hasError || offline ? Icons.cloud_off : pending ? Icons.cloud_upload_outlined : Icons.cloud_done_outlined;
-      return Tooltip(message: label, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Icon(icon, color: offline ? Colors.orangeAccent : Colors.lightGreenAccent)));
-    },
-  );
+  Widget build(BuildContext context) => Row(mainAxisSize: MainAxisSize.min, children: [
+    StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
+      stream: db.collection('settings').doc('cash').snapshots(includeMetadataChanges: true),
+      builder: (context, snapshot) {
+        final offline = snapshot.hasError || (snapshot.hasData && snapshot.data!.metadata.isFromCache);
+        final pendingWrites = snapshot.data?.metadata.hasPendingWrites == true;
+        final label = snapshot.hasError ? 'تعذر الاتصال بالخادم' : offline ? 'عرض البيانات المخزنة؛ المبيعات والقبض والصرف والمصروفات المدعومة تُحفظ محليًا' : pendingWrites ? 'جارٍ مزامنة التغييرات' : 'متصل بالخادم';
+        final icon = snapshot.hasError || offline ? Icons.cloud_off : pendingWrites ? Icons.cloud_upload_outlined : Icons.cloud_done_outlined;
+        return Tooltip(message: label, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Icon(icon, color: offline ? Colors.orangeAccent : Colors.lightGreenAccent)));
+      },
+    ),
+    AnimatedBuilder(animation: ManagerOfflineOutbox.instance, builder: (context, _) {
+      final box = ManagerOfflineOutbox.instance;
+      if (box.pendingCount == 0) return const SizedBox.shrink();
+      return IconButton(
+        tooltip: '${box.pendingCount} حركة بانتظار المزامنة أو المراجعة',
+        onPressed: () => showManagerOfflineQueue(context),
+        icon: Badge(label: Text('${box.pendingCount}'), child: Icon(
+          box.hasReviewItems ? Icons.sync_problem : Icons.cloud_upload_outlined,
+          color: box.hasReviewItems ? Colors.orangeAccent : gold)),
+      );
+    }),
+  ]);
 }
 
 ({double accountAfter, double cashAfter}) voucherCancellationBalances(
