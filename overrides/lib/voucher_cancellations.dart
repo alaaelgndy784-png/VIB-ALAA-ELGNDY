@@ -9,7 +9,7 @@ class ManagerConnectionStatus extends StatelessWidget {
       builder: (context, snapshot) {
         final offline = snapshot.hasError || (snapshot.hasData && snapshot.data!.metadata.isFromCache);
         final pendingWrites = snapshot.data?.metadata.hasPendingWrites == true;
-        final label = snapshot.hasError ? 'تعذر الاتصال بالخادم' : offline ? 'عرض البيانات المخزنة؛ المبيعات والقبض والصرف والمصروفات المدعومة تُحفظ محليًا' : pendingWrites ? 'جارٍ مزامنة التغييرات' : 'متصل بالخادم';
+        final label = snapshot.hasError ? 'تعذر الاتصال بالخادم' : offline ? 'البيانات المخزنة متاحة؛ المبيعات والمشتريات والقبض والصرف والمصروفات وتحويلات المخزون المدعومة تُحفظ للمزامنة' : pendingWrites ? 'جارٍ مزامنة التغييرات' : 'متصل بالخادم';
         final icon = snapshot.hasError || offline ? Icons.cloud_off : pendingWrites ? Icons.cloud_upload_outlined : Icons.cloud_done_outlined;
         return Tooltip(message: label, child: Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Icon(icon, color: offline ? Colors.orangeAccent : Colors.lightGreenAccent)));
       },
