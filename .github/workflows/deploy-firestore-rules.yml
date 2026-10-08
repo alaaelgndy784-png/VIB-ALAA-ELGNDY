@@ -6,6 +6,7 @@ on:
     paths:
       - 'overrides/firebase/firestore.rules'
       - 'overrides/firebase/rules-tests/**'
+      - 'overrides/firebase/functions/**'
       - 'overrides/firebase/firebase.json'
       - '.github/workflows/deploy-firestore-rules.yml'
 
@@ -45,8 +46,10 @@ jobs:
             printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > "$RUNNER_TEMP/firebase-service-account.json"
             export GOOGLE_APPLICATION_CREDENTIALS="$RUNNER_TEMP/firebase-service-account.json"
             firebase deploy --only firestore:rules --project vib-sales --non-interactive
+            firebase deploy --only functions:createStaffSale --project vib-sales --non-interactive
           elif [ -n "$FIREBASE_TOKEN" ]; then
             firebase deploy --only firestore:rules --project vib-sales --token "$FIREBASE_TOKEN" --non-interactive
+            firebase deploy --only functions:createStaffSale --project vib-sales --token "$FIREBASE_TOKEN" --non-interactive
           else
             echo "::error::Missing FIREBASE_TOKEN or FIREBASE_SERVICE_ACCOUNT repository secret"
             exit 1

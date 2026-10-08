@@ -394,7 +394,7 @@ test('revoked price permission and below cost both denied',async()=>{
 function datedReceipt(db,date,movementDate=date,createdAt=serverTimestamp()){
  const b=writeBatch(db),ts=serverTimestamp();
  b.set(doc(db,'receipts/r'),{customerId:'customer',customerName:'Customer',customerPhone:'010',amount:20,balanceBefore:100,balanceAfter:80,
- cashBefore:500,cashAfter:520,actorId:'staff',actorName:'Staff',branchId:'staffbranch',note:'Chosen date',createdAt,receiptDate:date,customerMovementId:'rc',cashMovementId:'rk'});
+ cashBefore:500,cashAfter:520,actorId:'staff',actorName:'Staff',branchId:'staffbranch',note:'Chosen date',paymentMethod:'تحويل إنستا باي',receiptNumber:'VIB-RC-20261008-ABCDEF',createdAt,receiptDate:date,customerMovementId:'rc',cashMovementId:'rk'});
  b.update(doc(db,'customers/customer'),{balance:80,lastReceiptId:'r',updatedAt:ts});
  b.update(doc(db,'settings/cash'),{balance:520,lastReceiptId:'r',updatedAt:ts});
  for(const cash of [false,true])b.set(doc(db,'accountMovements/'+(cash?'rk':'rc')),{accountType:cash?'cash':'customers',accountId:'customer',accountName:'Customer',kind:cash?'customerCollection':'collection',amount:20,...(cash?{delta:20}:{}),balanceBefore:cash?500:100,balanceAfter:cash?520:80,referenceId:'r',reason:'',actorId:'staff',branchId:'staffbranch',createdAt:ts,receiptDate:movementDate});

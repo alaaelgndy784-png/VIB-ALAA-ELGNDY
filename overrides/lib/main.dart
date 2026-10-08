@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart' show DateFormat;
@@ -948,7 +949,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           },
         ),
         body:checkout ? ListView(children:[
-          if(!owner && lines.length > 4) const Padding(padding:EdgeInsets.all(8),child:Text('أكثر من ٤ بنود: تُرسل للمدير، ولا تخصم المخزون أو تسجل الحسابات حتى الاعتماد.')),
+          if(!owner) const Padding(padding:EdgeInsets.all(8),child:Text('فاتورة الموظف تُحفظ مباشرة وتُحدّث المخزون والحسابات، حتى 50 صنفًا مختلفًا.')),
           PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
             paid:paid,enabled:!saving,partyLabel:'العميل',
             onModeChanged:(value)=>update(() => credit=value),onChanged:()=>update(() {})),
@@ -1030,18 +1031,27 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
             update(() => saving = true);
             try {
-              if (!owner && entries.length > 4) {
-                await submitPendingSale(saleRef.id, entries, customerId, credit, payment, total);
-                if (c.mounted) Navigator.pop(c);
-                if (context.mounted) await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
-                  title:const Text('تم إرسال الفاتورة للمدير'),
-                  content:const Text('في انتظار الاعتماد. لم يتم خصم المخزون أو تسجيل الحسابات بعد. تابع الحالة من المبيعات ← فواتير الموظف.'),
-                  actions:[TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('تم'))]));
-                return;
+              Map<String,dynamic> savedInvoice;
+              if (!owner) {
+                await FirebaseFunctions.instanceFor(app: Firebase.app(), region: 'us-central1')
+                    .httpsCallable('createStaffSale').call(<String,dynamic>{
+                  'requestId': saleRef.id,
+                  'customerId': customerId,
+                  'credit': credit,
+                  'paid': payment,
+                  'items': entries.map((e) => <String,dynamic>{
+                    'productId': e.id, 'quantity': e.qty, 'unitPrice': e.price,
+                    'basePrice': e.basePrice, 'discountPercent': e.discount,
+                  }).toList(),
+                });
+                final saved = await saleRef.get(const GetOptions(source: Source.server));
+                if (!saved.exists) throw StateError('لم يؤكد الخادم حفظ الفاتورة');
+                savedInvoice = saved.data()!;
+              } else {
+                savedInvoice = await commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
+                  total:total,payment:payment,credit:credit,customerId:customerId,saleRef:saleRef,
+                  invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
               }
-              final savedInvoice = await commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
-                total:total,payment:payment,credit:credit,customerId:customerId,saleRef:saleRef,
-                invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
 
               if (c.mounted) Navigator.pop(c);
               if (context.mounted) await showInvoiceSavedActions(context, 'sales', saleRef.id, savedInvoice);
@@ -1052,7 +1062,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 await showInvoiceSaveProblem(c, message);
               }
             }
-          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? (!owner && lines.length > 4 ? 'إرسال للمدير' : 'تأكيد الحفظ') : (!owner && lines.length > 4 ? 'مراجعة وإرسال' : 'حفظ الفاتورة'))),
+          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? 'تأكيد الحفظ' : 'حفظ الفاتورة')),
         ],
       );
     }),
@@ -4032,6 +4042,13 @@ class InvoiceSaveButtonLabel extends StatelessWidget {
 }
 
 String invoiceSaveFailureMessage(Object error) {
+  if (error is FirebaseFunctionsException) {
+    if (error.code == 'not-found' || error.code == 'unavailable') {
+      return 'خدمة حفظ فواتير الموظفين غير منشورة أو غير متاحة حاليًا. راجع تفعيل فوترة Firebase ونشر الوظيفة.';
+    }
+    if (error.code == 'permission-denied') return 'حساب الموظف غير مفعل أو لا يملك صلاحية تسجيل الفاتورة.';
+    if (error.message != null && error.message!.isNotEmpty) return 'تعذر حفظ الفاتورة: ${error.message}';
+  }
   if (error is FirebaseException) {
     if (error.code == 'permission-denied') {
       return 'تعذر حفظ الفاتورة: الخادم رفض صلاحيات العملية. راجع تفعيل الحساب وقواعد حفظ الفواتير.\nرمز الخطأ: permission-denied';

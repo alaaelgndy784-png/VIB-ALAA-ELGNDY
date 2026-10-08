@@ -30,12 +30,14 @@ service cloud.firestore {
       let cm = getAfter(/databases/$(database)/documents/accountMovements/$(r.customerMovementId)).data;
       let km = getAfter(/databases/$(database)/documents/accountMovements/$(r.cashMovementId)).data;
       return r.keys().hasOnly(['customerId','customerName','customerPhone','amount','balanceBefore','balanceAfter',
-          'cashBefore','cashAfter','actorId','actorName','branchId','note','createdAt','customerMovementId','cashMovementId','invoiceId','receiptDate'])
+          'cashBefore','cashAfter','actorId','actorName','branchId','note','createdAt','customerMovementId','cashMovementId','invoiceId','receiptDate','paymentMethod','receiptNumber'])
         && receiptInvoiceValid(r, id) && validReceiptDate(r)
         && r.actorId == request.auth.uid && r.branchId == branch() && r.actorName == profile().name
         && r.createdAt == request.time && r.amount is number && r.amount > 0 && r.amount <= c.balance
         && c.get('active', true) == true && r.customerName == c.name && r.customerPhone == c.get('phone', '')
         && r.note is string && r.note.size() <= 2000
+        && r.get('paymentMethod', 'نقدي') in ['نقدي','تحويل إنستا باي','تحويل فودافون كاش','تحويل محفظة X','تحويل عن طريق الحساب البنكي']
+        && r.get('receiptNumber', '') is string && r.get('receiptNumber', '').size() <= 80
         && r.balanceBefore == c.balance && r.balanceAfter == c.balance - r.amount
         && ca.balance == r.balanceAfter && ca.lastReceiptId == id
         && r.cashBefore == oldCash && r.cashAfter == oldCash + r.amount

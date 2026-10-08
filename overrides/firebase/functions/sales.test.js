@@ -50,6 +50,23 @@ test('Idempotency refuses changed payload and rechecks account activation', asyn
   db.put('users/staff', {role: 'employee', active: false, branchId: 'x'});
   await assert.rejects(save(db, input()), {code: 'permission-denied'});
 });
+test('percentage discount is validated and saved from the live product price', async () => {
+  const db = database();
+  await save(db, input({customerId: '', credit: false, paid: 0,
+    items: [{productId: 'a', quantity: 1, unitPrice: 9.09, basePrice: 10.1, discountPercent: 10}]}));
+  const line = db.read('sales/abcdefghijklmnopqrst').items[0];
+  assert.equal(line.basePrice, 10.1); assert.equal(line.discountPercent, 10);
+  assert.equal(line.purchasePriceAtSale, 7); assert.equal(line.lineTotal, 9.09);
+});
+test('manual employee price requires explicit profile permission', async () => {
+  const rejected = database();
+  await assert.rejects(save(rejected, input({items: [{productId: 'a', quantity: 1, unitPrice: 9, basePrice: 10.1, discountPercent: 0}]})),
+    {code: 'permission-denied'});
+  const allowed = database(); allowed.put('users/staff', {...allowed.read('users/staff'), canEditSalePrice: true});
+  await save(allowed, input({customerId: '', credit: false, paid: 0,
+    items: [{productId: 'a', quantity: 1, unitPrice: 9, basePrice: 10.1, discountPercent: 0}]}));
+  assert.equal(allowed.read('sales/abcdefghijklmnopqrst').items[0].unitPrice, 9);
+});
 test('50-line invoice is one save, and a later sale cannot oversell', async () => {
   const db = database(); const items = [];
   for (let i = 0; i < 50; i++) {
