@@ -476,7 +476,10 @@ service cloud.firestore {
       allow update: if employee() && resource.data.actorId == request.auth.uid && profile().get('canPrint', false) == true
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy']) && request.resource.data.printedBy == request.auth.uid;
       allow read, create: if owner();
-      allow update: if validPartialSalesReturnUpdate(id);
+      allow update: if owner() && resource.data.status == 'completed'
+        && resource.data.get('onlinePaid', 0) == 0
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+          ['partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction','lastPartialReturnId','status','returnedAt','returnId']);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cashPaidPosted','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
@@ -517,26 +520,6 @@ service cloud.firestore {
         && request.resource.data.removedAt == request.time
         && !exists(/databases/$(database)/documents/sales/$(id));
       allow delete: if false;
-    }
-    function validPartialSalesReturnUpdate(id) {
-      let next = request.resource.data;
-      let changed = next.diff(resource.data).affectedKeys();
-      return owner() && resource.data.status == 'completed'
-        && resource.data.get('onlinePaid', 0) == 0
-        && changed.hasOnly(['partialReturnQuantities','partialReturnTotal','partialCashRefund',
-          'partialDebtReduction','lastPartialReturnId','status','returnedAt','returnId'])
-        && changed.hasAll(['partialReturnQuantities','partialReturnTotal','partialCashRefund',
-          'partialDebtReduction','lastPartialReturnId'])
-        && next.partialReturnQuantities is map
-        && next.partialReturnTotal is number && next.partialCashRefund is number
-        && next.partialDebtReduction is number
-        && next.partialReturnTotal >= resource.data.get('partialReturnTotal', 0)
-        && next.partialCashRefund >= resource.data.get('partialCashRefund', 0)
-        && next.partialDebtReduction >= resource.data.get('partialDebtReduction', 0)
-        && moneyEqual(next.partialReturnTotal, next.partialCashRefund + next.partialDebtReduction)
-        && next.lastPartialReturnId is string && next.lastPartialReturnId.size() > 0
-        && (!changed.hasAny(['status']) || (next.status == 'returned'
-          && next.returnId == next.lastPartialReturnId && next.returnedAt == request.time));
     }
     match /sales/{id} {
       allow get: if employee() && !exists(/databases/$(database)/documents/sales/$(id));
