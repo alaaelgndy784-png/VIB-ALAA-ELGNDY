@@ -174,6 +174,9 @@ class ManagerOfflineOutbox extends ChangeNotifier {
       case 'supplierPaymentCancellation':
         await _commitSupplierPaymentCancellation(command);
         return;
+      case 'purchase':
+        await _commitPurchase(command);
+        return;
       default:
         throw StateError('نوع حركة مؤجلة غير معروف: ${command.kind}');
     }
@@ -397,6 +400,94 @@ class ManagerOfflineOutbox extends ChangeNotifier {
         'accountName': voucher['accountName'] ?? supplier['name'] ?? '', 'kind': 'supplierPaymentCancellation',
         'amount': amount, 'delta': amount, 'balanceBefore': cashBefore, 'balanceAfter': after.cashAfter,
         'referenceId': voucherId, 'reason': p['reason'], 'actorId': actor, 'actorName': userName, 'createdAt': now});
+    });
+  }
+
+  Future<void> _commitPurchase(ManagerOfflineCommand command) async {
+    final p = command.payload, actor = command.ownerUid;
+    final purchaseRef = db.collection('purchases').doc(p['purchaseId'] as String);
+    final supplierRef = db.collection('suppliers').doc(p['supplierId'] as String);
+    final cashRef = db.collection('settings').doc('cash');
+    final entries = (p['entries'] as List).map((raw) => Map<String, dynamic>.from(raw as Map)).toList();
+    final payment = (p['payment'] as num).toDouble();
+    final increase = (p['increase'] as num?)?.toDouble();
+    final totalCents = entries.fold<int>(0, (sum, x) => sum +
+      (x['qty'] as int) * (((x['cost'] as num).toDouble() * 100).round()));
+    if (entries.isEmpty || entries.length > 50 || entries.map((x) => x['id']).toSet().length != entries.length ||
+        !payment.isFinite || payment < 0 || payment * 100 > totalCents ||
+        (increase != null && (!increase.isFinite || increase < 0 || increase > 1000))) {
+      throw StateError('راجع بنود فاتورة المشتريات قبل مزامنتها');
+    }
+    final total = totalCents / 100;
+    final accountMovement = db.collection('accountMovements').doc('${purchaseRef.id}_supplier');
+    final cashMovement = db.collection('accountMovements').doc('${purchaseRef.id}_cash');
+    await db.runTransaction((tx) async {
+      final existing = await tx.get(purchaseRef);
+      if (existing.exists) {
+        if (existing.data()?['actorId'] == actor && existing.data()?['supplierId'] == supplierRef.id &&
+            ((existing.data()?['total'] as num?)?.toDouble() ?? -1) == total) return;
+        throw StateError('رقم فاتورة المشتريات مستخدم ببيانات مختلفة');
+      }
+      final user = (await tx.get(db.collection('users').doc(actor))).data();
+      final supplierSnap = await tx.get(supplierRef), cashSnap = await tx.get(cashRef);
+      if (user?['role'] != 'owner' || user?['active'] != true) throw StateError('تسجيل المشتريات متاح للمدير فقط');
+      if (!supplierSnap.exists || supplierSnap.data()?['active'] == false) throw StateError('المورد غير متاح');
+      final products = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+      final stocks = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+      for (final entry in entries) {
+        final id = entry['id'] as String;
+        products[id] = await tx.get(db.collection('products').doc(id));
+        stocks[id] = await tx.get(db.collection('stock').doc('main_$id'));
+      }
+      final before = ((supplierSnap.data()?['balance'] as num?) ?? 0).toDouble();
+      final cashBefore = ((cashSnap.data()?['balance'] as num?) ?? 0).toDouble();
+      if (payment > total || cashBefore < payment) throw StateError('رصيد الصندوق لا يكفي لسداد المشتريات');
+      final serial = await readInvoiceSerial(tx, 'purchases', purchaseRef.id);
+      writeInvoiceSerial(tx, serial);
+      final due = total - payment, supplier = supplierSnap.data()!, now = FieldValue.serverTimestamp();
+      final items = <Map<String, dynamic>>[];
+      for (final entry in entries) {
+        final id = entry['id'] as String, qty = entry['qty'] as int;
+        final cost = (entry['cost'] as num).toDouble(), product = products[id]?.data();
+        if (qty <= 0 || qty > 1000000 || !cost.isFinite || cost < 0 || product == null || product['active'] != true) {
+          throw StateError('راجع الأصناف والكميات وأسعار الشراء');
+        }
+        final old = (stocks[id]?.data()?['quantity'] as num?)?.toInt() ?? 0, after = old + qty;
+        items.add({'productId': id, 'productName': product['name'], 'quantity': qty,
+          'unitCost': cost, 'lineTotal': qty * cost});
+        tx.set(db.collection('stock').doc('main_$id'), {'branchId': 'main', 'productId': id, 'quantity': after}, SetOptions(merge: true));
+        tx.update(products[id]!.reference, {'purchasePrice': cost,
+          if (increase != null) 'price': double.parse((cost * (1 + increase / 100)).toStringAsFixed(2)),
+          'updatedAt': now});
+        tx.set(db.collection('stockMovements').doc('${purchaseRef.id}_$id'), {
+          'productId': id, 'productName': product['name'], 'branchId': 'main', 'kind': 'purchase',
+          'quantity': qty, 'balanceAfter': after, 'referenceId': purchaseRef.id,
+          'actorId': actor, 'createdAt': now});
+      }
+      tx.update(supplierRef, {'balance': before + due, 'updatedAt': now});
+      if (payment > 0) {
+        tx.set(cashRef, {'balance': cashBefore - payment, 'updatedAt': now}, SetOptions(merge: true));
+        tx.set(cashMovement, {'accountType': 'cash', 'kind': 'purchasePayment', 'amount': payment,
+          'delta': -payment, 'balanceBefore': cashBefore, 'balanceAfter': cashBefore - payment,
+          'accountId': supplierRef.id, 'accountName': supplier['name'], 'referenceId': purchaseRef.id,
+          'reason': 'سداد فاتورة مشتريات', 'actorId': actor, 'createdAt': now});
+      }
+      tx.set(purchaseRef, {'invoiceNumber': p['invoiceNumber'] ?? '',
+        'internalNumber': serial.data['internalNumber'], 'invoiceBarcode': serial.data['invoiceBarcode'],
+        'source': p['source'] ?? 'manager', 'note': p['note'] ?? '',
+        'supplierPreviousBalance': before, 'supplierBalanceAfter': before + due,
+        'supplierId': supplierRef.id, 'supplierName': supplier['name'], 'items': items,
+        'itemCount': items.length, 'total': total, 'paid': payment, 'cashPosted': true,
+        'paymentStatus': due > 0 ? 'credit' : 'cash', 'due': due, 'status': 'completed',
+        'actorId': actor, 'createdAt': now,
+        if (items.length == 1) 'productId': items.first['productId'],
+        if (items.length == 1) 'productName': items.first['productName'],
+        if (items.length == 1) 'quantity': items.first['quantity'],
+        if (items.length == 1) 'unitCost': items.first['unitCost']});
+      tx.set(accountMovement, {'accountType': 'suppliers', 'accountId': supplierRef.id,
+        'accountName': supplier['name'], 'kind': 'purchase', 'amount': due,
+        'balanceBefore': before, 'balanceAfter': before + due, 'referenceId': purchaseRef.id,
+        'paid': payment, 'createdAt': now, 'actorId': actor});
     });
   }
 
