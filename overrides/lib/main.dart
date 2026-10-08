@@ -53,6 +53,7 @@ part 'account_statements.dart';
 part 'staff_purchases.dart';
 part 'partial_sales_returns.dart';
 part 'voucher_cancellations.dart';
+part 'offline_outbox.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -525,7 +526,7 @@ class _HomeState extends State<Home> {
               onPressed: () => openPage('الضبط', const Management()), icon: const Icon(Icons.settings_outlined))),
           ],
         ),
-        body: OwnerDashboard(uid: widget.uid, branchId: widget.branchId, openPage: openPage),
+        body: ManagerOutboxSyncer(child: OwnerDashboard(uid: widget.uid, branchId: widget.branchId, openPage: openPage)),
       ));
     }
 
@@ -1055,9 +1056,28 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 if (!saved.exists) throw StateError('لم يؤكد الخادم حفظ الفاتورة');
                 savedInvoice = saved.data()!;
               } else {
-                savedInvoice = await commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
-                  total:total,payment:payment,credit:credit,customerId:customerId,saleRef:saleRef,
-                  invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
+                try {
+                  savedInvoice = await commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
+                    total:total,payment:payment,credit:credit,customerId:customerId,saleRef:saleRef,
+                    invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
+                } catch (error) {
+                  if (!ManagerOfflineOutbox.isOfflineError(error)) rethrow;
+                  final synced = await submitManagerOfflineCommand(id:saleRef.id,kind:'sale',payload:{
+                    'saleId':saleRef.id,'branchId':branchId,'entries':entries.map((e)=>{
+                      'id':e.id,'name':e.name,'qty':e.qty,'price':e.price,'cost':e.cost,
+                      'discount':e.discount,'basePrice':e.basePrice,
+                    }).toList(),'total':total,'payment':payment,'credit':credit,'customerId':customerId,
+                    'invoiceNote':note.text.trim(),'allowShortage':allowShortage,
+                    'allowBelowCost':allowBelowCost,'overrideReason':reason.text.trim(),
+                  });
+                  if (!synced) {
+                    if (c.mounted) Navigator.pop(c);
+                    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content:Text('حُفظت الفاتورة على الجهاز، وستُراجع وتُزامن عند رجوع الإنترنت.')));
+                    return;
+                  }
+                  savedInvoice=(await saleRef.get(const GetOptions(source:Source.server))).data() ?? {};
+                }
               }
 
               if (c.mounted) Navigator.pop(c);
@@ -1283,18 +1303,39 @@ Future<void> expenseDialog(BuildContext context) async {
   ])), actions: [TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء')), FilledButton(onPressed: () async {
     final value = double.tryParse(amount.text.trim());
     if (value == null || !value.isFinite || value <= 0 || reason.text.trim().isEmpty) return;
+    final expenseRef = db.collection('accountMovements').doc();
+    final cashMovement = db.collection('accountMovements').doc();
+    final selectedCategory = category.text.trim().isEmpty ? 'عام' : category.text.trim();
     try {
       await db.runTransaction((tx) async {
         final cashRef = db.collection('settings').doc('cash'), snap = await tx.get(cashRef);
         final before = (snap.data()?['balance'] as num?)?.toDouble() ?? 0;
         if (before < value) throw Exception('رصيد الصندوق غير كافٍ');
-        final ref = db.collection('accountMovements').doc();
         tx.set(cashRef, {'balance': before - value, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
-        tx.set(ref, {'accountType': 'expenses', 'category': category.text.trim().isEmpty ? 'عام' : category.text.trim(), 'reason': reason.text.trim(), 'amount': value, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
-        tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'expense', 'accountId': ref.id, 'accountName': category.text.trim(), 'amount': value, 'delta': -value, 'balanceBefore': before, 'balanceAfter': before - value, 'reason': reason.text.trim(), 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
+        tx.set(expenseRef, {'accountType': 'expenses', 'category': selectedCategory, 'reason': reason.text.trim(), 'amount': value, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
+        tx.set(cashMovement, {'accountType': 'cash', 'kind': 'expense', 'accountId': expenseRef.id, 'accountName': selectedCategory, 'amount': value, 'delta': -value, 'balanceBefore': before, 'balanceAfter': before - value, 'reason': reason.text.trim(), 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
       });
       if (dialog.mounted) Navigator.pop(dialog);
-    } catch (e) { if (dialog.mounted) ScaffoldMessenger.of(dialog).showSnackBar(SnackBar(content: Text('تعذر حفظ المصروف: $e'))); }
+    } catch (e) {
+      if (ManagerOfflineOutbox.isOfflineError(e)) {
+        try {
+          final synced = await submitManagerOfflineCommand(id:expenseRef.id,kind:'expense',payload:{
+            'expenseId':expenseRef.id,'cashMovementId':cashMovement.id,'amount':value,
+            'category':selectedCategory,'reason':reason.text.trim(),
+          });
+          if (!dialog.mounted) return;
+          Navigator.pop(dialog);
+          if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content:Text(synced ? 'تمت مزامنة المصروف.' : 'حُفظ المصروف على الجهاز، وينتظر المزامنة عند رجوع الإنترنت.'),
+          ));
+          return;
+        } catch (queueError) {
+          if (dialog.mounted) ScaffoldMessenger.of(dialog).showSnackBar(SnackBar(content: Text('تعذر حفظ المصروف للمزامنة: $queueError')));
+          return;
+        }
+      }
+      if (dialog.mounted) ScaffoldMessenger.of(dialog).showSnackBar(SnackBar(content: Text('تعذر حفظ المصروف: $e')));
+    }
   }, child: const Text('حفظ المصروف'))]));
 }
 
@@ -2885,6 +2926,26 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
             ));
           } catch (e) {
             if (dialog.mounted) {
+              if (owner && ManagerOfflineOutbox.isOfflineError(e)) {
+                try {
+                  final synced = await submitManagerOfflineCommand(
+                    id: receiptRef.id, kind: 'customerReceipt', payload: {
+                      'receiptId': receiptRef.id, 'customerMovementId': customerMovement.id,
+                      'cashMovementId': cashMovement.id, 'customerId': id, 'amount': paid,
+                      'branchId': branchId, 'receiptDate': Timestamp.fromDate(selectedReceiptDate).millisecondsSinceEpoch,
+                      'note': note.text.trim(), 'paymentMethod': paymentMethod,
+                    });
+                  if (!dialog.mounted) return;
+                  Navigator.pop(dialog);
+                  if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text(synced ? 'تمت مزامنة سند القبض.' : 'حُفظ سند القبض على الجهاز، وينتظر المزامنة عند رجوع الإنترنت.'),
+                  ));
+                  return;
+                } catch (queueError) {
+                  update(() { saving = false; saveError = 'تعذر حفظ الحركة للمزامنة: $queueError'; });
+                  return;
+                }
+              }
               update(() { saving = false; saveError = 'تعذر حفظ/إرسال سند القبض: $e'; });
             }
           }
@@ -3145,7 +3206,27 @@ Future<void> createSupplierPaymentVoucher(BuildContext context, {String? initial
         });
         if (dialog.mounted) Navigator.pop(dialog);
         if (context.mounted) await showInvoiceSaveProblem(context,'تم حفظ سند الصرف وتحديث حساب المورد والصندوق. السند متاح للطباعة في سندات صرف الموردين.', title:'تم حفظ سند الصرف', button:'تمام', success:true);
-      } catch(e) { if (dialog.mounted) { update(() => saving = false); await showInvoiceSaveProblem(dialog,'تعذر حفظ سند الصرف: $e',title:'سند صرف المورد',button:'رجوع للسند'); } }
+      } catch(e) {
+        if (dialog.mounted && ManagerOfflineOutbox.isOfflineError(e)) {
+          try {
+            final synced = await submitManagerOfflineCommand(id:voucherRef.id,kind:'supplierPayment',payload:{
+              'voucherId':voucherRef.id,'cashMovementId':cashMovement.id,'supplierId':id,
+              'amount':paid,'note':note.text.trim(),
+            });
+            if (!dialog.mounted) return;
+            Navigator.pop(dialog);
+            if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content:Text(synced ? 'تمت مزامنة سند الصرف.' : 'حُفظ سند الصرف على الجهاز، وينتظر المزامنة عند رجوع الإنترنت.'),
+            ));
+            return;
+          } catch (queueError) {
+            update(() => saving = false);
+            await showInvoiceSaveProblem(dialog,'تعذر حفظ الحركة للمزامنة: $queueError',title:'سند صرف المورد',button:'رجوع للسند');
+            return;
+          }
+        }
+        if (dialog.mounted) { update(() => saving = false); await showInvoiceSaveProblem(dialog,'تعذر حفظ سند الصرف: $e',title:'سند صرف المورد',button:'رجوع للسند'); }
+      }
     }, child: Text(saving ? 'جارٍ الحفظ…' : 'حفظ سند الصرف'))],
   )));
   amount.dispose(); note.dispose();
@@ -3237,6 +3318,7 @@ Future<void> cashDialog(BuildContext context, bool deposit) async {
           ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اكتب مبلغ صحيح وسبب الحركة')));
           return;
         }
+        final movementRef = db.collection('accountMovements').doc();
         try {
           await db.runTransaction((tx) async {
             final ref = db.collection('settings').doc('cash');
@@ -3245,7 +3327,7 @@ Future<void> cashDialog(BuildContext context, bool deposit) async {
             final delta = deposit ? value : -value;
             if (before + delta < 0) throw Exception('رصيد الصندوق لا يكفي');
             tx.set(ref, {'balance': before + delta, 'updatedAt': FieldValue.serverTimestamp()});
-            tx.set(db.collection('accountMovements').doc(), {
+            tx.set(movementRef, {
               'accountType': 'cash',
               'kind': deposit ? 'deposit' : 'withdrawal', 'amount': value,
               'delta': delta, 'balanceBefore': before, 'balanceAfter': before + delta,
@@ -3256,6 +3338,22 @@ Future<void> cashDialog(BuildContext context, bool deposit) async {
           });
           if (c.mounted) Navigator.pop(c);
         } catch (e) {
+          if (ManagerOfflineOutbox.isOfflineError(e)) {
+            try {
+              final synced = await submitManagerOfflineCommand(id:movementRef.id,kind:'cashMovement',payload:{
+                'movementId':movementRef.id,'deposit':deposit,'amount':value,'reason':reason.text.trim(),
+              });
+              if (!c.mounted) return;
+              Navigator.pop(c);
+              if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content:Text(synced ? 'تمت مزامنة حركة الصندوق.' : 'حُفظت حركة الصندوق على الجهاز، وتنتظر المزامنة عند رجوع الإنترنت.'),
+              ));
+              return;
+            } catch (queueError) {
+              if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر حفظ الحركة للمزامنة: $queueError')));
+              return;
+            }
+          }
           if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر حفظ الحركة: $e')));
         }
       }, child: const Text('حفظ الحركة'))],
