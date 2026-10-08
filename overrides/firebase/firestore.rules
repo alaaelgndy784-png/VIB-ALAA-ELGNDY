@@ -522,9 +522,7 @@ service cloud.firestore {
       let next = request.resource.data;
       let changed = next.diff(resource.data).affectedKeys();
       let returnId = next.get('lastPartialReturnId', '');
-      let returnPath = /databases/$(database)/documents/salesReturns/$(returnId);
-      let r = getAfter(returnPath).data;
-      let line = r.items[0];
+      let r = getAfter(/databases/$(database)/documents/salesReturns/$(returnId)).data;
       return owner() && resource.data.status == 'completed'
         && resource.data.get('onlinePaid', 0) == 0
         && changed.hasOnly(['partialReturnQuantities','partialReturnTotal','partialCashRefund',
@@ -532,18 +530,10 @@ service cloud.firestore {
         && changed.hasAll(['partialReturnQuantities','partialReturnTotal','partialCashRefund',
           'partialDebtReduction','lastPartialReturnId'])
         && returnId is string && returnId.size() > 0
-        && !exists(returnPath)
+        && !exists(/databases/$(database)/documents/salesReturns/$(returnId))
         && r.sourceInvoiceId == id && r.returnType == 'partial'
         && r.actorId == request.auth.uid && r.createdAt == request.time
-        && r.branchId == resource.data.get('stockBranchId', resource.data.branchId)
-        && r.customerId == resource.data.get('customerId', '')
-        && r.sourceItemIndex is int && r.sourceItemIndex >= 0
-        && r.items is list && r.items.size() == 1
-        && line.quantity is int && line.quantity > 0
-        && line.productId is string && line.productId.size() > 0
-        && line.lineTotal is number && line.lineTotal > 0
         && r.total is number && r.cashRefund is number && r.debtReduction is number
-        && moneyEqual(r.total, line.lineTotal)
         && moneyEqual(r.total, r.cashRefund + r.debtReduction)
         && next.partialReturnQuantities is map
         && moneyEqual(next.partialReturnTotal, resource.data.get('partialReturnTotal', 0) + r.total)
