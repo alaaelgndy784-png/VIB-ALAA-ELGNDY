@@ -1751,10 +1751,10 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
         ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اختر المورد وتأكد من المبلغ المدفوع'))); return;
       }
       update(() => saving = true);
+      final purchaseRef = db.collection('purchases').doc();
       try {
         final supplier = addedSuppliers[supplierId] ?? suppliers.docs.firstWhere((e) => e.id == supplierId).data();
         await prepareInvoiceSerials('purchases');
-        final purchaseRef = db.collection('purchases').doc();
         await db.runTransaction((tx) async {
           final supplierRef = db.collection('suppliers').doc(supplierId);
           final supplierSnap = await tx.get(supplierRef);
@@ -1861,7 +1861,26 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
         if (c.mounted) Navigator.pop(c);
         if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم حفظ الفاتورة وتحديث المخزون وحساب المورد')));
       } catch (e) {
-        if (c.mounted) { update(() => saving = false); ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر الحفظ: $e'))); }
+        if (ManagerOfflineOutbox.isOfflineError(e)) {
+          try {
+            final synced = await submitManagerOfflineCommand(id:purchaseRef.id,kind:'purchase',payload:{
+              'purchaseId':purchaseRef.id,'supplierId':supplierId!,
+              'entries':entries.map((x)=>{'id':x.id,'qty':x.qty,'cost':x.cost}).toList(),
+              'payment':payment!,'increase':increase,'invoiceNumber':invoice.text.trim(),'source':'camera',
+            });
+            if (!synced) {
+              if (c.mounted) Navigator.pop(c);
+              if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content:Text('حُفظت المشتريات على الجهاز، وستُزامن عند رجوع الإنترنت.')));
+              return;
+            }
+            final saved=(await purchaseRef.get(const GetOptions(source:Source.server))).data() ?? {};
+            if (c.mounted) Navigator.pop(c);
+            if (context.mounted) await showInvoiceSavedActions(context,'purchases',purchaseRef.id,saved);
+          } catch (queueError) {
+            if (c.mounted) { update(() => saving = false); ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر حفظ المشتريات على الجهاز: $queueError'))); }
+          }
+        } else if (c.mounted) { update(() => saving = false); ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر الحفظ: $e'))); }
       }
     }, child: const Text('تأكيد وحفظ'))],
   )));
@@ -2246,9 +2265,9 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
               return;
             }
             setLocal(() => saving = true);
-            await prepareInvoiceSerials('purchases');
-        final purchaseRef = db.collection('purchases').doc();
+            final purchaseRef = db.collection('purchases').doc();
             try {
+              await prepareInvoiceSerials('purchases');
               final supplier = addedSuppliers[supplierId] ?? suppliers.docs.firstWhere((d) => d.id == supplierId).data();
               final savedInvoice = await db.runTransaction<Map<String, dynamic>>((tx) async {
                 final supplierRef = db.collection('suppliers').doc(supplierId);
@@ -2361,7 +2380,27 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
               if (c.mounted) Navigator.pop(c);
               if (context.mounted) await showInvoiceSavedActions(context, 'purchases', purchaseRef.id, savedInvoice);
             } catch (e) {
-              if (c.mounted) {
+              if (ManagerOfflineOutbox.isOfflineError(e)) {
+                try {
+                  final synced = await submitManagerOfflineCommand(id:purchaseRef.id,kind:'purchase',payload:{
+                    'purchaseId':purchaseRef.id,'supplierId':supplierId,
+                    'entries':entries.map((x)=>{'id':x.id,'qty':x.qty,'cost':x.cost}).toList(),
+                    'payment':payment,'increase':increase,'invoiceNumber':invoice.text.trim(),
+                    'note':note.text.trim(),'source':'manual',
+                  });
+                  if (!synced) {
+                    if (c.mounted) Navigator.pop(c);
+                    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content:Text('حُفظت المشتريات على الجهاز، وستُزامن عند رجوع الإنترنت.')));
+                    return;
+                  }
+                  final saved=(await purchaseRef.get(const GetOptions(source:Source.server))).data() ?? {};
+                  if (c.mounted) Navigator.pop(c);
+                  if (context.mounted) await showInvoiceSavedActions(context,'purchases',purchaseRef.id,saved);
+                } catch (queueError) {
+                  if (c.mounted) {setLocal(()=>saving=false);await showInvoiceSaveProblem(c,'تعذر حفظ المشتريات على الجهاز: $queueError');}
+                }
+              } else if (c.mounted) {
                 setLocal(() => saving = false);
                 await showInvoiceSaveProblem(c, invoiceSaveFailureMessage(e));
               }
