@@ -524,10 +524,6 @@ service cloud.firestore {
       let returnId = next.get('lastPartialReturnId', '');
       let returnPath = /databases/$(database)/documents/salesReturns/$(returnId);
       let r = getAfter(returnPath).data;
-      let oldQuantities = resource.data.get('partialReturnQuantities', {});
-      let lineKey = '' + r.sourceItemIndex;
-      let oldQuantity = oldQuantities.get(lineKey, 0);
-      let newQuantity = next.partialReturnQuantities.get(lineKey, -1);
       let line = r.items[0];
       return owner() && resource.data.status == 'completed'
         && resource.data.get('onlinePaid', 0) == 0
@@ -550,7 +546,6 @@ service cloud.firestore {
         && moneyEqual(r.total, line.lineTotal)
         && moneyEqual(r.total, r.cashRefund + r.debtReduction)
         && next.partialReturnQuantities is map
-        && newQuantity == oldQuantity + line.quantity
         && moneyEqual(next.partialReturnTotal, resource.data.get('partialReturnTotal', 0) + r.total)
         && moneyEqual(next.partialCashRefund, resource.data.get('partialCashRefund', 0) + r.cashRefund)
         && moneyEqual(next.partialDebtReduction, resource.data.get('partialDebtReduction', 0) + r.debtReduction)
@@ -561,6 +556,7 @@ service cloud.firestore {
       allow get: if employee() && !exists(/databases/$(database)/documents/sales/$(id));
       allow read: if owner() || (employee() && resource.data.branchId == branch());
       allow create: if owner() || (employee() && validStaffSale(id));
+      allow update: if validPartialSalesReturnUpdate(id);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy'])
         && (resource.data.get('onlinePaid', 0) == 0 || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy']));
