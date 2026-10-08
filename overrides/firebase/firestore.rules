@@ -525,7 +525,10 @@ service cloud.firestore {
       allow get: if employee() && !exists(/databases/$(database)/documents/sales/$(id));
       allow read: if owner() || (employee() && resource.data.branchId == branch());
       allow create: if owner() || (employee() && validStaffSale(id));
-      allow update: if validPartialSalesReturnUpdate(id);
+      allow update: if owner() && resource.data.status == 'completed'
+        && resource.data.get('onlinePaid', 0) == 0
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+          ['partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction','lastPartialReturnId','status','returnedAt','returnId']);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy'])
         && (resource.data.get('onlinePaid', 0) == 0 || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy']));
