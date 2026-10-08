@@ -1,0 +1,566 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signed() { return request.auth != null; }
+    function profile() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function active() { return signed() && profile().active == true; }
+    function owner() { return signed() && profile().role == 'owner' && profile().active == true; }
+    function employee() { return signed() && profile().role == 'employee' && profile().active == true; }
+    function branch() { return profile().branchId; }
+    function whole(n) { return n is int; }
+    function natural(n) { return whole(n) && n >= 0; }
+    function newReceipt(id) {
+      return id is string && !exists(/databases/$(database)/documents/receipts/$(id))
+        && getAfter(/databases/$(database)/documents/receipts/$(id)).data.actorId == request.auth.uid
+        && getAfter(/databases/$(database)/documents/receipts/$(id)).data.branchId == branch();
+    }
+    function receipt(id) { return getAfter(/databases/$(database)/documents/receipts/$(id)).data; }
+    function validReceiptDate(r) {
+      return r.get('receiptDate', r.createdAt) is timestamp
+        && r.get('receiptDate', r.createdAt) >= timestamp.date(2000,1,1)
+        && r.get('receiptDate', r.createdAt) < timestamp.date(2101,1,1);
+    }
+    function validReceipt(id) {
+      let r = request.resource.data;
+      let c = get(/databases/$(database)/documents/customers/$(r.customerId)).data;
+      let ca = getAfter(/databases/$(database)/documents/customers/$(r.customerId)).data;
+      let cash = getAfter(/databases/$(database)/documents/settings/cash).data;
+      let oldCash = exists(/databases/$(database)/documents/settings/cash)
+        ? get(/databases/$(database)/documents/settings/cash).data.balance : 0;
+      let cm = getAfter(/databases/$(database)/documents/accountMovements/$(r.customerMovementId)).data;
+      let km = getAfter(/databases/$(database)/documents/accountMovements/$(r.cashMovementId)).data;
+      return r.keys().hasOnly(['customerId','customerName','customerPhone','amount','balanceBefore','balanceAfter',
+          'cashBefore','cashAfter','actorId','actorName','branchId','note','createdAt','customerMovementId','cashMovementId','invoiceId','receiptDate','paymentMethod','receiptNumber'])
+        && receiptInvoiceValid(r, id) && validReceiptDate(r)
+        && r.actorId == request.auth.uid && r.branchId == branch() && r.actorName == profile().name
+        && r.createdAt == request.time && r.amount is number && r.amount > 0 && r.amount <= c.balance
+        && c.get('active', true) == true && r.customerName == c.name && r.customerPhone == c.get('phone', '')
+        && r.note is string && r.note.size() <= 2000
+        && r.get('paymentMethod', 'نقدي') in ['نقدي','تحويل إنستا باي','تحويل فودافون كاش','تحويل محفظة X','تحويل عن طريق الحساب البنكي']
+        && r.get('receiptNumber', '') is string && r.get('receiptNumber', '').size() <= 80
+        && r.balanceBefore == c.balance && r.balanceAfter == c.balance - r.amount
+        && ca.balance == r.balanceAfter && ca.lastReceiptId == id
+        && r.cashBefore == oldCash && r.cashAfter == oldCash + r.amount
+        && cash.balance == r.cashAfter && cash.lastReceiptId == id
+        && r.customerMovementId != r.cashMovementId
+        && !exists(/databases/$(database)/documents/accountMovements/$(r.customerMovementId))
+        && !exists(/databases/$(database)/documents/accountMovements/$(r.cashMovementId))
+        && cm.referenceId == id && cm.actorId == request.auth.uid && cm.amount == r.amount
+        && cm.accountType == 'customers' && cm.accountId == r.customerId
+        && km.referenceId == id && km.actorId == request.auth.uid && km.amount == r.amount
+        && km.accountType == 'cash' && km.delta == r.amount;
+    }
+    function receiptInvoiceValid(r, id) {
+      let invoiceId = r.get('invoiceId', '');
+      let old = invoiceId == '' ? {} : get(/databases/$(database)/documents/sales/$(invoiceId)).data;
+      let next = invoiceId == '' ? {} : getAfter(/databases/$(database)/documents/sales/$(invoiceId)).data;
+      return invoiceId == '' || (invoiceId is string && old.customerId == r.customerId && old.status == 'completed'
+        && r.amount <= old.due - old.get('receiptPaid', 0)
+        && next.receiptId == id && next.receiptPaid == old.get('receiptPaid', 0) + r.amount);
+    }
+    function linkedReceiptUpdate(id) {
+      let next = request.resource.data;
+      let r = receipt(next.receiptId);
+      return !exists(/databases/$(database)/documents/receipts/$(next.receiptId))
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['receiptId','receiptPaid'])
+        && resource.data.status == 'completed' && r.get('invoiceId', '') == id
+        && r.customerId == resource.data.customerId && r.actorId == request.auth.uid
+        && next.receiptPaid == resource.data.get('receiptPaid', 0) + r.amount
+        && r.amount > 0 && next.receiptPaid <= resource.data.due;
+    }
+    function linkedReceiptCancellation(old, next) {
+      let receiptId = old.get('receiptId', '');
+      let marker = receiptId == '' ? {} : getAfter(/databases/$(database)/documents/voucherCancellations/$('receipt_' + receiptId)).data;
+      return receiptId is string && receiptId != '' && marker.voucherType == 'receipt'
+        && marker.voucherId == receiptId
+        && marker.amount is number && marker.amount > 0
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['receiptId','receiptPaid'])
+        && next.get('receiptId', '') == ''
+        && next.get('receiptPaid', 0) == old.get('receiptPaid', 0) - marker.amount;
+    }
+    function saleHasNoReceipt(s) {
+      let cid = s.get('customerId', '');
+      let customer = cid == '' ? {} : get(/databases/$(database)/documents/customers/$(cid)).data;
+      let rid = customer.get('lastReceiptId', '');
+      let r = rid == '' ? {} : get(/databases/$(database)/documents/receipts/$(rid)).data;
+      return s.get('onlinePaymentEver', false) != true && s.get('receiptId', '') == '' && (rid == '' ||
+        (r.get('invoiceId', '') != '' && r.invoiceId != s.get('id', '')) ||
+        (r.get('createdAt', request.time) < s.get('createdAt', request.time)));
+    }
+    function validCorrectedCustomer(old, next) {
+      let changed = next.diff(old).affectedKeys().hasAny(['customerId','customerName','customerPhone']);
+      let cid = next.get('customerId', '');
+      let customer = cid == '' ? {} : get(/databases/$(database)/documents/customers/$(cid)).data;
+      return !changed || (cid is string && cid != '' && customer.get('active', true) != false
+        && next.customerName == customer.name && next.customerPhone == customer.get('phone', ''));
+    }
+    // Grouped staff sales are committed atomically without a billed backend.
+    function sale(id) { return getAfter(/databases/$(database)/documents/sales/$(id)).data; }
+    function newSale(id) {
+      let s = sale(id);
+      return !exists(/databases/$(database)/documents/sales/$(id)) && s.employeeId == request.auth.uid;
+    }
+    function moneyEqual(a, b) { return math.abs(a - b) <= 0.000001; }
+    function staffLine(s, i) {
+      let x = s.items[i];
+      let stock = getAfter(/databases/$(database)/documents/stock/$('main_' + x.productId)).data;
+      return x.keys().hasOnly(['productId','productName','quantity','unitPrice','lineTotal','purchasePriceAtSale','basePrice','discountPercent'])
+        && natural(x.quantity) && x.quantity > 0 && x.quantity <= 1000000
+        && moneyEqual(x.lineTotal, x.quantity * x.unitPrice)
+        && s.stockIndex[x.productId] == i && stock.lastSaleId == s.id;
+    }
+    function staffCustomer(s) {
+      let c = get(/databases/$(database)/documents/customers/$(s.customerId)).data;
+      return c.get('active', true) == true && s.customerName == c.name && s.customerPhone == c.get('phone', '')
+        && moneyEqual(s.customerPreviousBalance, c.balance)
+        && moneyEqual(s.customerBalanceAfter, c.balance + s.due)
+        && (s.due == 0 || (moneyEqual(getAfter(/databases/$(database)/documents/customers/$(s.customerId)).data.balance, s.customerBalanceAfter)
+          && getAfter(/databases/$(database)/documents/customers/$(s.customerId)).data.lastSaleId == s.id));
+    }
+    function staffCash(s) {
+      let before = exists(/databases/$(database)/documents/settings/cash)
+        ? get(/databases/$(database)/documents/settings/cash).data.balance : 0;
+      let after = getAfter(/databases/$(database)/documents/settings/cash).data;
+      return moneyEqual(s.cashBefore, before) && moneyEqual(s.cashAfter, before + s.paid)
+        && moneyEqual(after.balance, s.cashAfter) && after.lastSaleId == s.id;
+    }
+    function validStaffSale(id) {
+      let s = request.resource.data;
+      return s.keys().hasOnly(['id','branchId','stockBranchId','employeeId','customerId','customerName','customerPhone',
+          'customerPreviousBalance','customerBalanceAfter','items','itemCount','stockIndex','total','paid','due',
+          'cashBefore','cashAfter','paymentStatus','status','createdAt','requestKey','productId','productName','quantity','unitPrice'])
+        && s.id == id && s.branchId == branch() && s.stockBranchId == 'main' && s.employeeId == request.auth.uid
+        && s.status == 'completed' && s.createdAt == request.time
+        && s.requestKey is string && s.requestKey.size() <= 6000
+        && s.items is list && s.items.size() >= 1 && s.items.size() <= 4
+        && s.itemCount == s.items.size() && s.stockIndex is map && s.stockIndex.size() == s.itemCount
+        && staffLine(s, 0) && (s.itemCount < 2 || staffLine(s, 1))
+        && (s.itemCount < 3 || staffLine(s, 2)) && (s.itemCount < 4 || staffLine(s, 3))
+        && moneyEqual(s.total, s.items[0].lineTotal + (s.itemCount > 1 ? s.items[1].lineTotal : 0)
+          + (s.itemCount > 2 ? s.items[2].lineTotal : 0) + (s.itemCount > 3 ? s.items[3].lineTotal : 0))
+        && s.paid is number && s.paid >= 0 && s.paid <= s.total && moneyEqual(s.due, s.total - s.paid)
+        && s.paymentStatus == (s.due > 0 ? 'credit' : 'cash')
+        && s.customerId is string
+        && (s.customerId == '' ? (s.due == 0 && s.customerName == '' && s.customerPhone == ''
+          && s.customerPreviousBalance == 0 && s.customerBalanceAfter == 0) : staffCustomer(s))
+        && (s.paid == 0 || staffCash(s))
+        && (s.itemCount != 1 || (s.productId == s.items[0].productId && s.productName == s.items[0].productName
+          && s.quantity == s.items[0].quantity && s.unitPrice == s.items[0].unitPrice));
+    }
+    function staffStock(id) {
+      let next = request.resource.data;
+      let s = sale(next.lastSaleId);
+      let x = s.items[s.stockIndex[next.productId]];
+      let p = get(/databases/$(database)/documents/products/$(next.productId)).data;
+      let movement = getAfter(/databases/$(database)/documents/stockMovements/$(next.lastSaleId + '_' + next.productId)).data;
+      return newSale(next.lastSaleId) && id == 'main_' + next.productId
+        && resource.data.branchId == 'main' && next.branchId == 'main'
+        && next.productId == resource.data.productId && x.productId == next.productId
+        && next.diff(resource.data).affectedKeys().hasOnly(['quantity','lastSaleId'])
+        && natural(next.quantity) && next.quantity == resource.data.quantity - x.quantity
+        && p.active == true && x.productName == p.name && (profile().get('canEditSalePrice', false) == true || (x.get('basePrice', p.price) == p.price && moneyEqual(x.unitPrice, p.price * (1 - x.get('discountPercent', 0) / 100.0))))
+        && x.get('discountPercent', 0) is number && x.get('discountPercent', 0) >= 0 && x.get('discountPercent', 0) <= 100
+        && x.purchasePriceAtSale == p.get('purchasePrice', 0) && x.unitPrice >= p.get('purchasePrice', 0)
+        && movement.actorId == request.auth.uid && movement.referenceId == next.lastSaleId
+        && movement.productId == next.productId && movement.quantity == -x.quantity
+        && movement.balanceAfter == next.quantity && movement.kind == 'sale' && movement.branchId == 'main';
+    }
+    function staffBalance(id) {
+      let s = sale(request.resource.data.lastSaleId);
+      let movement = getAfter(/databases/$(database)/documents/accountMovements/$(s.id + '_customer')).data;
+      return newSale(s.id) && s.customerId == id && s.due > 0
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastSaleId','updatedAt'])
+        && moneyEqual(request.resource.data.balance, resource.data.balance + s.due)
+        && request.resource.data.updatedAt == request.time
+        && movement.referenceId == s.id;
+    }
+    function staffCashWrite() {
+      let next = request.resource.data;
+      let s = sale(next.lastSaleId);
+      let movement = getAfter(/databases/$(database)/documents/accountMovements/$(s.id + '_cash')).data;
+      return newSale(s.id) && s.paid > 0 && moneyEqual(next.balance, s.cashAfter)
+        && next.updatedAt == request.time && movement.referenceId == s.id;
+    }
+    function staffMoneyMovement(id) {
+      let m = request.resource.data;
+      let s = sale(m.referenceId);
+      return newSale(m.referenceId)
+        && m.keys().hasOnly(['accountType','accountId','accountName','kind','amount','delta','balanceBefore','balanceAfter',
+          'referenceId','reason','actorId','createdAt'])
+        && m.actorId == request.auth.uid && m.createdAt == request.time && m.kind == 'sale'
+        && m.accountId == s.customerId && m.accountName == s.customerName
+        && ((id == s.id + '_customer' && m.accountType == 'customers' && s.due > 0
+          && moneyEqual(m.amount, s.due) && moneyEqual(m.balanceBefore, s.customerPreviousBalance)
+          && moneyEqual(m.balanceAfter, s.customerBalanceAfter))
+        || (id == s.id + '_cash' && m.accountType == 'cash' && s.paid > 0 && moneyEqual(m.amount, s.paid)
+          && moneyEqual(m.delta, s.paid) && moneyEqual(m.balanceBefore, s.cashBefore) && moneyEqual(m.balanceAfter, s.cashAfter)));
+    }
+    function staffStockMovement(id) {
+      let m = request.resource.data;
+      let s = sale(m.referenceId);
+      let x = s.items[s.stockIndex[m.productId]];
+      // The mandatory stock update checks all financial movement fields.
+      return newSale(m.referenceId) && id == s.id + '_' + m.productId
+        && m.keys().hasOnly(['productId','productName','branchId','kind','quantity','balanceAfter','referenceId','actorId','createdAt'])
+        && m.createdAt == request.time && m.productName == x.productName;
+    }
+
+    function purchasingStaff() {
+      let user = profile();
+      return signed() && user.role == 'employee' && user.active == true && user.get('canPurchase', false) == true;
+    }
+    function purchase(id) { return getAfter(/databases/$(database)/documents/purchases/$(id)).data; }
+    function newStaffPurchase(id) {
+      let p = purchase(id);
+      return p.actorId == request.auth.uid && p.source == 'employee'
+        && p.createdAt == request.time;
+    }
+    function purchaseLine(s, i) {
+      let x = s.items[i];
+      let stock = getAfter(/databases/$(database)/documents/stock/$('main_' + x.productId)).data;
+      return x.keys().hasOnly(['productId','productName','quantity','unitCost','lineTotal'])
+        && natural(x.quantity) && x.quantity > 0 && x.quantity <= 1000000
+        && x.unitCost is number && x.unitCost >= 0 && x.unitCost <= 1000000000
+        && moneyEqual(x.lineTotal, x.quantity * x.unitCost) && s.stockIndex[x.productId] == i
+        && stock.lastPurchaseId == s.id;
+    }
+    function purchaseSupplier(s) {
+      let before = get(/databases/$(database)/documents/suppliers/$(s.supplierId)).data;
+      let after = getAfter(/databases/$(database)/documents/suppliers/$(s.supplierId)).data;
+      return before.get('active', true) == true && s.supplierName == before.name
+        && moneyEqual(s.supplierPreviousBalance, before.balance)
+        && moneyEqual(s.supplierBalanceAfter, before.balance + s.due)
+        && after.lastPurchaseId == s.id && moneyEqual(after.balance, s.supplierBalanceAfter)
+        && getAfter(/databases/$(database)/documents/accountMovements/$(s.id + '_supplier')).data.referenceId == s.id;
+    }
+    function purchaseCash(s) {
+      let before = get(/databases/$(database)/documents/settings/cash).data;
+      let after = getAfter(/databases/$(database)/documents/settings/cash).data;
+      return s.paid <= before.balance && moneyEqual(s.cashBefore, before.balance)
+        && moneyEqual(s.cashAfter, before.balance - s.paid) && after.lastPurchaseId == s.id
+        && moneyEqual(after.balance, s.cashAfter)
+        && getAfter(/databases/$(database)/documents/accountMovements/$(s.id + '_cash')).data.referenceId == s.id;
+    }
+    function validStaffPurchase(id) {
+      let s = request.resource.data;
+      return purchasingStaff() && s.keys().hasOnly(['id','actorId','actorName','branchId','supplierId','supplierName',
+        'invoiceNumber','note','items','itemCount','stockIndex','total','paid','due','cashPosted','cashBefore','cashAfter',
+        'supplierPreviousBalance','supplierBalanceAfter','paymentStatus','status','source','requestKey','createdAt'])
+        && s.id == id && s.actorId == request.auth.uid && s.actorName == profile().get('name', '') && s.branchId == branch()
+        && s.createdAt == request.time && s.status == 'completed' && s.source == 'employee' && s.cashPosted == true
+        && s.requestKey is string && s.requestKey.size() <= 6000 && s.note is string && s.note.size() <= 1000
+        && s.invoiceNumber is string && s.invoiceNumber.size() <= 100
+        && s.items is list && s.items.size() >= 1 && s.items.size() <= 4 && s.itemCount == s.items.size()
+        && s.stockIndex is map && s.stockIndex.size() == s.itemCount && purchaseLine(s, 0)
+        && (s.itemCount < 2 || purchaseLine(s, 1)) && (s.itemCount < 3 || purchaseLine(s, 2)) && (s.itemCount < 4 || purchaseLine(s, 3))
+        && moneyEqual(s.total, s.items[0].lineTotal + (s.itemCount > 1 ? s.items[1].lineTotal : 0)
+          + (s.itemCount > 2 ? s.items[2].lineTotal : 0) + (s.itemCount > 3 ? s.items[3].lineTotal : 0))
+        && s.total <= 1000000000000 && s.paid is number && s.paid >= 0 && s.paid <= s.total
+        && moneyEqual(s.due, s.total - s.paid) && s.paymentStatus == (s.due > 0 ? 'credit' : 'cash')
+        && purchaseSupplier(s) && (s.paid == 0 || purchaseCash(s));
+    }
+    function staffPurchaseStock(id, before) {
+      let next = request.resource.data;
+      let s = purchase(next.lastPurchaseId);
+      let x = s.items[s.stockIndex[next.productId]];
+      let p = getAfter(/databases/$(database)/documents/products/$(next.productId)).data;
+      let m = getAfter(/databases/$(database)/documents/stockMovements/$(s.id + '_' + next.productId)).data;
+      return newStaffPurchase(s.id) && id == 'main_' + next.productId && next.branchId == 'main'
+        && next.keys().hasOnly(['branchId','productId','quantity','lastSaleId','lastPurchaseId'])
+        && whole(next.quantity) && next.quantity == before + x.quantity
+        && p.active == true && p.name == x.productName && p.lastPurchaseId == s.id && p.purchasePrice == x.unitCost
+        && m.referenceId == s.id && m.actorId == request.auth.uid && m.createdAt == request.time
+        && m.productId == next.productId && m.productName == x.productName && m.kind == 'purchase'
+        && m.branchId == 'main' && m.quantity == x.quantity && m.balanceAfter == next.quantity;
+    }
+    function staffPurchaseProduct(id) {
+      let next = request.resource.data;
+      let s = purchase(next.lastPurchaseId);
+      let x = s.items[s.stockIndex[id]];
+      return newStaffPurchase(s.id) && next.diff(resource.data).affectedKeys().hasOnly(['purchasePrice','lastPurchaseId','updatedAt'])
+        && resource.data.active == true && next.updatedAt == request.time && next.purchasePrice == x.unitCost;
+    }
+    function staffPurchaseMoney(id) {
+      let m = request.resource.data;
+      let s = purchase(m.referenceId);
+      return newStaffPurchase(m.referenceId) && m.actorId == request.auth.uid && m.createdAt == request.time
+        && m.keys().hasOnly(['accountType','accountId','accountName','kind','amount','paid','delta','balanceBefore','balanceAfter','referenceId','actorId','createdAt'])
+        && m.accountId == s.supplierId && m.accountName == s.supplierName
+        && ((id == s.id + '_supplier' && m.kind == 'purchase' && m.accountType == 'suppliers'
+          && moneyEqual(m.amount, s.due) && m.paid == s.paid && moneyEqual(m.balanceBefore, s.supplierPreviousBalance) && moneyEqual(m.balanceAfter, s.supplierBalanceAfter))
+        || (id == s.id + '_cash' && m.kind == 'purchasePayment' && m.accountType == 'cash'
+          && moneyEqual(m.amount, s.paid) && moneyEqual(m.delta, -s.paid) && moneyEqual(m.balanceBefore, s.cashBefore) && moneyEqual(m.balanceAfter, s.cashAfter)));
+    }
+    function validChatAudio(m) {
+      return !m.keys().hasAny(['audioBase64','audioSeconds','audioMime']) ||
+        (m.audioBase64 is string && m.audioBase64.size() > 0 && m.audioBase64.size() <= 800000
+          && m.audioSeconds is int && m.audioSeconds >= 1 && m.audioSeconds <= 60
+          && m.audioMime == 'audio/mp4' && m.text == 'رسالة صوتية');
+    }
+    function chatAccess(employeeId) {
+      return owner() || (employee() && request.auth.uid == employeeId);
+    }
+    function chatEmployee(employeeId) {
+      let e = get(/databases/$(database)/documents/users/$(employeeId)).data;
+      return e.role == 'employee' && e.active == true;
+    }
+    function validChatSummary(employeeId) {
+      let c = request.resource.data;
+      let e = get(/databases/$(database)/documents/users/$(employeeId)).data;
+      let m = getAfter(/databases/$(database)/documents/staffChats/$(employeeId)/messages/$(c.lastMessageId)).data;
+      return chatEmployee(employeeId)
+        && c.keys().hasOnly(['employeeId','employeeName','branchId','lastMessageId','lastText','lastSenderId','lastSenderRole','lastMessageAt','ownerReadAt','employeeReadAt'])
+        && c.employeeId == employeeId && c.employeeName == e.name && c.branchId == e.branchId
+        && c.lastSenderId == request.auth.uid && c.lastSenderRole == profile().role
+        && c.lastMessageAt == request.time && m.createdAt == request.time
+        && !exists(/databases/$(database)/documents/staffChats/$(employeeId)/messages/$(c.lastMessageId))
+        && c.lastText == m.text && c.lastSenderId == m.senderId && c.lastSenderRole == m.senderRole;
+    }
+    match /staffChats/{employeeId} {
+      allow get: if chatAccess(employeeId);
+      allow list: if owner();
+      allow create: if chatAccess(employeeId) && validChatSummary(employeeId)
+        && !('ownerReadAt' in request.resource.data) && !('employeeReadAt' in request.resource.data);
+      allow update: if chatAccess(employeeId) && validChatSummary(employeeId)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['employeeId','employeeName','branchId','lastMessageId','lastText','lastSenderId','lastSenderRole','lastMessageAt']);
+      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['ownerReadAt'])
+        && request.resource.data.ownerReadAt is timestamp && request.resource.data.ownerReadAt <= resource.data.lastMessageAt;
+      allow update: if employee() && request.auth.uid == employeeId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['employeeReadAt'])
+        && request.resource.data.employeeReadAt is timestamp && request.resource.data.employeeReadAt <= resource.data.lastMessageAt;
+      allow delete: if false;
+      match /messages/{messageId} {
+        allow read: if chatAccess(employeeId);
+        allow create: if chatAccess(employeeId) && chatEmployee(employeeId)
+          && request.resource.data.keys().hasOnly(['senderId','senderName','senderRole','text','createdAt','audioBase64','audioSeconds','audioMime'])
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.senderName == profile().name && request.resource.data.senderRole == profile().role
+          && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 2000
+          && validChatAudio(request.resource.data)
+          && request.resource.data.createdAt == request.time
+          && getAfter(/databases/$(database)/documents/staffChats/$(employeeId)).data.lastMessageId == messageId
+          && getAfter(/databases/$(database)/documents/staffChats/$(employeeId)).data.lastSenderId == request.auth.uid
+          && getAfter(/databases/$(database)/documents/staffChats/$(employeeId)).data.lastText == request.resource.data.text
+          && getAfter(/databases/$(database)/documents/staffChats/$(employeeId)).data.lastMessageAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+
+    match /users/{uid} {
+      allow read: if owner() || (signed() && request.auth.uid == uid);
+      // A signed-in account can only request access. Branch and role are assigned by owner.
+      allow create: if signed() && request.auth.uid == uid
+        && request.auth.token.email is string
+        && request.resource.data.keys().hasOnly(['role', 'active', 'name', 'phone', 'createdAt'])
+        && request.resource.data.role == 'pending'
+        && request.resource.data.active == false
+        && request.resource.data.phone is string
+        && request.resource.data.createdAt == request.time;
+      allow create, update: if owner();
+      allow delete: if false;
+    }
+    match /products/{id} {
+      allow read: if active();
+      allow write: if owner();
+      allow update: if purchasingStaff() && staffPurchaseProduct(id);
+    }
+    match /branches/{id} {
+      allow read: if active();
+      allow write: if owner();
+    }
+    match /stock/{id} {
+      allow read: if owner() || (employee() && resource.data.branchId == branch());
+      // Staff browse shared inventory; validated atomic writes preserve stock and balances.
+      allow get: if employee() && id.matches('main_.*');
+      allow delete: if false;
+      allow create, update: if owner() && request.resource.data.keys().hasOnly(['branchId', 'productId', 'quantity', 'lastSaleId', 'lastPurchaseId']) && whole(request.resource.data.quantity) && id == request.resource.data.branchId + '_' + request.resource.data.productId;
+      allow update: if employee() && request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastSaleId']) && staffStock(id);
+      allow create: if purchasingStaff() && staffPurchaseStock(id, 0);
+      allow update: if purchasingStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity','lastPurchaseId']) && staffPurchaseStock(id, resource.data.quantity);
+    }
+    // Receipt permission-denied follow-up: republish the validated employee receipt rules.
+    match /receipts/{id} {
+      allow read: if owner();
+      allow create: if owner() && receiptInvoiceValid(request.resource.data, id) && validReceiptDate(request.resource.data);
+      allow get: if employee() && (!exists(/databases/$(database)/documents/receipts/$(id)) || resource.data.actorId == request.auth.uid);
+      allow list: if employee() && resource.data.actorId == request.auth.uid;
+      allow create: if employee() && validReceipt(id);
+      allow update, delete: if false;
+    }
+    match /stockAdjustments/{id} {
+      allow read, create: if owner();
+      allow update: if false;
+      allow delete: if false;
+    }
+    match /customers/{id} {
+      allow update: if employee() && 'lastSaleId' in request.resource.data && request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastSaleId']) && staffBalance(id);
+      allow read: if employee();
+      allow update: if employee()
+        && 'lastReceiptId' in request.resource.data
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastReceiptId','updatedAt'])
+        && newReceipt(request.resource.data.lastReceiptId)
+        && receipt(request.resource.data.lastReceiptId).customerId == id
+        && request.resource.data.balance == resource.data.balance - receipt(request.resource.data.lastReceiptId).amount
+        && request.resource.data.updatedAt == request.time;
+      allow read, create, update: if owner();
+      allow delete: if false;
+    }
+    match /suppliers/{id} {
+      allow read: if purchasingStaff();
+      allow update: if purchasingStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastPurchaseId','updatedAt'])
+        && newStaffPurchase(request.resource.data.lastPurchaseId) && purchase(request.resource.data.lastPurchaseId).supplierId == id
+        && moneyEqual(request.resource.data.balance, resource.data.balance + purchase(request.resource.data.lastPurchaseId).due) && request.resource.data.updatedAt == request.time;
+      allow read, create, update: if owner();
+      allow delete: if false;
+    }
+    match /accountMovements/{id} {
+      allow create: if request.resource.data.kind in ['purchase','purchasePayment'] && purchasingStaff() && staffPurchaseMoney(id);
+      allow create: if request.resource.data.kind == 'sale' && employee() && staffMoneyMovement(id);
+      allow create: if request.resource.data.kind in ['collection','customerCollection'] && employee() && newReceipt(request.resource.data.referenceId)
+        && request.resource.data.keys().hasOnly(['accountType','accountId','accountName','kind','amount','delta',
+          'balanceBefore','balanceAfter','referenceId','reason','actorId','branchId','createdAt','receiptDate'])
+        && request.resource.data.get('receiptDate', request.resource.data.createdAt) == receipt(request.resource.data.referenceId).get('receiptDate', receipt(request.resource.data.referenceId).createdAt)
+        && request.resource.data.actorId == request.auth.uid && request.resource.data.branchId == branch()
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.amount == receipt(request.resource.data.referenceId).amount
+        && request.resource.data.accountId == receipt(request.resource.data.referenceId).customerId
+        && request.resource.data.accountName == receipt(request.resource.data.referenceId).customerName
+        && ((id == receipt(request.resource.data.referenceId).customerMovementId
+          && request.resource.data.accountType == 'customers' && request.resource.data.kind == 'collection'
+          && request.resource.data.balanceBefore == receipt(request.resource.data.referenceId).balanceBefore
+          && request.resource.data.balanceAfter == receipt(request.resource.data.referenceId).balanceAfter)
+        || (id == receipt(request.resource.data.referenceId).cashMovementId
+          && request.resource.data.accountType == 'cash' && request.resource.data.kind == 'customerCollection'
+          && request.resource.data.delta == request.resource.data.amount
+          && request.resource.data.balanceBefore == receipt(request.resource.data.referenceId).cashBefore
+          && request.resource.data.balanceAfter == receipt(request.resource.data.referenceId).cashAfter));
+      allow read, create: if owner();
+      allow update: if false;
+      allow delete: if false;
+    }
+    match /voucherCancellations/{id} {
+      allow read, create: if owner();
+      allow update, delete: if false;
+    }
+    match /settings/{id} {
+      allow update: if purchasingStaff() && id == 'cash' && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastPurchaseId','updatedAt'])
+        && newStaffPurchase(request.resource.data.lastPurchaseId) && purchase(request.resource.data.lastPurchaseId).paid > 0
+        && moneyEqual(request.resource.data.balance, resource.data.balance - purchase(request.resource.data.lastPurchaseId).paid) && request.resource.data.updatedAt == request.time;
+      allow create: if employee() && id == 'cash' && 'lastSaleId' in request.resource.data && request.resource.data.keys().hasOnly(['balance','lastSaleId','updatedAt']) && staffCashWrite();
+      allow update: if employee() && id == 'cash' && request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastSaleId']) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastSaleId','updatedAt']) && staffCashWrite();
+      allow get: if employee() && id in ['cash', 'invoiceBranding'];
+      allow create: if employee() && id == 'cash' && 'lastReceiptId' in request.resource.data
+        && request.resource.data.keys().hasOnly(['balance','lastReceiptId','updatedAt'])
+        && newReceipt(request.resource.data.lastReceiptId)
+        && request.resource.data.balance == receipt(request.resource.data.lastReceiptId).amount
+        && request.resource.data.updatedAt == request.time;
+      allow update: if employee() && id == 'cash' && request.resource.data.diff(resource.data).affectedKeys().hasAny(['lastReceiptId'])
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['balance','lastReceiptId','updatedAt'])
+        && newReceipt(request.resource.data.lastReceiptId)
+        && request.resource.data.balance == resource.data.balance + receipt(request.resource.data.lastReceiptId).amount
+        && request.resource.data.updatedAt == request.time;
+      allow read: if owner();
+      allow create, update: if owner() && id != 'geideaClearing';
+      allow delete: if false;
+    }
+    match /stockMovements/{id} {
+      allow create: if purchasingStaff() && newStaffPurchase(request.resource.data.referenceId) && request.resource.data.kind == 'purchase'
+        && id == request.resource.data.referenceId + '_' + request.resource.data.productId
+        && request.resource.data.keys().hasOnly(['productId','productName','branchId','kind','quantity','balanceAfter','referenceId','actorId','createdAt']);
+      allow read, create: if owner();
+      allow create: if request.resource.data.kind == 'sale' && employee() && staffStockMovement(id);
+      allow update: if false;
+      allow delete: if false;
+    }
+    match /salesReturns/{id} {
+      allow read, create: if owner();
+      allow update: if false;
+      allow delete: if false;
+    }
+    match /purchaseReturns/{id} {
+      allow read, create: if owner();
+      allow update: if false;
+      allow delete: if false;
+    }
+    match /invoiceEdits/{id} {
+      allow read, create: if owner();
+      allow update, delete: if false;
+    }
+    match /purchases/{id} {
+      allow get: if employee() && (!exists(/databases/$(database)/documents/purchases/$(id)) || resource.data.actorId == request.auth.uid);
+      allow list: if employee() && resource.data.actorId == request.auth.uid;
+      allow create: if validStaffPurchase(id);
+      allow update: if employee() && resource.data.actorId == request.auth.uid && profile().get('canPrint', false) == true
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy']) && request.resource.data.printedBy == request.auth.uid;
+      allow read, create: if owner();
+      allow update: if owner() && resource.data.status == 'completed'
+        && resource.data.get('onlinePaid', 0) == 0
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+          ['partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction','lastPartialReturnId','status','returnedAt','returnId']);
+      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
+      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cashPaidPosted','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
+        && resource.data.status == 'completed' && request.resource.data.revision == resource.data.get('revision', 0) + 1
+        && request.resource.data.lastEditedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+    // Drafts have no financial effect. Only an owner can approve or reject them.
+    match /pendingSales/{id} {
+      allow get: if owner() || (employee() && (!exists(/databases/$(database)/documents/pendingSales/$(id)) || resource.data.employeeId == request.auth.uid));
+      allow list: if owner() || (employee() && resource.data.employeeId == request.auth.uid);
+      allow create: if employee()
+        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey'])
+        && request.resource.data.id == id && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.employeeName == profile().name && request.resource.data.branchId == branch()
+        && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time
+        && request.resource.data.customerId is string && request.resource.data.customerId.size() > 0
+        && request.resource.data.customerName is string && request.resource.data.credit is bool
+        && request.resource.data.items is list && request.resource.data.items.size() > 4 && request.resource.data.items.size() <= 50
+        && request.resource.data.total is number && request.resource.data.total >= 0
+        && request.resource.data.paid is number && request.resource.data.paid >= 0 && request.resource.data.paid <= request.resource.data.total
+        && request.resource.data.requestKey is string && request.resource.data.requestKey.size() <= 100000;
+      allow update: if owner() && resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','saleId','reviewedBy','reviewedAt','rejectionReason'])
+        && request.resource.data.reviewedBy == request.auth.uid && request.resource.data.reviewedAt == request.time
+        && ((request.resource.data.status == 'approved' && request.resource.data.saleId == id
+          && getAfter(/databases/$(database)/documents/sales/$(id)).data.sourceRequestId == id
+          && getAfter(/databases/$(database)/documents/sales/$(id)).data.employeeId == resource.data.employeeId
+          && getAfter(/databases/$(database)/documents/sales/$(id)).data.status == 'completed')
+          || (request.resource.data.status == 'rejected' && request.resource.data.rejectionReason is string
+            && request.resource.data.rejectionReason.size() > 0 && request.resource.data.rejectionReason.size() <= 500
+            && !exists(/databases/$(database)/documents/sales/$(id))));
+      // Owner-only removal of rejected proposals. Preserve payload and review audit.
+      allow update: if owner() && resource.data.status == 'rejected'
+        && resource.data.get('removed', false) == false
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['removed','removedBy','removedAt'])
+        && request.resource.data.removed == true && request.resource.data.removedBy == request.auth.uid
+        && request.resource.data.removedAt == request.time
+        && !exists(/databases/$(database)/documents/sales/$(id));
+      allow delete: if false;
+    }
+    match /sales/{id} {
+      allow get: if employee() && !exists(/databases/$(database)/documents/sales/$(id));
+      allow read: if owner() || (employee() && resource.data.branchId == branch());
+      allow create: if owner() || (employee() && validStaffSale(id));
+      allow update: if owner() && resource.data.status == 'completed'
+        && resource.data.get('onlinePaid', 0) == 0
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+          ['partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction','lastPartialReturnId','status','returnedAt','returnId']);
+      allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
+        .hasOnly(['status','returnedAt','returnId','printedAt','printedBy'])
+        && (resource.data.get('onlinePaid', 0) == 0 || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy']));
+      allow update: if owner() && saleHasNoReceipt(resource.data) && validCorrectedCustomer(resource.data,request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customerId','customerName','customerPhone','customerPreviousBalance','stockIndex','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
+        && resource.data.status == 'completed' && request.resource.data.revision == resource.data.get('revision', 0) + 1
+        && request.resource.data.lastEditedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
+      allow update: if (owner() || (employee() && resource.data.branchId == branch())) && linkedReceiptUpdate(id);
+      allow update: if owner() && linkedReceiptCancellation(resource.data, request.resource.data);
+      allow update: if employee() && resource.data.branchId == branch()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy'])
+        && request.resource.data.printedBy == request.auth.uid;
+      allow delete: if false;
+    }
+  }
+}
+
+
+
