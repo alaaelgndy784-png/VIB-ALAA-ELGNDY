@@ -183,6 +183,22 @@ Future<void> cancelReceiptVoucher(
       title: 'تم إلغاء سند القبض', button: 'تمام', success: true,
     );
   } catch (e) {
+    if (ManagerOfflineOutbox.isOfflineError(e)) {
+      try {
+        final synced = await submitManagerOfflineCommand(id:marker.id,kind:'receiptCancellation',payload:{
+          'voucherId':receiptId,'customerMovementId':cancellationCustomerMovement.id,
+          'cashMovementId':cancellationCashMovement.id,'reason':reason,
+        });
+        if (context.mounted) await showInvoiceSaveProblem(context,
+          synced ? 'تمت مزامنة إلغاء السند.' : 'حُفظ طلب الإلغاء على الجهاز، وينتظر المزامنة عند رجوع الإنترنت.',
+          title: 'إلغاء سند القبض', button: 'تمام', success: synced);
+        return;
+      } catch (queueError) {
+        if (context.mounted) await showInvoiceSaveProblem(context,
+          'تعذر حفظ طلب الإلغاء للمزامنة: $queueError', title: 'إلغاء سند القبض', button: 'تمام');
+        return;
+      }
+    }
     if (context.mounted) await showInvoiceSaveProblem(
       context, 'تعذر إلغاء سند القبض: $e', title: 'إلغاء سند القبض', button: 'تمام',
     );
@@ -271,6 +287,22 @@ Future<void> cancelSupplierPaymentVoucher(
       title: 'تم إلغاء سند الصرف', button: 'تمام', success: true,
     );
   } catch (e) {
+    if (ManagerOfflineOutbox.isOfflineError(e)) {
+      try {
+        final synced = await submitManagerOfflineCommand(id:marker.id,kind:'supplierPaymentCancellation',payload:{
+          'voucherId':movementId,'supplierMovementId':cancellationSupplierMovement.id,
+          'cashMovementId':cancellationCashMovement.id,'reason':reason,
+        });
+        if (context.mounted) await showInvoiceSaveProblem(context,
+          synced ? 'تمت مزامنة إلغاء السند.' : 'حُفظ طلب الإلغاء على الجهاز، وينتظر المزامنة عند رجوع الإنترنت.',
+          title: 'إلغاء سند الصرف', button: 'تمام', success: synced);
+        return;
+      } catch (queueError) {
+        if (context.mounted) await showInvoiceSaveProblem(context,
+          'تعذر حفظ طلب الإلغاء للمزامنة: $queueError', title: 'إلغاء سند الصرف', button: 'تمام');
+        return;
+      }
+    }
     if (context.mounted) await showInvoiceSaveProblem(
       context, 'تعذر إلغاء سند الصرف: $e', title: 'إلغاء سند الصرف', button: 'تمام',
     );
