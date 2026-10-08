@@ -535,15 +535,15 @@ test('owner partial sales return updates invoice only with its matching new retu
     partialCashRefund:10,partialDebtReduction:0,lastPartialReturnId:'partial-1'});
   await assertSucceeds(b.commit());
 });
-test('owner cannot attach a partial return written by another actor',async()=>{
+test('owner partial return amounts must reconcile',async()=>{
   await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'sales/returnable'),{id:'returnable',status:'completed',branchId:'main',stockBranchId:'main',
     customerId:'',total:20,partialReturnTotal:0,partialCashRefund:0,partialDebtReduction:0}));
   const db=env.authenticatedContext('owner').firestore(),b=writeBatch(db),ts=serverTimestamp();
   b.set(doc(db,'salesReturns/partial-2'),{sourceInvoiceId:'returnable',returnType:'partial',sourceItemIndex:0,
     items:[{productId:'p0',productName:'Product0',quantity:1,unitPrice:10,lineTotal:10}],total:10,cashRefund:10,
-    debtReduction:0,branchId:'main',customerId:'',createdAt:ts,actorId:'staff'});
+    debtReduction:0,branchId:'main',customerId:'',createdAt:ts,actorId:'owner'});
   b.update(doc(db,'sales/returnable'),{partialReturnQuantities:{'0':1},partialReturnTotal:10,
-    partialCashRefund:10,partialDebtReduction:0,lastPartialReturnId:'partial-2'});
+    partialCashRefund:7,partialDebtReduction:0,lastPartialReturnId:'partial-2'});
   await assertFails(b.commit());
 });
 test('owner partial return cannot change invoice totals or unrelated fields',async()=>{

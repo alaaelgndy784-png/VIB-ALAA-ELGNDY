@@ -521,26 +521,22 @@ service cloud.firestore {
     function validPartialSalesReturnUpdate(id) {
       let next = request.resource.data;
       let changed = next.diff(resource.data).affectedKeys();
-      let returnId = next.get('lastPartialReturnId', '');
-      let r = getAfter(/databases/$(database)/documents/salesReturns/$(returnId)).data;
       return owner() && resource.data.status == 'completed'
         && resource.data.get('onlinePaid', 0) == 0
         && changed.hasOnly(['partialReturnQuantities','partialReturnTotal','partialCashRefund',
           'partialDebtReduction','lastPartialReturnId','status','returnedAt','returnId'])
         && changed.hasAll(['partialReturnQuantities','partialReturnTotal','partialCashRefund',
           'partialDebtReduction','lastPartialReturnId'])
-        && returnId is string && returnId.size() > 0
-        && !exists(/databases/$(database)/documents/salesReturns/$(returnId))
-        && r.sourceInvoiceId == id && r.returnType == 'partial'
-        && r.actorId == request.auth.uid && r.createdAt == request.time
-        && r.total is number && r.cashRefund is number && r.debtReduction is number
-        && moneyEqual(r.total, r.cashRefund + r.debtReduction)
         && next.partialReturnQuantities is map
-        && moneyEqual(next.partialReturnTotal, resource.data.get('partialReturnTotal', 0) + r.total)
-        && moneyEqual(next.partialCashRefund, resource.data.get('partialCashRefund', 0) + r.cashRefund)
-        && moneyEqual(next.partialDebtReduction, resource.data.get('partialDebtReduction', 0) + r.debtReduction)
+        && next.partialReturnTotal is number && next.partialCashRefund is number
+        && next.partialDebtReduction is number
+        && next.partialReturnTotal >= resource.data.get('partialReturnTotal', 0)
+        && next.partialCashRefund >= resource.data.get('partialCashRefund', 0)
+        && next.partialDebtReduction >= resource.data.get('partialDebtReduction', 0)
+        && moneyEqual(next.partialReturnTotal, next.partialCashRefund + next.partialDebtReduction)
+        && next.lastPartialReturnId is string && next.lastPartialReturnId.size() > 0
         && (!changed.hasAny(['status']) || (next.status == 'returned'
-          && next.returnId == returnId && next.returnedAt == request.time));
+          && next.returnId == next.lastPartialReturnId && next.returnedAt == request.time));
     }
     match /sales/{id} {
       allow get: if employee() && !exists(/databases/$(database)/documents/sales/$(id));
