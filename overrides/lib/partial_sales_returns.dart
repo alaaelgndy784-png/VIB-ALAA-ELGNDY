@@ -117,10 +117,17 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
     if (profileSnap.data()?['active'] != true || profileSnap.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
     if (((d['onlinePaid'] as num?) ?? 0) > 0) throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
 
-    final returnQuery = db.collection('salesReturns').where('sourceInvoiceId', isEqualTo: id);
-    final priorSnaps = await tx.get(returnQuery);
-    final priorDocs = priorSnaps.docs.map((s) => s.data()).where((r) => r['returnType'] == 'partial').toList();
-    final returnedByLine = returnedQuantitiesBySourceLine(priorDocs);
+    final returnedByLine = <int, int>{};
+    final rawReturnedQuantities = d['partialReturnQuantities'];
+    if (rawReturnedQuantities is Map) {
+      for (final entry in rawReturnedQuantities.entries) {
+        final lineIndex = int.tryParse('${entry.key}');
+        final returnedQty = entry.value;
+        if (lineIndex != null && returnedQty is num && returnedQty.isFinite && returnedQty >= 0) {
+          returnedByLine[lineIndex] = returnedQty.toInt();
+        }
+      }
+    }
     final items = _saleReturnInvoiceItems(d);
     if (sourceItemIndex >= items.length) throw StateError('الصنف غير موجود في الفاتورة');
     final item = items[sourceItemIndex];
@@ -141,8 +148,8 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
     final cashSnap = await tx.get(cashRef);
 
     final settlement = returnSettlement(d, sales: true);
-    final priorCash = priorDocs.fold<int>(0, (sum, r) => sum + (((r['cashRefund'] as num?) ?? 0) * 100).round());
-    final priorDebt = priorDocs.fold<int>(0, (sum, r) => sum + (((r['debtReduction'] as num?) ?? 0) * 100).round());
+    final priorCash = (((d['partialCashRefund'] as num?) ?? 0) * 100).round();
+    final priorDebt = (((d['partialDebtReduction'] as num?) ?? 0) * 100).round();
     final cashAvailable = ((settlement.cash * 100).round() - priorCash).clamp(0, 1000000000000).toInt();
     final debtAvailable = ((settlement.debt * 100).round() - priorDebt).clamp(0, 1000000000000).toInt();
     final sourceLineCents = ((item['lineTotal'] as num?)?.toDouble() ??
