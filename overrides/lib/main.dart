@@ -2560,8 +2560,8 @@ Future<void> mainStockDialog(BuildContext context, String productId, String name
         ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اكتب الرصيد الصحيح وسبب التسوية')));
         return;
       }
+      final adjustment = db.collection('stockAdjustments').doc();
       try {
-        final adjustment = db.collection('stockAdjustments').doc();
         await db.runTransaction((tx) async {
           final snapshot = await tx.get(stockRef);
           final before = (snapshot.data()?['quantity'] as num?)?.toInt() ?? 0;
