@@ -618,7 +618,7 @@ Future<void> showManagerOfflineQueue(BuildContext context) async {
             for (final item in box.commands) ListTile(
               leading: Icon(item.state == 'needsReview' ? Icons.error_outline : Icons.cloud_upload_outlined,
                 color: item.state == 'needsReview' ? Colors.orangeAccent : gold),
-              title: Text(item.kind == 'sale' ? 'فاتورة مبيعات' : item.kind == 'customerReceipt' ? 'سند قبض' : item.kind == 'supplierPayment' ? 'سند صرف مورد' : item.kind == 'expense' ? 'مصروف' : item.kind == 'receiptCancellation' ? 'إلغاء سند قبض' : item.kind == 'supplierPaymentCancellation' ? 'إلغاء سند صرف' : 'حركة صندوق'),
+              title: Text(item.kind == 'sale' ? 'فاتورة مبيعات' : item.kind == 'customerReceipt' ? 'سند قبض' : item.kind == 'supplierPayment' ? 'سند صرف مورد' : item.kind == 'expense' ? 'مصروف' : item.kind == 'receiptCancellation' ? 'إلغاء سند قبض' : item.kind == 'supplierPaymentCancellation' ? 'إلغاء سند صرف' : item.kind == 'purchase' ? 'فاتورة مشتريات' : item.kind == 'stockTransfer' ? 'تحويل مخزون' : item.kind == 'stockAdjustment' ? 'تسوية مخزون' : item.kind == 'cashMovement' ? 'حركة صندوق' : 'حركة محفوظة'),
               subtitle: Text(item.error ?? 'بانتظار الاتصال والمزامنة'),
               trailing: item.state == 'needsReview' ? IconButton(tooltip: 'إزالة من قائمة المراجعة',
                 onPressed: () => box.dismissForReview(item.id), icon: const Icon(Icons.delete_outline)) : null,
