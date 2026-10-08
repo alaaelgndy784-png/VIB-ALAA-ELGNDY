@@ -38,7 +38,7 @@ test('Stock shortage leaves all balances and every line unchanged', async () => 
   assert.equal(db.read('settings/cash').balance, 50); assert.equal(db.size(), count);
 });
 test('Rejects tampered price, duplicate items, non-finite payment and inactive employee', async () => {
-  await assert.rejects(save(database(), input({items: [{productId: 'a', quantity: 1, unitPrice: 1}]})), {code: 'failed-precondition'});
+  await assert.rejects(save(database(), input({items: [{productId: 'a', quantity: 1, unitPrice: 1}]})), {code: 'permission-denied'});
   await assert.rejects(save(database(), input({items: [input().items[0], input().items[0]]})), {code: 'invalid-argument'});
   await assert.rejects(save(database(), input({paid: NaN})), {code: 'invalid-argument'});
   const db = database(); db.put('users/staff', {role: 'employee', active: false, branchId: 'x'});
