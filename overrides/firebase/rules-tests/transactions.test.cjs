@@ -525,9 +525,9 @@ test('removed rejected proposal cannot be revived, approved, overwritten or perm
 
 
 test('owner partial sales return updates invoice only with its matching new return record',async()=>{
+  await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'sales/returnable'),{id:'returnable',status:'completed',branchId:'main',stockBranchId:'main',
+    customerId:'',total:20,partialReturnTotal:0,partialCashRefund:0,partialDebtReduction:0}));
   const db=env.authenticatedContext('owner').firestore(),b=writeBatch(db),ts=serverTimestamp();
-  b.set(doc(db,'sales/returnable'),{id:'returnable',status:'completed',branchId:'main',stockBranchId:'main',
-    customerId:'',total:20,partialReturnTotal:0,partialCashRefund:0,partialDebtReduction:0});
   b.set(doc(db,'salesReturns/partial-1'),{sourceInvoiceId:'returnable',returnType:'partial',sourceItemIndex:0,
     items:[{productId:'p0',productName:'Product0',quantity:1,unitPrice:10,lineTotal:10}],total:10,cashRefund:10,
     debtReduction:0,branchId:'main',customerId:'',createdAt:ts,actorId:'owner'});
@@ -536,9 +536,9 @@ test('owner partial sales return updates invoice only with its matching new retu
   await assertSucceeds(b.commit());
 });
 test('owner cannot attach a partial return written by another actor',async()=>{
+  await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'sales/returnable'),{id:'returnable',status:'completed',branchId:'main',stockBranchId:'main',
+    customerId:'',total:20,partialReturnTotal:0,partialCashRefund:0,partialDebtReduction:0}));
   const db=env.authenticatedContext('owner').firestore(),b=writeBatch(db),ts=serverTimestamp();
-  b.set(doc(db,'sales/returnable'),{id:'returnable',status:'completed',branchId:'main',stockBranchId:'main',
-    customerId:'',total:20,partialReturnTotal:0,partialCashRefund:0,partialDebtReduction:0});
   b.set(doc(db,'salesReturns/partial-2'),{sourceInvoiceId:'returnable',returnType:'partial',sourceItemIndex:0,
     items:[{productId:'p0',productName:'Product0',quantity:1,unitPrice:10,lineTotal:10}],total:10,cashRefund:10,
     debtReduction:0,branchId:'main',customerId:'',createdAt:ts,actorId:'staff'});
@@ -547,9 +547,9 @@ test('owner cannot attach a partial return written by another actor',async()=>{
   await assertFails(b.commit());
 });
 test('owner partial return cannot change invoice totals or unrelated fields',async()=>{
+  await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'sales/returnable'),{id:'returnable',status:'completed',branchId:'main',stockBranchId:'main',
+    customerId:'',total:20,partialReturnTotal:0,partialCashRefund:0,partialDebtReduction:0}));
   const db=env.authenticatedContext('owner').firestore(),b=writeBatch(db),ts=serverTimestamp();
-  b.set(doc(db,'sales/returnable'),{id:'returnable',status:'completed',branchId:'main',stockBranchId:'main',
-    customerId:'',total:20,partialReturnTotal:0,partialCashRefund:0,partialDebtReduction:0});
   b.set(doc(db,'salesReturns/partial-3'),{sourceInvoiceId:'returnable',returnType:'partial',sourceItemIndex:0,
     items:[{productId:'p0',productName:'Product0',quantity:1,unitPrice:10,lineTotal:10}],total:10,cashRefund:10,
     debtReduction:0,branchId:'main',customerId:'',createdAt:ts,actorId:'owner'});
