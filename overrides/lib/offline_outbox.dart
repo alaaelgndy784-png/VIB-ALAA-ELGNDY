@@ -177,6 +177,12 @@ class ManagerOfflineOutbox extends ChangeNotifier {
       case 'purchase':
         await _commitPurchase(command);
         return;
+      case 'stockTransfer':
+        await _commitStockTransfer(command);
+        return;
+      case 'stockAdjustment':
+        await _commitStockAdjustment(command);
+        return;
       default:
         throw StateError('نوع حركة مؤجلة غير معروف: ${command.kind}');
     }
@@ -488,6 +494,67 @@ class ManagerOfflineOutbox extends ChangeNotifier {
         'accountName': supplier['name'], 'kind': 'purchase', 'amount': due,
         'balanceBefore': before, 'balanceAfter': before + due, 'referenceId': purchaseRef.id,
         'paid': payment, 'createdAt': now, 'actorId': actor});
+    });
+  }
+
+  Future<void> _commitStockTransfer(ManagerOfflineCommand command) async {
+    final p = command.payload, actor = command.ownerUid;
+    final productId = p['productId'] as String, branchId = p['branchId'] as String;
+    final quantity = p['quantity'] as int;
+    if (branchId.isEmpty || branchId == 'main' || quantity <= 0) throw StateError('بيانات تحويل المخزون غير صحيحة');
+    final mainRef = db.collection('stock').doc('main_$productId');
+    final branchRef = db.collection('stock').doc('${branchId}_$productId');
+    final productRef = db.collection('products').doc(productId);
+    final outRef = db.collection('stockMovements').doc('${command.id}_out');
+    final inRef = db.collection('stockMovements').doc('${command.id}_in');
+    await db.runTransaction((tx) async {
+      final out = await tx.get(outRef), incoming = await tx.get(inRef);
+      if (out.exists && incoming.exists) return;
+      if (out.exists || incoming.exists) throw StateError('تحويل المخزون مسجل جزئيًا؛ راجعه يدويًا');
+      final user = (await tx.get(db.collection('users').doc(actor))).data();
+      final main = await tx.get(mainRef), branch = await tx.get(branchRef), product = await tx.get(productRef);
+      if (user?['role'] != 'owner' || user?['active'] != true) throw StateError('تحويل المخزون متاح للمدير فقط');
+      if (!product.exists || product.data()?['active'] != true) throw StateError('الصنف غير موجود أو غير نشط');
+      final available = (main.data()?['quantity'] as num?)?.toInt() ?? 0;
+      final branchBefore = (branch.data()?['quantity'] as num?)?.toInt() ?? 0;
+      if (available < quantity) throw StateError('المخزون الرئيسي لا يكفي للتحويل');
+      final name = product.data()?['name'] ?? productId, now = FieldValue.serverTimestamp();
+      tx.set(mainRef, {'branchId': 'main', 'productId': productId, 'quantity': available - quantity}, SetOptions(merge: true));
+      tx.set(branchRef, {'branchId': branchId, 'productId': productId, 'quantity': branchBefore + quantity}, SetOptions(merge: true));
+      tx.set(outRef, {'productId': productId, 'productName': name, 'branchId': 'main', 'kind': 'transfer_out',
+        'quantity': -quantity, 'balanceAfter': available - quantity, 'referenceId': command.id, 'actorId': actor, 'createdAt': now});
+      tx.set(inRef, {'productId': productId, 'productName': name, 'branchId': branchId, 'kind': 'transfer_in',
+        'quantity': quantity, 'balanceAfter': branchBefore + quantity, 'referenceId': command.id, 'actorId': actor, 'createdAt': now});
+    });
+  }
+
+  Future<void> _commitStockAdjustment(ManagerOfflineCommand command) async {
+    final p = command.payload, actor = command.ownerUid;
+    final productId = p['productId'] as String, target = p['target'] as int, expected = p['expected'] as int;
+    final stockRef = db.collection('stock').doc('main_$productId');
+    final adjustmentRef = db.collection('stockAdjustments').doc(command.id);
+    final movementRef = db.collection('stockMovements').doc('${command.id}_movement');
+    await db.runTransaction((tx) async {
+      final adjustment = await tx.get(adjustmentRef);
+      if (adjustment.exists) {
+        if (adjustment.data()?['actorId'] == actor && adjustment.data()?['productId'] == productId &&
+            adjustment.data()?['after'] == target) return;
+        throw StateError('رقم التسوية مستخدم في حركة مختلفة');
+      }
+      final user = (await tx.get(db.collection('users').doc(actor))).data();
+      final product = await tx.get(db.collection('products').doc(productId)), stock = await tx.get(stockRef);
+      if (user?['role'] != 'owner' || user?['active'] != true) throw StateError('تسوية المخزون متاحة للمدير فقط');
+      if (!product.exists || product.data()?['active'] != true) throw StateError('الصنف غير موجود أو غير نشط');
+      final before = (stock.data()?['quantity'] as num?)?.toInt() ?? 0;
+      if (before != expected) throw StateError('الرصيد تغير منذ تسجيل التسوية؛ تحتاج مراجعة المدير');
+      if (before == target) throw StateError('الرصيد الجديد مطابق للحالي');
+      final delta = target - before, name = product.data()?['name'] ?? productId, now = FieldValue.serverTimestamp();
+      tx.set(stockRef, {'branchId': 'main', 'productId': productId, 'quantity': target}, SetOptions(merge: true));
+      tx.set(adjustmentRef, {'productId': productId, 'productName': name, 'branchId': 'main',
+        'before': before, 'after': target, 'delta': delta, 'reason': p['reason'], 'actorId': actor, 'createdAt': now});
+      tx.set(movementRef, {'productId': productId, 'productName': name, 'branchId': 'main',
+        'kind': 'adjustment', 'quantity': delta, 'balanceAfter': target, 'reason': p['reason'],
+        'actorId': actor, 'createdAt': now});
     });
   }
 
