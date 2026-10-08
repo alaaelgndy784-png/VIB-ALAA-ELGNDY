@@ -368,6 +368,7 @@ service cloud.firestore {
       allow create: if purchasingStaff() && staffPurchaseStock(id, 0);
       allow update: if purchasingStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity','lastPurchaseId']) && staffPurchaseStock(id, resource.data.quantity);
     }
+    // Receipt permission-denied follow-up: republish the validated employee receipt rules.
     match /receipts/{id} {
       allow read: if owner();
       allow create: if owner() && receiptInvoiceValid(request.resource.data, id) && validReceiptDate(request.resource.data);
