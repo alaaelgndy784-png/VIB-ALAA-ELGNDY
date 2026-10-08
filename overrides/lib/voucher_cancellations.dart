@@ -92,13 +92,13 @@ Future<void> cancelReceiptVoucher(
     details: 'سيظل السند الأصلي محفوظًا. سيُعاد المبلغ إلى مديونية العميل ويُخصم من الصندوق.',
   );
   if (reason == null || !context.mounted) return;
+  final marker = db.collection('voucherCancellations').doc('receipt_$receiptId');
+  final cancellationCustomerMovement = db.collection('accountMovements').doc();
+  final cancellationCashMovement = db.collection('accountMovements').doc();
   try {
     final actor = FirebaseAuth.instance.currentUser?.uid;
     if (actor == null) throw StateError('سجّل الدخول كمدير أولًا');
-    final marker = db.collection('voucherCancellations').doc('receipt_$receiptId');
     final receiptRef = db.collection('receipts').doc(receiptId);
-    final cancellationCustomerMovement = db.collection('accountMovements').doc();
-    final cancellationCashMovement = db.collection('accountMovements').doc();
     await db.runTransaction((tx) async {
       final markerSnapshot = await tx.get(marker);
       final receiptSnapshot = await tx.get(receiptRef);
@@ -215,13 +215,13 @@ Future<void> cancelSupplierPaymentVoucher(
     details: 'سيظل السند الأصلي محفوظًا. سيُعاد المبلغ إلى الصندوق وتُعاد مديونية المورد.',
   );
   if (reason == null || !context.mounted) return;
+  final marker = db.collection('voucherCancellations').doc('supplierPayment_$movementId');
+  final cancellationSupplierMovement = db.collection('accountMovements').doc();
+  final cancellationCashMovement = db.collection('accountMovements').doc();
   try {
     final actor = FirebaseAuth.instance.currentUser?.uid;
     if (actor == null) throw StateError('سجّل الدخول كمدير أولًا');
-    final marker = db.collection('voucherCancellations').doc('supplierPayment_$movementId');
     final voucherRef = db.collection('accountMovements').doc(movementId);
-    final cancellationSupplierMovement = db.collection('accountMovements').doc();
-    final cancellationCashMovement = db.collection('accountMovements').doc();
     await db.runTransaction((tx) async {
       final markerSnapshot = await tx.get(marker);
       final voucherSnapshot = await tx.get(voucherRef);
