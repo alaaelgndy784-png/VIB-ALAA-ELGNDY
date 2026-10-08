@@ -49,6 +49,7 @@ part 'business_reports.dart';
 part 'invoice_lookup.dart';
 part 'account_statements.dart';
 part 'staff_purchases.dart';
+part 'partial_sales_returns.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -3690,6 +3691,7 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
     if(canPrint && data['internalNumber'] is int)ListTile(leading:const Icon(Icons.qr_code,color:gold),title:const Text('طباعة باركود الفاتورة'),onTap:(){Navigator.pop(c);printInvoiceBarcode(context,type,id,data);}),
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
     if (type == 'sales') ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال الفاتورة PDF على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
+    if (type == 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.assignment_return, color: Colors.orangeAccent), title: const Text('إرجاع صنف من الفاتورة'), onTap: () { Navigator.pop(c); confirmPartialSalesReturn(context, id); }),
     if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
   ])));
 }
@@ -4195,6 +4197,16 @@ Future<void> confirmReturn(BuildContext context, String type, String id, Map<Str
   try {
     final current = (await db.collection(type).doc(id).get(const GetOptions(source: Source.server))).data();
     if (current == null || current['status'] == 'returned' || !visibleAfterReset(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    if (type == 'sales') {
+      final priorReturns = await db.collection('salesReturns').where('sourceInvoiceId', isEqualTo: id)
+          .get(const GetOptions(source: Source.server));
+      if (priorReturns.docs.any((d) => d.data()['returnType'] == 'partial')) {
+        if (context.mounted) await showInvoiceSaveProblem(context,
+          'بدأ إرجاع أصناف منفردة من هذه الفاتورة. أكمل إرجاع الكميات المتبقية من زر «إرجاع صنف من الفاتورة» حتى لا يتكرر الخصم أو رد المبلغ.',
+          title: 'أكمل المرتجع الجزئي', button: 'تمام');
+        return;
+      }
+    }
     if(type=='sales' && ((current['onlinePaid'] as num?)??0)>0){
       if(context.mounted){await showInvoiceSaveProblem(context,'الفاتورة لها سداد بالكارت. رد المبلغ من سجل جيديا وانتظر تأكيده قبل إرجاع الفاتورة.',title:'رد الكارت أولًا',button:'تمام');
         if(context.mounted)await openGeideaPayments(context,invoiceId:id);}

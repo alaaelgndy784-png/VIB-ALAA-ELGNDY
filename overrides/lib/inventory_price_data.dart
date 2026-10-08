@@ -21,3 +21,37 @@ List<Map<String, dynamic>> groupedReturnItems(List<Map<String, dynamic>> items) 
   if (groups.isEmpty || groups.length > 50) throw StateError('عدد أصناف المرتجع غير صحيح');
   return groups.values.toList();
 }
+
+int partialReturnCashCents({required int valueCents, required int cashAvailableCents, required int debtAvailableCents}) {
+  if (valueCents < 0 || cashAvailableCents < 0 || debtAvailableCents < 0) {
+    throw StateError('قيمة المرتجع أو رصيد التسوية غير صحيح');
+  }
+  final available = cashAvailableCents + debtAvailableCents;
+  if (valueCents > available) throw StateError('قيمة المرتجع أكبر من المتبقي من الفاتورة');
+  if (available == 0) {
+    if (valueCents == 0) return 0;
+    throw StateError('لا يوجد مبلغ متاح لتسوية المرتجع');
+  }
+  if (valueCents == available) return cashAvailableCents;
+  return (valueCents * cashAvailableCents / available).round();
+}
+
+Map<int, int> returnedQuantitiesBySourceLine(List<Map<String, dynamic>> returns) {
+  final result = <int, int>{};
+  for (final record in returns) {
+    final items = record['items'];
+    if (items is! List) continue;
+    for (final raw in items) {
+      if (raw is! Map) continue;
+      final index = raw['sourceItemIndex'];
+      final quantity = raw['quantity'];
+      if (index is! num || index < 0 || index != index.round() || quantity is! num ||
+          !quantity.isFinite || quantity <= 0 || quantity != quantity.round()) {
+        throw StateError('بيانات المرتجع السابق غير صحيحة');
+      }
+      final key = index.toInt();
+      result[key] = (result[key] ?? 0) + quantity.toInt();
+    }
+  }
+  return result;
+}
