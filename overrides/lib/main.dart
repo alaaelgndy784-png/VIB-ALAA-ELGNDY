@@ -1186,19 +1186,31 @@ Future<void> stockDialog(BuildContext context, String branchId) async {
   await showDialog<void>(context: context, builder: (c) => AlertDialog(title: const Text('نقل من المخزون الرئيسي'), content: Column(mainAxisSize: MainAxisSize.min, children: [TextField(controller: id, decoration: const InputDecoration(labelText: 'رمز المنتج')), TextField(controller: qty, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الكمية'))]), actions: [FilledButton(onPressed: () async {
     final q = int.tryParse(qty.text), p = id.text.trim(); if (q == null || q <= 0 || p.isEmpty) return;
     if (branchId == 'main') { ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اختر فرعًا مختلفًا عن المخزون الرئيسي'))); return; }
+    final transfer = db.collection('stockMovements').doc();
     try { await db.runTransaction((tx) async {
       final mainRef = db.collection('stock').doc('main_$p'), branchRef = db.collection('stock').doc('${branchId}_$p');
       final main = await tx.get(mainRef), branch = await tx.get(branchRef), product = await tx.get(db.collection('products').doc(p));
       if (!product.exists || product.data()?['active'] != true) throw Exception('الصنف غير موجود أو غير نشط');
       final available = (main.data()?['quantity'] as num?)?.toInt() ?? 0;
       if (available < q) throw Exception('المخزون الرئيسي غير كافٍ');
+      final branchAfter = ((branch.data()?['quantity'] as num?)?.toInt() ?? 0) + q, actor = FirebaseAuth.instance.currentUser!.uid;
       tx.set(mainRef, {'branchId': 'main', 'productId': p, 'quantity': available - q});
-      tx.set(branchRef, {'branchId': branchId, 'productId': p, 'quantity': ((branch.data()?['quantity'] as num?)?.toInt() ?? 0) + q});
-      final transferId = db.collection('stockMovements').doc().id;
-      tx.set(db.collection('stockMovements').doc(), {'productId': p, 'productName': product.data()?['name'] ?? p, 'branchId': 'main', 'kind': 'transfer_out', 'quantity': -q, 'balanceAfter': available - q, 'referenceId': transferId, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
-      tx.set(db.collection('stockMovements').doc(), {'productId': p, 'productName': product.data()?['name'] ?? p, 'branchId': branchId, 'kind': 'transfer_in', 'quantity': q, 'balanceAfter': ((branch.data()?['quantity'] as num?)?.toInt() ?? 0) + q, 'referenceId': transferId, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
+      tx.set(branchRef, {'branchId': branchId, 'productId': p, 'quantity': branchAfter});
+      tx.set(db.collection('stockMovements').doc('${transfer.id}_out'), {'productId': p, 'productName': product.data()?['name'] ?? p, 'branchId': 'main', 'kind': 'transfer_out', 'quantity': -q, 'balanceAfter': available - q, 'referenceId': transfer.id, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+      tx.set(db.collection('stockMovements').doc('${transfer.id}_in'), {'productId': p, 'productName': product.data()?['name'] ?? p, 'branchId': branchId, 'kind': 'transfer_in', 'quantity': q, 'balanceAfter': branchAfter, 'referenceId': transfer.id, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
     }); if (c.mounted) Navigator.pop(c);
-    } catch (e) { if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('$e'))); }
+    } catch (e) {
+      if (ManagerOfflineOutbox.isOfflineError(e)) {
+        try {
+          final synced = await submitManagerOfflineCommand(id:transfer.id,kind:'stockTransfer',payload:{'productId':p,'branchId':branchId,'quantity':q});
+          if (!c.mounted) return;
+          Navigator.pop(c);
+          if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(synced ? 'تمت مزامنة التحويل.' : 'حُفظ التحويل على الجهاز وينتظر الاتصال.')));
+          return;
+        } catch (queueError) { if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text('تعذر حفظ التحويل للمزامنة: $queueError'))); }
+      }
+      if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('$e')));
+    }
   }, child: const Text('نقل'))]));
 }
 
@@ -2549,22 +2561,37 @@ Future<void> mainStockDialog(BuildContext context, String productId, String name
         return;
       }
       try {
+        final adjustment = db.collection('stockAdjustments').doc();
         await db.runTransaction((tx) async {
           final snapshot = await tx.get(stockRef);
           final before = (snapshot.data()?['quantity'] as num?)?.toInt() ?? 0;
           if (before != original) throw Exception('الرصيد اتغير؛ افتح التسوية مرة تانية');
           if (before == target) throw Exception('الرصيد الجديد مطابق للحالي');
+          final actor = FirebaseAuth.instance.currentUser!.uid;
           tx.set(stockRef, {'branchId': 'main', 'productId': productId, 'quantity': target});
-          tx.set(db.collection('stockAdjustments').doc(), {
+          tx.set(adjustment, {
             'productId': productId, 'productName': name, 'branchId': 'main',
             'before': before, 'after': target, 'delta': target - before,
-            'reason': reason.text.trim(), 'actorId': FirebaseAuth.instance.currentUser!.uid,
+            'reason': reason.text.trim(), 'actorId': actor,
             'createdAt': FieldValue.serverTimestamp(),
           });
-          tx.set(db.collection('stockMovements').doc(), {'productId': productId, 'productName': name, 'branchId': 'main', 'kind': 'adjustment', 'quantity': target - before, 'balanceAfter': target, 'reason': reason.text.trim(), 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': FieldValue.serverTimestamp()});
+          tx.set(db.collection('stockMovements').doc('${adjustment.id}_movement'), {'productId': productId, 'productName': name, 'branchId': 'main', 'kind': 'adjustment', 'quantity': target - before, 'balanceAfter': target, 'reason': reason.text.trim(), 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
         });
         if (c.mounted) Navigator.pop(c);
-      } catch (e) { if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر التسوية: $e'))); }
+      } catch (e) {
+        if (ManagerOfflineOutbox.isOfflineError(e)) {
+          try {
+            final synced = await submitManagerOfflineCommand(id:adjustment.id,kind:'stockAdjustment',payload:{
+              'productId':productId,'target':target,'expected':original,'reason':reason.text.trim(),
+            });
+            if (!c.mounted) return;
+            Navigator.pop(c);
+            if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text(synced ? 'تمت مزامنة التسوية.' : 'حُفظت التسوية على الجهاز وتنتظر الاتصال.')));
+            return;
+          } catch (queueError) { if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content:Text('تعذر حفظ التسوية للمزامنة: $queueError'))); }
+        }
+        if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر التسوية: $e')));
+      }
     }, child: const Text('حفظ التسوية'))],
   ));
 }
