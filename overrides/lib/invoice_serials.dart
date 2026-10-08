@@ -111,6 +111,6 @@ Future<void> initializeRequestedInvoiceSeries() {
       tx.set(sales,{'lastNumber':sn,'updatedAt':at});tx.set(purchases,{'lastNumber':pn,'updatedAt':at});
       tx.set(done,{'salesNext':sn+1,'purchasesNext':pn+1,'requestedSales':1223,'requestedPurchases':431,'actorId':uid,'createdAt':at});
     });
-    } catch(e) {_requestedSeriesInit.remove(uid);rethrow;}
+    } catch(e) {_requestedSeriesInit.remove(uid);if(ManagerOfflineOutbox.isOfflineError(e))return;rethrow;}
   });
 }
