@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - 'overrides/firebase/firestore.rules'
+      - 'overrides/firebase/rules-tests/**'
       - 'overrides/firebase/firebase.json'
       - '.github/workflows/deploy-firestore-rules.yml'
 
