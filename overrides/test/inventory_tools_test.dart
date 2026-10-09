@@ -25,6 +25,16 @@ void main() {
     expect(()=>adjustedInventoryPrice(100,101,increase:false),throwsStateError);
     expect(()=>adjustedInventoryPrice(-1,10,increase:true),throwsStateError);
   });
+  test('duplicate invoice lines return their combined quantity once', () {
+    final rows=groupedReturnItems([{'productId':'p','quantity':2},{'productId':'q','quantity':3},{'productId':'p','quantity':4}]);
+    expect(rows.length,2);expect(rows.first['quantity'],6);
+    const before=10;
+    expect(before+(rows.first['quantity'] as int),16);
+    expect(before-(rows.first['quantity'] as int),4);
+    for(final qty in [0,-1,1.5,double.nan]) {
+      expect(()=>groupedReturnItems([{'productId':'p','quantity':qty}]),throwsStateError);
+    }
+  });
   test('partial sale returns reject quantities already returned and split cash and debt safely', () {
     expect(returnedQuantitiesBySourceLine([
       {'items':[{'sourceItemIndex':0,'quantity':2},{'sourceItemIndex':1,'quantity':1}]},
@@ -35,16 +45,6 @@ void main() {
     expect(partialReturnCashCents(valueCents:10000,cashAvailableCents:6000,debtAvailableCents:4000),6000);
     expect(()=>partialReturnCashCents(valueCents:10001,cashAvailableCents:6000,debtAvailableCents:4000),throwsStateError);
     expect(()=>returnedQuantitiesBySourceLine([{'items':[{'sourceItemIndex':0,'quantity':0}]}]),throwsStateError);
-  });
-  test('duplicate invoice lines return their combined quantity once', () {
-    final rows=groupedReturnItems([{'productId':'p','quantity':2},{'productId':'q','quantity':3},{'productId':'p','quantity':4}]);
-    expect(rows.length,2);expect(rows.first['quantity'],6);
-    const before=10;
-    expect(before+(rows.first['quantity'] as int),16);
-    expect(before-(rows.first['quantity'] as int),4);
-    for(final qty in [0,-1,1.5,double.nan]) {
-      expect(()=>groupedReturnItems([{'productId':'p','quantity':qty}]),throwsStateError);
-    }
   });
   test('general supplier payments remain credit after a full return', () {
     final r=returnSettlement({'total':100,'paid':30,'due':70,'cashPosted':true},sales:false);

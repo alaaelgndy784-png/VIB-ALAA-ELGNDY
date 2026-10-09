@@ -2,6 +2,75 @@ part of 'main.dart';
 
 typedef SaleEntry = ({String id, String name, int qty, double price, double? cost, double discount, double basePrice});
 
+Future<void> submitManagerOfflineSale({required String id,required String branchId,required List<SaleEntry> entries,
+  required String customerId,required bool credit,required double paid,required double total,required String note,
+  required bool allowShortage,required bool allowBelowCost,required String overrideReason}) async {
+  final uid=FirebaseAuth.instance.currentUser!.uid;
+  final profile=(await db.collection('users').doc(uid).get(const GetOptions(source:Source.cache))).data();
+  final customer=customerId.isEmpty?null:(await db.collection('customers').doc(customerId).get(const GetOptions(source:Source.cache))).data();
+  if(profile?['active']!=true||profile?['role']!='owner'||(customerId.isNotEmpty&&(customer==null||customer['active']==false))||
+    (customerId.isEmpty&&(credit||((paid-total).abs()>0.000001)))) {
+    throw StateError('يلزم توفر بيانات المدير والعميل المحفوظة على الجهاز قبل تسجيل فاتورة دون اتصال');
+  }
+  final items=entries.map((e)=><String,dynamic>{'productId':e.id,'productName':e.name,'quantity':e.qty,
+    'unitPrice':e.price,'basePrice':e.basePrice,'discountPercent':e.discount}).toList();
+  final payload=<String,dynamic>{'id':id,'employeeId':uid,'employeeName':'${profile?['name']??''}',
+    'branchId':branchId,'customerId':customerId,'customerName':'${customer?['name']??''}',
+    'credit':credit,'paid':paid,'items':items,'total':total,'status':'pending',
+    'managerOffline':true,'note':note,'allowShortage':allowShortage,'allowBelowCost':allowBelowCost,
+    'overrideReason':overrideReason,'createdAt':FieldValue.serverTimestamp(),
+    'requestKey':jsonEncode({'customerId':customerId,'credit':credit,'paid':paid,'items':items})};
+  final write=db.collection('pendingSales').doc(id).set(payload);
+  // Firestore persists this local write immediately; its future may remain
+  // pending until the server acknowledges it after reconnection.
+  unawaited(write.then<void>((_) {},onError:(Object error,StackTrace _) {
+    debugPrint('VIB offline sale sync failed for $id: $error');
+  }));
+}
+
+class ManagerOfflineSaleSync {
+  ManagerOfflineSaleSync._();
+  static final instance=ManagerOfflineSaleSync._();
+  StreamSubscription<QuerySnapshot<Map<String,dynamic>>>? _subscription;
+  final Set<String> _inFlight={},_failedThisSession={};
+  void start() {
+    if(_subscription!=null)return;
+    _subscription=pendingSalesQuery(true).snapshots(includeMetadataChanges:true).listen((snapshot){
+      if(snapshot.metadata.isFromCache||snapshot.metadata.hasPendingWrites)return;
+      for(final doc in snapshot.docs) {
+        if(doc.data()['managerOffline']!=true||doc.data()['status']!='pending'||doc.metadata.hasPendingWrites||
+          _inFlight.contains(doc.id)||_failedThisSession.contains(doc.id))continue;
+        _inFlight.add(doc.id);
+        unawaited(_process(doc));
+      }
+    },onError:(Object _){});
+  }
+  Future<void> _process(QueryDocumentSnapshot<Map<String,dynamic>> doc) async {
+    try {await _syncOne(doc);_failedThisSession.remove(doc.id);}
+    catch (error) {
+      // Keep the draft intact for manager review; never discard an offline invoice.
+      if(!isTemporaryFirestoreOffline(error))_failedThisSession.add(doc.id);
+    } finally {_inFlight.remove(doc.id);}
+  }
+  Future<void> _syncOne(QueryDocumentSnapshot<Map<String,dynamic>> doc) async {
+    final data=doc.data();
+    final proposal=PendingSaleData.parse(data);
+    final rawItems=(data['items'] as List).map((x)=>Map<String,dynamic>.from(x as Map)).toList();
+    final entries=<SaleEntry>[];
+    for(final line in proposal.lines) {
+      final item=rawItems.firstWhere((x)=>x['productId']==line.id);
+      entries.add((id:line.id,name:'${item['productName']??''}',
+        qty:line.quantity,price:line.price,cost:null,discount:line.discount,basePrice:line.basePrice));
+    }
+    await commitGroupedSale(owner:true,branchId:'${data['branchId']}',entries:entries,total:proposal.total,
+      payment:proposal.paid,credit:proposal.credit,customerId:proposal.customerId,
+      saleRef:db.collection('sales').doc(doc.id),invoiceNote:'${data['note']??''}',
+      allowShortage:data['allowShortage']==true,allowBelowCost:data['allowBelowCost']==true,
+      overrideReason:'${data['overrideReason']??''}',pendingRef:doc.reference);
+  }
+  void stop(){_subscription?.cancel();_subscription=null;_inFlight.clear();_failedThisSession.clear();}
+}
+
 // The owner commits stock, accounts, invoice number and approval in one transaction.
 Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required String branchId,
   required List<SaleEntry> entries, required double total, required double payment,
@@ -34,8 +103,10 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                   }
                   return priorSale;
                 }
+                final managerOffline=pending?['managerOffline']==true && owner && pending?['employeeId']==actor;
                 if (pendingRef != null && (pending == null || pending['status'] != 'pending' ||
-                    sellerProfile?['active'] != true || sellerProfile?['role'] != 'employee' || sellerProfile?['branchId'] != actualBranch)) {
+                    sellerProfile?['active'] != true || (managerOffline ? (sellerProfile?['role']!='owner') : (sellerProfile?['role']!='employee')) ||
+                    (!managerOffline && sellerProfile?['branchId'] != actualBranch))) {
                   throw Exception('الطلب لم يعد معلقًا أو حساب الموظف غير مفعل');
                 }
                 if(pending != null) {
@@ -50,7 +121,7 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                 for (final e in entries) {
                   final product = (await tx.get(db.collection('products').doc(e.id))).data();
                   if (product == null || product['active'] != true) throw Exception('الصنف غير متاح');
-                  if ((!owner || pending != null) && sellerProfile?['canEditSalePrice']!=true && ((product['price'] as num?)?.toDouble() != e.basePrice || (e.price-e.basePrice*(1-e.discount/100)).abs()>0.000001)) {
+                  if ((!owner || (pending != null && pending['managerOffline']!=true)) && sellerProfile?['canEditSalePrice']!=true && ((product['price'] as num?)?.toDouble() != e.basePrice || (e.price-e.basePrice*(1-e.discount/100)).abs()>0.000001)) {
                     throw Exception('سعر الصنف اتغير؛ افتح الفاتورة من جديد');
                   }
                   final cost = (product['purchasePrice'] as num?)?.toDouble();
@@ -267,12 +338,12 @@ class PendingSalesPage extends StatelessWidget {
           return ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0);
         });
       return Column(children:[
-        const Padding(padding:EdgeInsets.all(12),child:Text('فواتير الموظف فوق ٤ بنود تنتظر اعتماد المدير. الفواتير حتى ٤ بنود تُحفظ فورًا.',textAlign:TextAlign.center)),
+        const Padding(padding:EdgeInsets.all(12),child:Text('فواتير الموظف الكبيرة تنتظر اعتماد المدير. فواتير المدير التي سُجلت دون اتصال تُراجع وتُزامن تلقائيًا عند رجوع الإنترنت.',textAlign:TextAlign.center)),
         if(snapshot.data!.metadata.isFromCache)const Text('بيانات محفوظة على الجهاز؛ الحالة تتأكد عند الاتصال'),
         Expanded(child:rows.isEmpty?const Center(child:Text('لا توجد طلبات')):ListView(children:[for(final row in rows)
           Card(child:ListTile(leading:Icon(row.data()['status']=='approved'?Icons.check_circle:row.data()['status']=='rejected'?Icons.cancel:Icons.hourglass_top,color:gold),
             title:Text('${row.data()['customerName'] ?? ''} • ${row.data()['total'] ?? 0} ج.م'),
-            subtitle:Text('${owner ? '${row.data()['employeeName'] ?? ''} • ' : ''}${pendingSaleStatus(row.data()['status'])} • ${formatDate(row.data()['createdAt'])}'),
+            subtitle:Text('${owner ? '${row.data()['employeeName'] ?? ''} • ' : ''}${row.data()['managerOffline']==true?'فاتورة مدير تنتظر المزامنة':'${pendingSaleStatus(row.data()['status'])}'} • ${formatDate(row.data()['createdAt'])}'),
             trailing:owner && row.data()['status']=='rejected' ? IconButton(tooltip:'مسح الطلب من التطبيقين',icon:const Icon(Icons.delete_outline,color:Colors.redAccent),onPressed:()=>removeRejectedPendingSale(context,row.reference)) : null,
             onTap:()=>reviewPendingSale(context,row.reference,owner)))])),
       ]);

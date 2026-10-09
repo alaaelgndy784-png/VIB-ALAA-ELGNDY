@@ -42,6 +42,15 @@ void main() {
     final statement=summarizeAccountPeriod([row],{'name':'عميل','balance':80},DateTime(2026,10,1),DateTime(2026,10,3),supplier:false);
     expect(statement.opening,10000);expect(statement.closing,8000);expect(statement.rows.length,1);
   });
+  test('append-only receipt cancellation reverses the customer ledger without deleting the receipt',(){
+    final at=Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,2)));
+    final report=summarizeAccountPeriod([
+      {'id':'receipt','kind':'collection','amount':20,'balanceBefore':100,'balanceAfter':80,'createdAt':at},
+      {'id':'cancel','kind':'collectionCancellation','amount':20,'balanceBefore':80,'balanceAfter':100,'createdAt':Timestamp.fromDate(at.toDate().add(const Duration(minutes:5)))},
+    ],{'name':'عميل','balance':100},DateTime(2026,10,1),DateTime(2026,10,3),supplier:false);
+    expect(report.opening,10000);expect(report.closing,10000);expect(report.rows.length,2);
+    expect(report.increase,2000);expect(report.decrease,2000);
+  });
   testWidgets('staff percentage discount stays available with manual price locked',(tester)async{
     staffApp=true;addTearDown(()=>staffApp=false);
     final price=TextEditingController(text:'100'),qty=TextEditingController(text:'2');

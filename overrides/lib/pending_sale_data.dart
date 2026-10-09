@@ -35,10 +35,9 @@ class PendingSaleData {
       total+=qty*price;
     }
     final customer=data['customerId'],credit=data['credit'];
-    if(customer is! String || customer.isEmpty || customer.contains('/') || credit is! bool || !total.isFinite) {
-      throw const FormatException('اختر عميلًا مسجلًا وراجع طريقة الدفع');
-    }
     final paid=amount(data['paid']);
+    if(customer is! String || (customer.isNotEmpty && customer.contains('/')) || credit is! bool || !total.isFinite ||
+      (customer.isEmpty && (credit || (paid-total).abs()>0.000001))) throw const FormatException('اختر عميلًا مسجلًا للآجل وراجع طريقة الدفع');
     if(paid>total || (!credit && (paid-total).abs()>0.000001)) throw const FormatException('المدفوع غير صحيح');
     return PendingSaleData(lines,customer,credit,total,paid);
   }

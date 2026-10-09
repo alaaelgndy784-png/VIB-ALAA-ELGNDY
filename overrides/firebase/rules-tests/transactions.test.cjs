@@ -195,6 +195,24 @@ test('receipt explicitly linked to another invoice does not lock this invoice',a
 test('staff cannot replace invoice financial contents',async()=>{
  await seedEditableSale();await assertFails(editSaleBatch(env.authenticatedContext('staff').firestore()));
 });
+test('owner can atomically record a partial sales return on an invoice with a linked receipt',async()=>{
+ await seedEditableSale({receiptId:'linked'});
+ const db=env.authenticatedContext('owner').firestore(),b=writeBatch(db),ts=serverTimestamp();
+ b.set(doc(db,'salesReturns/partial1'),{sourceInvoiceId:'editable',returnType:'partial',sourceItemIndex:0,
+  items:[{sourceItemIndex:0,productId:'p0',productName:'Product0',quantity:1,unitPrice:12.35,lineTotal:12.35}],
+  total:12.35,cashRefund:0,debtReduction:12.35,branchId:'main',customerId:'customer',customerName:'Customer',
+  invoiceNumber:'1',internalNumber:1,invoiceBarcode:'',createdAt:ts,actorId:'owner'});
+ b.update(doc(db,'sales/editable'),{partialReturnQuantities:{'0':1},partialReturnTotal:12.35,
+  partialCashRefund:0,partialDebtReduction:12.35,lastPartialReturnId:'partial1'});
+ await assertSucceeds(b.commit());
+ assert.equal((await getDoc(doc(db,'sales/editable'))).data().partialReturnTotal,12.35);
+});
+test('owner cannot update partial-return summary without a matching return record',async()=>{
+ await seedEditableSale({receiptId:'linked'});
+ const db=env.authenticatedContext('owner').firestore();
+ await assertFails(setDoc(doc(db,'sales/editable'),{partialReturnQuantities:{'0':1},partialReturnTotal:12.35,
+  partialCashRefund:0,partialDebtReduction:12.35,lastPartialReturnId:'missing'},{merge:true}));
+});
 test('staff receipt links invoice atomically and prevents later edits',async()=>{
  await seedEditableSale();
  const db=env.authenticatedContext('staff').firestore(),b=writeBatch(db),ts=serverTimestamp();
@@ -394,7 +412,7 @@ test('revoked price permission and below cost both denied',async()=>{
 function datedReceipt(db,date,movementDate=date,createdAt=serverTimestamp()){
  const b=writeBatch(db),ts=serverTimestamp();
  b.set(doc(db,'receipts/r'),{customerId:'customer',customerName:'Customer',customerPhone:'010',amount:20,balanceBefore:100,balanceAfter:80,
- cashBefore:500,cashAfter:520,actorId:'staff',actorName:'Staff',branchId:'staffbranch',note:'Chosen date',paymentMethod:'تحويل إنستا باي',receiptNumber:'VIB-RC-20261008-ABCDEF',createdAt,receiptDate:date,customerMovementId:'rc',cashMovementId:'rk'});
+ cashBefore:500,cashAfter:520,actorId:'staff',actorName:'Staff',branchId:'staffbranch',note:'Chosen date',createdAt,receiptDate:date,customerMovementId:'rc',cashMovementId:'rk'});
  b.update(doc(db,'customers/customer'),{balance:80,lastReceiptId:'r',updatedAt:ts});
  b.update(doc(db,'settings/cash'),{balance:520,lastReceiptId:'r',updatedAt:ts});
  for(const cash of [false,true])b.set(doc(db,'accountMovements/'+(cash?'rk':'rc')),{accountType:cash?'cash':'customers',accountId:'customer',accountName:'Customer',kind:cash?'customerCollection':'collection',amount:20,...(cash?{delta:20}:{}),balanceBefore:cash?500:100,balanceAfter:cash?520:80,referenceId:'r',reason:'',actorId:'staff',branchId:'staffbranch',createdAt:ts,receiptDate:movementDate});
@@ -447,6 +465,32 @@ test('five and fifty item drafts have no financial effect before owner approval'
   assert.equal((await getDoc(doc(db,'settings/cash'))).data().balance,500);
   assert.equal((await getDoc(doc(db,'customers/customer'))).data().balance,100);
   assert.equal((await getDoc(doc(db,'sales/request'))).exists(),false);
+});
+test('manager can queue a sale draft for offline sync but employee cannot impersonate the manager queue',async()=>{
+  const owner=env.authenticatedContext('owner').firestore(),staff=env.authenticatedContext('staff').firestore();
+  const draft=pendingDraft({n:2,mutate:r=>Object.assign(r,{id:'offline-sale',employeeId:'owner',employeeName:'Owner',branchId:'main',
+    managerOffline:true,note:'',allowShortage:false,allowBelowCost:false,overrideReason:''})});
+  await assertSucceeds(setDoc(doc(owner,'pendingSales/offline-sale'),draft));
+  await assertFails(setDoc(doc(staff,'pendingSales/forged'),{...draft,id:'forged'}));
+  await assertFails(setDoc(doc(owner,'pendingSales/extra'),{...draft,id:'extra',unexpected:'field'}));
+});
+test('manager can queue a cash sale without a customer for offline sync',async()=>{
+  const db=env.authenticatedContext('owner').firestore();
+  const draft=pendingDraft({n:1,mutate:r=>Object.assign(r,{id:'cash-offline',employeeId:'owner',employeeName:'Owner',branchId:'main',
+    customerId:'',customerName:'',credit:false,paid:24.7,managerOffline:true,note:'',allowShortage:false,allowBelowCost:false,overrideReason:''})});
+  await assertSucceeds(setDoc(doc(db,'pendingSales/cash-offline'),draft));
+});
+test('only owner can queue cancellation for an existing receipt or supplier payment',async()=>{
+  await env.withSecurityRulesDisabled(async ctx=>{
+    const db=ctx.firestore();
+    await setDoc(doc(db,'receipts/r-cancel'),{customerId:'customer',amount:10});
+    await setDoc(doc(db,'accountMovements/p-cancel'),{kind:'payment',accountId:'supplier',amount:10});
+  });
+  const owner=env.authenticatedContext('owner').firestore(),staff=env.authenticatedContext('staff').firestore();
+  const request={type:'receipt',originalId:'r-cancel',actorId:'owner',status:'pending',createdAt:serverTimestamp()};
+  await assertSucceeds(setDoc(doc(owner,'managerOfflineVoucherCancellations/receipt_r-cancel'),request));
+  await assertFails(setDoc(doc(staff,'managerOfflineVoucherCancellations/receipt_r-cancel'),{...request,actorId:'staff'}));
+  await assertSucceeds(setDoc(doc(owner,'managerOfflineVoucherCancellations/payment_p-cancel'),{...request,type:'payment',originalId:'p-cancel'}));
 });
 test('only submitting staff or owner can read drafts; employees cannot approve, edit or delete',async()=>{
   const db=env.authenticatedContext('staff').firestore(),ref=doc(db,'pendingSales/request');await setDoc(ref,pendingDraft());
@@ -521,28 +565,4 @@ test('removed rejected proposal cannot be revived, approved, overwritten or perm
   await assertFails(setDoc(ref,{status:'approved',saleId:'request',reviewedBy:'owner',reviewedAt:serverTimestamp()},{merge:true}));
   await assertFails(setDoc(doc(env.authenticatedContext('staff').firestore(),'pendingSales/request'),pendingDraft()));
   await assertFails(deleteDoc(ref));await assert.rejects(approvePending(db));
-});
-
-
-test('owner partial sales return updates invoice only with its matching new return record',async()=>{
-  await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'sales/returnable'),{id:'returnable',status:'completed',branchId:'main',stockBranchId:'main',
-    customerId:'',total:20,partialReturnTotal:0,partialCashRefund:0,partialDebtReduction:0}));
-  const db=env.authenticatedContext('owner').firestore(),b=writeBatch(db),ts=serverTimestamp();
-  b.set(doc(db,'salesReturns/partial-1'),{sourceInvoiceId:'returnable',returnType:'partial',sourceItemIndex:0,
-    items:[{productId:'p0',productName:'Product0',quantity:1,unitPrice:10,lineTotal:10}],total:10,cashRefund:10,
-    debtReduction:0,branchId:'main',customerId:'',createdAt:ts,actorId:'owner'});
-  b.update(doc(db,'sales/returnable'),{partialReturnQuantities:{'0':1},partialReturnTotal:10,
-    partialCashRefund:10,partialDebtReduction:0,lastPartialReturnId:'partial-1'});
-  await assertSucceeds(b.commit());
-});
-test('owner partial return cannot change invoice totals or unrelated fields',async()=>{
-  await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'sales/returnable'),{id:'returnable',status:'completed',branchId:'main',stockBranchId:'main',
-    customerId:'',total:20,partialReturnTotal:0,partialCashRefund:0,partialDebtReduction:0}));
-  const db=env.authenticatedContext('owner').firestore(),b=writeBatch(db),ts=serverTimestamp();
-  b.set(doc(db,'salesReturns/partial-3'),{sourceInvoiceId:'returnable',returnType:'partial',sourceItemIndex:0,
-    items:[{productId:'p0',productName:'Product0',quantity:1,unitPrice:10,lineTotal:10}],total:10,cashRefund:10,
-    debtReduction:0,branchId:'main',customerId:'',createdAt:ts,actorId:'owner'});
-  b.update(doc(db,'sales/returnable'),{partialReturnQuantities:{'0':1},partialReturnTotal:10,
-    partialCashRefund:10,partialDebtReduction:0,lastPartialReturnId:'partial-3',total:0});
-  await assertFails(b.commit());
 });

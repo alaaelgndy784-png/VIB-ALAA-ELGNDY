@@ -28,4 +28,10 @@ void main() {
     final draft=request(5);draft['credit']=false;draft['paid']=5*22.23;
     expect(PendingSaleData.parse(draft).paid,closeTo(111.15,0.000001));
   });
+  test('cash offline sale can be queued without a customer; credit sale still requires one',() {
+    final draft=request(1);draft['customerId']='';draft['credit']=false;draft['paid']=22.23;
+    expect(PendingSaleData.parse(draft).customerId,'');
+    draft['credit']=true;
+    expect(()=>PendingSaleData.parse(draft),throwsFormatException);
+  });
 }

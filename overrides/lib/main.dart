@@ -12,7 +12,6 @@ import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:cloud_functions/cloud_functions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:intl/intl.dart' show DateFormat;
@@ -50,7 +49,7 @@ part 'business_reports.dart';
 part 'invoice_lookup.dart';
 part 'account_statements.dart';
 part 'staff_purchases.dart';
-part 'partial_sales_returns.dart';
+part 'voucher_cancellations.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -85,7 +84,11 @@ Future<FirebaseOptions> _firebaseOptionsForThisApp() async {
 
 Future<FirebaseApp> _initializeVibFirebase() async {
   final options = await _firebaseOptionsForThisApp();
-  return Firebase.initializeApp(options: options);
+  final app = await Firebase.initializeApp(options: options);
+  // Keep Firestore's Android cache enabled so previously loaded business data
+  // remains available for browsing while the device is offline.
+  FirebaseFirestore.instance.settings = const Settings(persistenceEnabled: true);
+  return app;
 }
 
 class VibBootstrap extends StatefulWidget {
@@ -119,6 +122,9 @@ bool visibleAfterReset(Map<String, dynamic> data) {
   if (createdAt is! Timestamp) return false;
   return createdAt.compareTo(resetAt) >= 0;
 }
+
+bool isTemporaryFirestoreOffline(Object error) => error is FirebaseException &&
+    (error.code=='unavailable'||error.code=='deadline-exceeded'||error.code=='network-request-failed');
 
 class VibApp extends StatelessWidget {
   const VibApp({super.key});
@@ -479,6 +485,27 @@ ThemeData managerTheme(BuildContext context) => Theme.of(context).copyWith(
   cardTheme: const CardThemeData(color: managerSurface, elevation: 0),
 );
 
+class OfflineCacheNotice extends StatelessWidget {
+  const OfflineCacheNotice({super.key});
+  @override Widget build(BuildContext context)=>StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
+    stream:db.collection('settings').doc('cash').snapshots(includeMetadataChanges:true),
+    builder:(context,snapshot){
+      if(snapshot.hasError)return const SizedBox.shrink();
+      if(!snapshot.hasData||!snapshot.data!.metadata.isFromCache)return const SizedBox.shrink();
+      final pending=snapshot.data!.metadata.hasPendingWrites;
+      return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:pendingSalesQuery(true).snapshots(includeMetadataChanges:true),builder:(context,queue){
+        final queuedSales=queue.data?.docs.where((d)=>d.data()['managerOffline']==true&&d.data()['status']=='pending').length??0;
+        return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:db.collection('managerOfflineVoucherCancellations').snapshots(includeMetadataChanges:true),builder:(context,vouchers){
+          final queuedVouchers=vouchers.data?.docs.where((d)=>d.data()['status']=='pending').length??0;
+          final queued=queuedSales+queuedVouchers;
+          final message=queued>0?'وضع غير متصل • $queued عملية تنتظر المزامنة':pending?'وضع غير متصل • توجد تغييرات تنتظر المزامنة':'وضع غير متصل • المعروض من البيانات المحفوظة على هذا الجهاز';
+          return Container(width:double.infinity,color:(pending||queued>0)?const Color(0xFF5A3B12):const Color(0xFF3B321C),padding:const EdgeInsets.symmetric(horizontal:12,vertical:7),
+            child:Text(message,textAlign:TextAlign.center,style:const TextStyle(color:Colors.white,fontSize:12)));
+        });
+      });
+    });
+}
+
 class Home extends StatefulWidget {
   final String uid, role, branchId, name;
   final bool canPurchase,canViewCustomerBalance,canViewCustomerStatement;
@@ -490,8 +517,8 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> {
   int page = 0;
-  @override void initState() { super.initState(); if(widget.role == 'owner') ChequeReminders.instance.watch(widget.uid); ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
-  @override void dispose() { ChatAlerts.instance.stop(); if(widget.role == 'owner') ChequeReminders.instance.stop(); super.dispose(); }
+  @override void initState() { super.initState(); if(widget.role == 'owner') {ChequeReminders.instance.watch(widget.uid);ManagerOfflineSaleSync.instance.start();ManagerOfflineVoucherSync.instance.start();} ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
+  @override void dispose() { ChatAlerts.instance.stop(); if(widget.role == 'owner') {ChequeReminders.instance.stop();ManagerOfflineSaleSync.instance.stop();ManagerOfflineVoucherSync.instance.stop();} super.dispose(); }
 
   void openPage(String title, Widget child) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
@@ -518,7 +545,7 @@ class _HomeState extends State<Home> {
               onPressed: () => openPage('الضبط', const Management()), icon: const Icon(Icons.settings_outlined))),
           ],
         ),
-        body: OwnerDashboard(uid: widget.uid, branchId: widget.branchId, openPage: openPage),
+        body: Column(children:[const OfflineCacheNotice(),Expanded(child:OwnerDashboard(uid: widget.uid, branchId: widget.branchId, openPage: openPage))]),
       ));
     }
 
@@ -949,7 +976,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           },
         ),
         body:checkout ? ListView(children:[
-          if(!owner) const Padding(padding:EdgeInsets.all(8),child:Text('فاتورة الموظف تُحفظ مباشرة وتُحدّث المخزون والحسابات، حتى 50 صنفًا مختلفًا.')),
+          if(!owner && lines.length > 4) const Padding(padding:EdgeInsets.all(8),child:Text('أكثر من ٤ بنود: تُرسل للمدير، ولا تخصم المخزون أو تسجل الحسابات حتى الاعتماد.')),
           PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
             paid:paid,enabled:!saving,partyLabel:'العميل',
             onModeChanged:(value)=>update(() => credit=value),onChanged:()=>update(() {})),
@@ -1031,26 +1058,30 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
             update(() => saving = true);
             try {
+              if (!owner && entries.length > 4) {
+                await submitPendingSale(saleRef.id, entries, customerId, credit, payment, total);
+                if (c.mounted) Navigator.pop(c);
+                if (context.mounted) await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
+                  title:const Text('تم إرسال الفاتورة للمدير'),
+                  content:const Text('في انتظار الاعتماد. لم يتم خصم المخزون أو تسجيل الحسابات بعد. تابع الحالة من المبيعات ← فواتير الموظف.'),
+                  actions:[TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('تم'))]));
+                return;
+              }
               Map<String,dynamic> savedInvoice;
-              if (!owner) {
-                await FirebaseFunctions.instanceFor(app: Firebase.app(), region: 'us-central1')
-                    .httpsCallable('createStaffSale').call(<String,dynamic>{
-                  'requestId': saleRef.id,
-                  'customerId': customerId,
-                  'credit': credit,
-                  'paid': payment,
-                  'items': entries.map((e) => <String,dynamic>{
-                    'productId': e.id, 'quantity': e.qty, 'unitPrice': e.price,
-                    'basePrice': e.basePrice, 'discountPercent': e.discount,
-                  }).toList(),
-                });
-                final saved = await saleRef.get(const GetOptions(source: Source.server));
-                if (!saved.exists) throw StateError('لم يؤكد الخادم حفظ الفاتورة');
-                savedInvoice = saved.data()!;
-              } else {
+              try {
                 savedInvoice = await commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
                   total:total,payment:payment,credit:credit,customerId:customerId,saleRef:saleRef,
                   invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
+              } catch(e) {
+                if(!owner||!isTemporaryFirestoreOffline(e)) rethrow;
+                await submitManagerOfflineSale(id:saleRef.id,branchId:branchId,entries:entries,customerId:customerId,
+                  credit:credit,paid:payment,total:total,note:note.text.trim(),allowShortage:allowShortage,
+                  allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
+                if(c.mounted)Navigator.pop(c);
+                if(context.mounted)await showInvoiceSaveProblem(context,
+                  'حُفظت الفاتورة محليًا في قائمة المزامنة. سيُخصم المخزون ويتحدث الحساب والصندوق بعد رجوع الإنترنت واعتماد العملية على الخادم.',
+                  title:'الفاتورة تنتظر المزامنة',button:'تمام',success:true);
+                return;
               }
 
               if (c.mounted) Navigator.pop(c);
@@ -1062,7 +1093,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 await showInvoiceSaveProblem(c, message);
               }
             }
-          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? 'تأكيد الحفظ' : 'حفظ الفاتورة')),
+          }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? (!owner && lines.length > 4 ? 'إرسال للمدير' : 'تأكيد الحفظ') : (!owner && lines.length > 4 ? 'مراجعة وإرسال' : 'حفظ الفاتورة'))),
         ],
       );
     }),
@@ -1128,7 +1159,7 @@ class _SalesState extends State<Sales> {
               style: TextStyle(color:owner ? Colors.greenAccent : Colors.lightBlueAccent,fontWeight:FontWeight.bold,fontSize:16)),
             Text('رقم الفاتورة: ${invoiceDisplayNumber('sales',d.id,sale)}'),
           ]),
-          subtitle: Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجع' : ''}'),
+          subtitle: Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${sale['partialReturnTotal']} ج.م' : ''}'),
           trailing: Text('${sale['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
           onTap: () => invoiceActions(context, 'sales', d.id, sale, canReturn: owner),
         ));
@@ -2377,7 +2408,7 @@ class AccountMovements extends StatelessWidget {
     });
 }
 
-String movementName(String kind) => switch (kind) { 'purchase' => 'مشتريات', 'payment' => 'سداد مورد', 'collection' => 'تحصيل عميل', 'sale' => 'مبيعات', 'sales_return' => 'مرتجع مبيعات', 'purchase_return' => 'مرتجع مشتريات', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر', 'adjustment' => 'تسوية مخزون', 'saleCorrection' => 'تعديل فاتورة بيع', 'purchaseCorrection' => 'تعديل فاتورة مشتريات', 'purchasePayment' => 'سداد فاتورة مشتريات', 'supplierPayment' => 'سداد مورد', 'customerCollection' => 'تحصيل عميل', 'deposit' => 'إيداع بالصندوق', 'withdrawal' => 'سحب من الصندوق', 'expense' => 'مصروف', 'opening' => 'رصيد افتتاحي', _ => kind };
+String movementName(String kind) => switch (kind) { 'purchase' => 'مشتريات', 'payment' => 'سداد مورد', 'collection' => 'تحصيل عميل', 'sale' => 'مبيعات', 'sales_return' => 'مرتجع مبيعات', 'purchase_return' => 'مرتجع مشتريات', 'transfer_in' => 'تحويل وارد', 'transfer_out' => 'تحويل صادر', 'adjustment' => 'تسوية مخزون', 'saleCorrection' => 'تعديل فاتورة بيع', 'purchaseCorrection' => 'تعديل فاتورة مشتريات', 'purchasePayment' => 'سداد فاتورة مشتريات', 'supplierPayment' => 'سداد مورد', 'customerCollection' => 'تحصيل عميل', 'collectionCancellation' => 'إلغاء سند قبض', 'paymentCancellation' => 'إلغاء سند صرف', 'deposit' => 'إيداع بالصندوق', 'withdrawal' => 'سحب من الصندوق', 'expense' => 'مصروف', 'opening' => 'رصيد افتتاحي', _ => kind };
 
 Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynamic> data) async {
   final name = TextEditingController(text: '${data['name'] ?? ''}');
@@ -2520,6 +2551,12 @@ class ReceiptVouchers extends StatelessWidget {
                   onPressed:()=>shareReceiptVoucher(context,row.id,data)),
                 IconButton(tooltip: 'طباعة / حفظ PDF', icon: const Icon(Icons.picture_as_pdf),
                   onPressed: () => printReceiptVoucher(context, row.id, data)),
+                if(owner) StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
+                  stream:db.collection('voucherCancellations').doc('receipt_${row.id}').snapshots(),
+                  builder:(context,cancelSnap)=>cancelSnap.data?.exists==true
+                    ? const Padding(padding:EdgeInsets.all(12),child:Text('ملغي',style:TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold)))
+                    : IconButton(tooltip:'إلغاء سند القبض وعكس أثره المحاسبي',icon:const Icon(Icons.undo,color:Colors.redAccent),
+                      onPressed:()=>cancelReceiptVoucher(context,row.id,data))),
               ]),
             ));
           });
@@ -3072,7 +3109,10 @@ class SupplierPaymentVouchers extends StatelessWidget {
           Text('${data['accountName'] ?? ''} • ${data['amount']} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
           Text('رقم السند: ${row.id}\n${formatDate(data['createdAt'])}\nالباقي للمورد: ${data['balanceAfter']} ج.م'),
           if (!confirmed) const Text('بانتظار تأكيد البيانات من الخادم'),
-          Wrap(spacing: 8, children: [for (final thermal in [false,true]) OutlinedButton.icon(onPressed: confirmed ? () => printSupplierPaymentVoucher(context, row.id, data, thermal: thermal) : null, icon: const Icon(Icons.print), label: Text(thermal ? 'طباعة 80 مللي' : 'طباعة A4'))]),
+          Wrap(spacing: 8, children: [for (final thermal in [false,true]) OutlinedButton.icon(onPressed: confirmed ? () => printSupplierPaymentVoucher(context, row.id, data, thermal: thermal) : null, icon: const Icon(Icons.print), label: Text(thermal ? 'طباعة 80 مللي' : 'طباعة A4')),
+            StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(stream:db.collection('voucherCancellations').doc('payment_${row.id}').snapshots(),builder:(context,cancelSnap)=>cancelSnap.data?.exists==true
+              ? const Padding(padding:EdgeInsets.all(12),child:Text('ملغي',style:TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold)))
+              : IconButton(tooltip:'إلغاء سند الصرف وعكس أثره المحاسبي',icon:const Icon(Icons.undo,color:Colors.redAccent),onPressed:()=>cancelSupplierPaymentVoucher(context,row.id,data)))]),
         ])));
       });
     })),
@@ -4042,13 +4082,6 @@ class InvoiceSaveButtonLabel extends StatelessWidget {
 }
 
 String invoiceSaveFailureMessage(Object error) {
-  if (error is FirebaseFunctionsException) {
-    if (error.code == 'not-found' || error.code == 'unavailable') {
-      return 'خدمة حفظ فواتير الموظفين غير منشورة أو غير متاحة حاليًا. راجع تفعيل فوترة Firebase ونشر الوظيفة.';
-    }
-    if (error.code == 'permission-denied') return 'حساب الموظف غير مفعل أو لا يملك صلاحية تسجيل الفاتورة.';
-    if (error.message != null && error.message!.isNotEmpty) return 'تعذر حفظ الفاتورة: ${error.message}';
-  }
   if (error is FirebaseException) {
     if (error.code == 'permission-denied') {
       return 'تعذر حفظ الفاتورة: الخادم رفض صلاحيات العملية. راجع تفعيل الحساب وقواعد حفظ الفواتير.\nرمز الخطأ: permission-denied';
@@ -4210,6 +4243,260 @@ Future<void> printInvoice(BuildContext context, String type, String id, Map<Stri
   } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e'))); }
 }
 
+List<Map<String, dynamic>> _saleReturnInvoiceItems(Map<String, dynamic> invoice) {
+  final raw = invoice['items'];
+  final result = <Map<String, dynamic>>[];
+  if (raw is List) {
+    for (final item in raw) {
+      if (item is Map) result.add(Map<String, dynamic>.from(item));
+    }
+  }
+  if (result.isEmpty) result.add({
+    'productId': invoice['productId'],
+    'productName': invoice['productName'],
+    'quantity': invoice['quantity'] ?? 0,
+    'unitPrice': invoice['unitPrice'] ?? 0,
+    'lineTotal': invoice['total'] ?? 0,
+  });
+  return result;
+}
+
+Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
+  try {
+    final invoice = (await db.collection('sales').doc(id).get(const GetOptions(source: Source.server))).data();
+    if (invoice == null || invoice['status'] == 'returned' || !visibleAfterReset(invoice)) {
+      throw StateError('الفاتورة غير متاحة للمرتجع');
+    }
+    if (((invoice['onlinePaid'] as num?) ?? 0) > 0) {
+      if (context.mounted) await showInvoiceSaveProblem(context,
+        'الفاتورة لها سداد بالكارت. أتمم رد المبلغ من سجل جيديا قبل إرجاع الصنف.',
+        title: 'رد الكارت أولًا', button: 'تمام');
+      return;
+    }
+    final returned = await db.collection('salesReturns').where('sourceInvoiceId', isEqualTo: id)
+        .get(const GetOptions(source: Source.server));
+    final priorLines = returnedQuantitiesBySourceLine(returned.docs
+        .where((d) => d.data()['returnType'] == 'partial')
+        .map((d) => d.data()).toList());
+    final items = _saleReturnInvoiceItems(invoice);
+    final available = <int, int>{};
+    for (var i = 0; i < items.length; i++) {
+      final rawQty = items[i]['quantity'];
+      final qty = rawQty is num && rawQty.isFinite ? rawQty.toInt() : 0;
+      final remaining = qty - (priorLines[i] ?? 0);
+      if (remaining > 0) available[i] = remaining;
+    }
+    if (available.isEmpty) throw StateError('تم إرجاع كل أصناف الفاتورة بالفعل');
+    if (!context.mounted) return;
+    final indexes = available.keys.toList();
+    var selected = indexes.first;
+    final quantity = TextEditingController(text: '1');
+    final choice = await showDialog<Map<String, int>>(context: context, builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setDialogState) => AlertDialog(
+        title: const Text('إرجاع صنف من الفاتورة'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          DropdownButtonFormField<int>(
+            value: selected,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'الصنف'),
+            items: indexes.map((i) => DropdownMenuItem<int>(
+              value: i,
+              child: Text('${items[i]['productName'] ?? 'صنف'} • المتاح للإرجاع ${available[i]}'),
+            )).toList(),
+            onChanged: (value) { if (value != null) setDialogState(() { selected = value; quantity.text = '1'; }); },
+          ),
+          const SizedBox(height: 10),
+          TextField(controller: quantity, keyboardType: TextInputType.number,
+            decoration: InputDecoration(labelText: 'الكمية (المتاح ${available[selected]})')),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
+          FilledButton(onPressed: () {
+            final qty = int.tryParse(quantity.text.trim());
+            if (qty == null || qty < 1 || qty > (available[selected] ?? 0)) {
+              ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('اكتب كمية صحيحة لا تتجاوز المتاح')));
+              return;
+            }
+            Navigator.pop(dialogContext, {'sourceItemIndex': selected, 'quantity': qty});
+          }, child: const Text('متابعة')),
+        ],
+      ),
+    ));
+    quantity.dispose();
+    if (choice == null || !context.mounted) return;
+    final index = choice['sourceItemIndex']!;
+    final qty = choice['quantity']!;
+    final row = items[index];
+    final lineQty = (row['quantity'] as num?)?.toInt() ?? 0;
+    final lineTotal = (row['lineTotal'] as num?)?.toDouble() ??
+        lineQty * ((row['unitPrice'] as num?)?.toDouble() ?? 0);
+    final returnValue = lineQty > 0 ? ((lineTotal * 100).round() * qty / lineQty).round() / 100 : 0.0;
+    final yes = await showDialog<bool>(context: context, builder: (c) => AlertDialog(
+      title: const Text('تأكيد إرجاع الصنف'),
+      content: Text('الصنف: ${row['productName'] ?? ''}\nالكمية: $qty\nقيمة الصنف: ${returnValue.toStringAsFixed(2)} ج.م\nسيُحدّث المخزون والذمة والصندوق حسب تسوية الفاتورة.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('رجوع')),
+        FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('تأكيد الإرجاع'))],
+    )) ?? false;
+    if (!yes || !context.mounted) return;
+    await returnSalesInvoiceItem(id, index, qty);
+    if (context.mounted) await showInvoiceSaveProblem(context,
+      'تم إرجاع الصنف وتحديث المخزون والذمة والصندوق، مع حفظ الفاتورة الأصلية.',
+      title: 'تم تسجيل مرتجع الصنف', button: 'تمام', success: true);
+  } catch (e) {
+    if (context.mounted) await showInvoiceSaveProblem(context, 'تعذر إرجاع الصنف: $e',
+      title: 'لم يتم تسجيل المرتجع', button: 'رجوع');
+  }
+}
+
+Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity) async {
+  if (sourceItemIndex < 0 || quantity <= 0) throw StateError('بيانات الصنف غير صحيحة');
+  final actor = FirebaseAuth.instance.currentUser!.uid;
+  final invoiceRef = db.collection('sales').doc(id);
+  await db.runTransaction((tx) async {
+    final invoiceSnap = await tx.get(invoiceRef);
+    final d = invoiceSnap.data();
+    if (d == null || d['status'] == 'returned' || !visibleAfterReset(d)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    final profileSnap = await tx.get(db.collection('users').doc(actor));
+    if (profileSnap.data()?['active'] != true || profileSnap.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
+    if (((d['onlinePaid'] as num?) ?? 0) > 0) throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
+
+    final returnedByLine = <int, int>{};
+    final rawReturnedQuantities = d['partialReturnQuantities'];
+    if (rawReturnedQuantities is Map) {
+      for (final entry in rawReturnedQuantities.entries) {
+        final lineIndex = int.tryParse('${entry.key}');
+        final returnedQty = entry.value;
+        if (lineIndex != null && returnedQty is num && returnedQty.isFinite && returnedQty >= 0) {
+          returnedByLine[lineIndex] = returnedQty.toInt();
+        }
+      }
+    }
+    final items = _saleReturnInvoiceItems(d);
+    if (sourceItemIndex >= items.length) throw StateError('الصنف غير موجود في الفاتورة');
+    final item = items[sourceItemIndex];
+    final sourceQty = (item['quantity'] as num?)?.toInt() ?? 0;
+    final alreadyReturned = returnedByLine[sourceItemIndex] ?? 0;
+    if (sourceQty <= 0 || quantity > sourceQty - alreadyReturned) throw StateError('الكمية المطلوبة أكبر من المتبقي في الفاتورة');
+    final productId = '${item['productId'] ?? ''}';
+    if (productId.isEmpty || productId == 'null') throw StateError('الصنف لا يحتوي على رمز مخزون');
+
+    final branchId = '${d['stockBranchId'] ?? d['branchId'] ?? ''}';
+    if (branchId.isEmpty || branchId == 'null') throw StateError('مخزون الفاتورة غير مسجل');
+    final stockRef = db.collection('stock').doc('${branchId}_$productId');
+    final stockSnap = await tx.get(stockRef);
+    final customerId = '${d['customerId'] ?? ''}';
+    final customerRef = customerId.isEmpty ? null : db.collection('customers').doc(customerId);
+    final customerSnap = customerRef == null ? null : await tx.get(customerRef);
+    final cashRef = db.collection('settings').doc('cash');
+    final cashSnap = await tx.get(cashRef);
+
+    final settlement = returnSettlement(d, sales: true);
+    final priorCash = (((d['partialCashRefund'] as num?) ?? 0) * 100).round();
+    final priorDebt = (((d['partialDebtReduction'] as num?) ?? 0) * 100).round();
+    final cashAvailable = ((settlement.cash * 100).round() - priorCash).clamp(0, 1000000000000).toInt();
+    final debtAvailable = ((settlement.debt * 100).round() - priorDebt).clamp(0, 1000000000000).toInt();
+    final sourceLineCents = ((item['lineTotal'] as num?)?.toDouble() ??
+        sourceQty * ((item['unitPrice'] as num?)?.toDouble() ?? 0)) * 100;
+    final amountCents = (sourceLineCents.round() * quantity / sourceQty).round();
+    final totalAvailable = cashAvailable + debtAvailable;
+    final cashRefundCents = partialReturnCashCents(valueCents: amountCents,
+      cashAvailableCents: cashAvailable, debtAvailableCents: debtAvailable);
+    final debtReductionCents = amountCents - cashRefundCents;
+    if (amountCents > totalAvailable) throw StateError('تسوية المرتجع تجاوزت المتبقي من الفاتورة');
+    if (debtReductionCents > 0 && (customerRef == null || customerSnap?.exists != true)) {
+      throw StateError('الفاتورة الآجلة تحتاج حساب عميل مسجل');
+    }
+    final cashBefore = (cashSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
+    if (cashBefore * 100 < cashRefundCents) throw StateError('رصيد الصندوق لا يكفي لرد المبلغ المحصل');
+    final stockBefore = (stockSnap.data()?['quantity'] as num?)?.toInt() ?? 0;
+    final now = FieldValue.serverTimestamp();
+    final returnRef = db.collection('salesReturns').doc();
+
+    tx.set(stockRef, {'branchId': branchId, 'productId': productId, 'quantity': stockBefore + quantity}, SetOptions(merge: true));
+    tx.set(db.collection('stockMovements').doc(), {
+      'productId': productId, 'productName': item['productName'], 'branchId': branchId,
+      'kind': 'sales_return', 'quantity': quantity, 'balanceAfter': stockBefore + quantity,
+      'referenceId': returnRef.id, 'actorId': actor, 'createdAt': now,
+    });
+    if (debtReductionCents > 0) {
+      final customerBefore = (customerSnap!.data()?['balance'] as num?)?.toDouble() ?? 0;
+      final customerAfter = (customerBefore * 100).round() / 100 - debtReductionCents / 100;
+      tx.update(customerRef!, {'balance': customerAfter, 'updatedAt': now});
+      tx.set(db.collection('accountMovements').doc(), {
+        'accountType': 'customers', 'accountId': customerId, 'accountName': d['customerName'],
+        'kind': 'sales_return', 'amount': debtReductionCents / 100,
+        'balanceBefore': customerBefore, 'balanceAfter': customerAfter,
+        'referenceId': returnRef.id, 'createdAt': now, 'actorId': actor,
+      });
+    }
+    if (cashRefundCents > 0) {
+      final cashAfter = (cashBefore * 100).round() / 100 - cashRefundCents / 100;
+      tx.set(cashRef, {'balance': cashAfter, 'updatedAt': now}, SetOptions(merge: true));
+      tx.set(db.collection('accountMovements').doc(), {
+        'accountType': 'cash', 'kind': 'sales_return', 'amount': cashRefundCents / 100,
+        'delta': -cashRefundCents / 100, 'balanceBefore': cashBefore, 'balanceAfter': cashAfter,
+        'accountId': customerId, 'accountName': d['customerName'], 'referenceId': returnRef.id,
+        'reason': 'رد قيمة صنف من فاتورة مبيعات', 'createdAt': now, 'actorId': actor,
+      });
+    }
+    final newReturn = {
+      'sourceInvoiceId': id, 'returnType': 'partial', 'sourceItemIndex': sourceItemIndex,
+      'items': [{'sourceItemIndex': sourceItemIndex, 'productId': productId,
+        'productName': item['productName'], 'quantity': quantity,
+        'unitPrice': item['unitPrice'] ?? 0, 'lineTotal': amountCents / 100}],
+      'total': amountCents / 100, 'cashRefund': cashRefundCents / 100,
+      'debtReduction': debtReductionCents / 100, 'branchId': branchId,
+      'customerId': customerId, 'customerName': d['customerName'],
+      'invoiceNumber': d['invoiceNumber'], 'internalNumber': d['internalNumber'],
+      'invoiceBarcode': d['invoiceBarcode'], 'createdAt': now, 'actorId': actor,
+    };
+    tx.set(returnRef, newReturn);
+    final allReturned = items.asMap().entries.every((entry) {
+      final lineQty = (entry.value['quantity'] as num?)?.toInt() ?? 0;
+      final returnedQty = (returnedByLine[entry.key] ?? 0) + (entry.key == sourceItemIndex ? quantity : 0);
+      return lineQty > 0 && returnedQty >= lineQty;
+    });
+    final quantityByLine = Map<String, dynamic>.from(d['partialReturnQuantities'] is Map ? d['partialReturnQuantities'] as Map : {});
+    quantityByLine['$sourceItemIndex'] = alreadyReturned + quantity;
+    final priorReturnTotal = (d['partialReturnTotal'] as num?)?.toDouble() ?? 0;
+    final priorCashRefund = (d['partialCashRefund'] as num?)?.toDouble() ?? 0;
+    final priorDebtReduction = (d['partialDebtReduction'] as num?)?.toDouble() ?? 0;
+    tx.update(invoiceRef, {
+      'partialReturnQuantities': quantityByLine,
+      'partialReturnTotal': ((priorReturnTotal * 100).round() + amountCents) / 100,
+      'partialCashRefund': ((priorCashRefund * 100).round() + cashRefundCents) / 100,
+      'partialDebtReduction': ((priorDebtReduction * 100).round() + debtReductionCents) / 100,
+      'lastPartialReturnId': returnRef.id,
+      if (allReturned) 'status': 'returned',
+      if (allReturned) 'returnedAt': now,
+      if (allReturned) 'returnId': returnRef.id,
+    });
+  });
+}
+
+({double cash, double debt}) returnSettlement(Map<String, dynamic> data, {required bool sales}) {
+  double read(String key, double fallback) {
+    final value = data[key];
+    if (value == null) return fallback;
+    if (value is! num || !value.isFinite || value < 0) throw StateError('قيمة تسوية الفاتورة غير صحيحة');
+    return value.toDouble();
+  }
+  final total = data['total'] == null ? read('paid', 0) + read('due', 0) : read('total', 0);
+  final paid = read('paid', total);
+  final due = read('due', total - paid);
+  if (((paid * 100).round() + (due * 100).round() - (total * 100).round()).abs() > 1) {
+    throw StateError('إجمالي الفاتورة لا يطابق المدفوع والباقي');
+  }
+  if (sales) {
+    final receipts = read('receiptPaid', 0);
+    if (receipts > due + 0.005) throw StateError('التحصيل المرتبط أكبر من باقي الفاتورة');
+    return (cash: paid + receipts, debt: (due - receipts).clamp(0, due).toDouble());
+  }
+  final postedCash = data['cashPosted'] == true ? paid : read('cashPaidPosted', 0);
+  if (postedCash > paid + 0.005) throw StateError('المبلغ المسجل في الصندوق أكبر من المدفوع');
+  return (cash: postedCash, debt: due);
+}
+
 Future<void> confirmReturn(BuildContext context, String type, String id, Map<String, dynamic> data) async {
   try {
     final current = (await db.collection(type).doc(id).get(const GetOptions(source: Source.server))).data();
@@ -4256,7 +4543,7 @@ String accountBalanceLabel(num balance, {required bool supplier}) => balance < 0
   : balance == 0 ? 'الحساب متعادل' : supplier ? 'المتبقي عليك للمورد' : 'المتبقي على العميل';
 
 String invoiceReturnSignature(Map<String,dynamic> data) => jsonEncode({for(final key in
-  ['status','revision','items','productId','quantity','branchId','stockBranchId','customerId','supplierId','total','due','paid','receiptPaid','onlinePaid','onlinePaymentEver','cashPosted','cashPaidPosted']) key:data[key]});
+  ['status','revision','items','productId','quantity','branchId','stockBranchId','customerId','supplierId','total','due','paid','receiptPaid','onlinePaid','onlinePaymentEver','cashPosted','cashPaidPosted','partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction']) key:data[key]});
 
 Future<void> returnInvoice(String type, String id, {String? expectedSignature}) async {
   if (!['sales', 'purchases'].contains(type)) throw StateError('نوع الفاتورة غير صحيح');
@@ -5308,19 +5595,6 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
       'totalBefore': old['total'], 'totalAfter': total / 100, 'paidBefore': old['paid'], 'paidAfter': paid / 100,
       'revision': revision + 1, 'requestKey': key, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
   });
-}
-
-({double debt, double cash}) returnSettlement(Map<String, dynamic> invoice, {required bool sales}) {
-  int cents(String key) {
-    final value = (invoice[key] as num?)?.toDouble() ?? 0;
-    if (!value.isFinite || value < 0) throw StateError('قيمة مالية غير صحيحة');
-    return (value * 100).round();
-  }
-  final due = cents('due'), paid = cents('paid'), receipts = sales ? cents('receiptPaid') : 0;
-  if (receipts > due) throw StateError('سندات القبض تتجاوز باقي الفاتورة؛ راجع الحساب');
-  if (invoice['total'] is num && cents('total') != due + paid) throw StateError('إجمالي الفاتورة لا يطابق المدفوع والآجل؛ راجع الحساب');
-  if (!sales && cents('cashPaidPosted') > paid) throw StateError('المبلغ المصروف يتجاوز المدفوع بالفاتورة؛ راجع الحساب');
-  return (debt: (due - receipts) / 100, cash: sales ? (paid + receipts) / 100 : (invoice['cashPosted'] == true ? paid / 100 : cents('cashPaidPosted') / 100));
 }
 
 bool unallocatedReceiptAfter(Map<String, dynamic> invoice, Map<String, dynamic> receipt) {
