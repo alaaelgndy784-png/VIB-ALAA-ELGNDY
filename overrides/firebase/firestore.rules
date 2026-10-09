@@ -103,10 +103,11 @@ service cloud.firestore {
       let returnPath = /databases/$(database)/documents/purchaseReturns/$(returnId);
       let r = getAfter(returnPath).data;
       let item = r.items[0];
-      let lineKey = '' + item.sourceItemIndex;
+      let lineKey = r.sourceLineKey;
       return returnId is string && returnId != '' && !exists(returnPath)
         && r.sourceInvoiceId == id && r.returnType == 'partial'
         && r.actorId == request.auth.uid && r.items is list && r.items.size() == 1
+        && r.sourceLineKey is string && r.sourceLineKey != ''
         && item.sourceItemIndex is int && item.sourceItemIndex >= 0
         && item.quantity is int && item.quantity > 0
         && r.total is number && r.total > 0
@@ -671,6 +672,5 @@ service cloud.firestore {
     }
   }
 }
-
 
 
