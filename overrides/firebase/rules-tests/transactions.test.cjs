@@ -35,6 +35,16 @@ test('customer-add permission does not authorize adding suppliers',async()=>{
  const staff=env.authenticatedContext('staff').firestore();
  await assertFails(setDoc(doc(staff,'suppliers/staff-added'),newEmployeeCustomer()));
 });
+test('employee presence is self-written and owner-readable only',async()=>{
+ const staff=env.authenticatedContext('staff').firestore(),owner=env.authenticatedContext('owner').firestore(),inactive=env.authenticatedContext('inactive').firestore();
+ const own=doc(staff,'presence/staff');
+ await assertSucceeds(setDoc(own,{online:true,lastSeen:serverTimestamp()}));
+ await assertSucceeds(getDoc(doc(owner,'presence/staff')));
+ await assertSucceeds(setDoc(own,{online:false,lastSeen:serverTimestamp()}));
+ await assertFails(setDoc(doc(staff,'presence/owner'),{online:true,lastSeen:serverTimestamp()}));
+ await assertFails(setDoc(own,{online:true,lastSeen:serverTimestamp(),name:'spoofed'}));
+ await assertFails(setDoc(doc(inactive,'presence/inactive'),{online:true,lastSeen:serverTimestamp()}));
+});
 function saleBatch(db,{n=1,paid,customer=true,mutate=()=>{},omit='',saleId='sale',cashBefore=500,createCash=false,unitPrice=12.35}={}){
   const items=Array.from({length:n},(_,i)=>({productId:'p'+i,productName:'Product'+i,quantity:2,unitPrice,lineTotal:unitPrice*2,purchasePriceAtSale:5}));
   const total=n*unitPrice*2,payment=paid??total,due=total-payment;

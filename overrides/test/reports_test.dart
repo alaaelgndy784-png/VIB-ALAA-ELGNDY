@@ -30,6 +30,13 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  test('employee online status expires after a missed heartbeat', () {
+    final now=DateTime(2026,10,9,10);
+    expect(staffPresenceIsOnline({'online':true,'lastSeen':Timestamp.fromDate(now.subtract(const Duration(seconds:74)))},now),isTrue);
+    expect(staffPresenceIsOnline({'online':true,'lastSeen':Timestamp.fromDate(now.subtract(const Duration(seconds:76)))},now),isFalse);
+    expect(staffPresenceIsOnline({'online':false,'lastSeen':Timestamp.fromDate(now)},now),isFalse);
+    expect(staffPresenceIsOnline(null,now),isFalse);
+  });
   Map<String,dynamic> invoice(String id,num total,{num? paid,num? due,num receipts=0,String status='completed',DateTime? at}) => {
     'id':id,'displayNumber':id,'customerName':'عميل $id','supplierName':'مورد $id',
     'total':total,if(paid!=null)'paid':paid,if(due!=null)'due':due,'receiptPaid':receipts,

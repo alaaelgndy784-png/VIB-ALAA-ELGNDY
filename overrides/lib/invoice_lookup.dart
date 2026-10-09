@@ -18,8 +18,17 @@ class _MovementPeriodControlsState extends State<MovementPeriodControls> {
   DateTime? _parse(String value) {
     try {
       final normalized = invoiceSearchText(value);
-      final parsed = DateFormat('dd/MM/yyyy').parseStrict(normalized);
-      final date = DateTime(parsed.year, parsed.month, parsed.day);
+      // People often type dates without leading zeroes (1/10/2026), and the
+      // Android Arabic keyboard can enter Arabic-Indic digits. Normalize both
+      // forms before validating so the apply button does not stay disabled for
+      // an otherwise valid date.
+      final match = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$').firstMatch(normalized);
+      if (match == null) return null;
+      final day = int.parse(match.group(1)!);
+      final month = int.parse(match.group(2)!);
+      final year = int.parse(match.group(3)!);
+      final date = DateTime(year, month, day);
+      if (date.year != year || date.month != month || date.day != day) return null;
       final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
       if (date.year < 2000 || date.isAfter(DateTime(now.year, now.month, now.day))) return null;
       return date;

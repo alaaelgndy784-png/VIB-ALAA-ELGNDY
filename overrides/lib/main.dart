@@ -516,10 +516,21 @@ class Home extends StatefulWidget {
   State<Home> createState() => _HomeState();
 }
 
-class _HomeState extends State<Home> {
+class _HomeState extends State<Home> with WidgetsBindingObserver {
   int page = 0;
-  @override void initState() { super.initState(); if(widget.role == 'owner') {ChequeReminders.instance.watch(widget.uid);ManagerOfflineSaleSync.instance.start();ManagerOfflineVoucherSync.instance.start();} ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
-  @override void dispose() { ChatAlerts.instance.stop(); if(widget.role == 'owner') {ChequeReminders.instance.stop();ManagerOfflineSaleSync.instance.stop();ManagerOfflineVoucherSync.instance.stop();} super.dispose(); }
+  Timer? _presenceTimer;
+  bool _presenceWriteInFlight = false;
+  @override void initState() { super.initState(); if(widget.role == 'owner') {ChequeReminders.instance.watch(widget.uid);ManagerOfflineSaleSync.instance.start();ManagerOfflineVoucherSync.instance.start();} else { WidgetsBinding.instance.addObserver(this); _writePresence(true); _presenceTimer=Timer.periodic(const Duration(seconds:20),(_)=>_writePresence(true)); } ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
+  Future<void> _writePresence(bool online) async {
+    if(widget.role!='employee' || _presenceWriteInFlight) return;
+    _presenceWriteInFlight=true;
+    try { await db.collection('presence').doc(widget.uid).set({'online':online,'lastSeen':FieldValue.serverTimestamp()},SetOptions(merge:true)); }
+    catch (_) { /* A missed heartbeat expires automatically in the manager view. */ }
+    finally { _presenceWriteInFlight=false; }
+  }
+  @override void didChangeAppLifecycleState(AppLifecycleState state) { _writePresence(state==AppLifecycleState.resumed); }
+  Future<void> _signOut() async { await _writePresence(false); await FirebaseAuth.instance.signOut(); }
+  @override void dispose() { ChatAlerts.instance.stop(); if(widget.role == 'owner') {ChequeReminders.instance.stop();ManagerOfflineSaleSync.instance.stop();ManagerOfflineVoucherSync.instance.stop();} else { _presenceTimer?.cancel(); WidgetsBinding.instance.removeObserver(this); _writePresence(false); } super.dispose(); }
 
   void openPage(String title, Widget child) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
@@ -554,7 +565,7 @@ class _HomeState extends State<Home> {
       appBar: AppBar(toolbarHeight:78,title:const Column(mainAxisSize:MainAxisSize.min,children:[Text('VIB للتجارة والتوزيع',style:TextStyle(color:gold,fontSize:20)),Text('ALAAELGNDY',style:TextStyle(color:gold,fontSize:13))]), actions: [
         const ChatShortcut(owner: false),
         if(widget.canPurchase) IconButton(tooltip:'المشتريات',icon:const Icon(Icons.post_add),onPressed:()=>openPage('مشتريات الموظف',const Purchases(owner:false))),
-        IconButton(tooltip: 'خروج', onPressed: () => FirebaseAuth.instance.signOut(), icon: const Icon(Icons.logout)),
+        IconButton(tooltip: 'خروج', onPressed: _signOut, icon: const Icon(Icons.logout)),
       ]),
       body: page == 0
           ? Products(owner: false, uid: widget.uid, branchId: widget.branchId)
@@ -1207,19 +1218,40 @@ Future<void> stockDialog(BuildContext context, String branchId) async {
   }, child: const Text('نقل'))]));
 }
 
-class Staff extends StatelessWidget {
+bool staffPresenceIsOnline(Map<String,dynamic>? presence,DateTime now) {
+  final lastSeen=presence?['lastSeen'];
+  if(presence?['online']!=true || lastSeen is! Timestamp) return false;
+  final age=now.difference(lastSeen.toDate());
+  return !age.isNegative && age<=const Duration(seconds:75);
+}
+
+class Staff extends StatefulWidget {
   const Staff({super.key});
+  @override State<Staff> createState()=>_StaffState();
+}
+class _StaffState extends State<Staff> {
+  Timer? _clock;
+  @override void initState(){super.initState();_clock=Timer.periodic(const Duration(seconds:15),(_){if(mounted)setState((){});});}
+  @override void dispose(){_clock?.cancel();super.dispose();}
   @override Widget build(BuildContext context)=>StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:db.collection('users').snapshots(),builder:(context,snapshot){
     if(snapshot.hasError)return const Center(child:Text('تعذر تحميل الموظفين'));
     if(!snapshot.hasData)return const Center(child:CircularProgressIndicator());
     final rows=snapshot.data!.docs.where((d)=>d.data()['role']!='deleted').toList();
-    return ListView.builder(itemCount:rows.length,itemBuilder:(context,i){final row=rows[i],data=row.data();
-      return ListTile(title:Text('${i+1}. ${data['name'] ?? data['phone'] ?? row.id}'),
-        subtitle:Text(data['role']=='owner'?'المدير':data['role']=='pending'?'بانتظار التفعيل':'${data['branchId'] ?? ''} • ${data['canPurchase']==true?'المشتريات مسموحة':'المشتريات ممنوعة'}'),
-        trailing:data['role']=='owner'?const Icon(Icons.verified_user):Row(mainAxisSize:MainAxisSize.min,children:[
-          IconButton(tooltip:'صلاحيات الموظف',icon:const Icon(Icons.manage_accounts),onPressed:()=>assignEmployee(context,row.id,data)),
-          IconButton(tooltip:'حذف الموظف',icon:const Icon(Icons.delete_forever,color:Colors.redAccent),onPressed:()=>deleteEmployee(context,row.id,data)),
-        ]));});
+    return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:db.collection('presence').snapshots(),builder:(context,presenceSnapshot){
+      final presence={for(final d in presenceSnapshot.data?.docs??const <QueryDocumentSnapshot<Map<String,dynamic>>>[]) d.id:d.data()};
+      final now=DateTime.now();
+      return ListView.builder(itemCount:rows.length,itemBuilder:(context,i){final row=rows[i],data=row.data(),employee=data['role']=='employee';
+        final online=employee && staffPresenceIsOnline(presence[row.id],now);
+        return ListTile(title:Row(children:[
+          if(employee) Padding(padding:const EdgeInsetsDirectional.only(end:7),child:Tooltip(message:online?'متصل الآن':'غير متصل',child:Container(width:10,height:10,decoration:BoxDecoration(color:online?Colors.greenAccent:Colors.grey,borderRadius:BorderRadius.circular(8))))),
+          Expanded(child:Text('${i+1}. ${data['name'] ?? data['phone'] ?? row.id}',overflow:TextOverflow.ellipsis)),
+        ]),
+          subtitle:Text(data['role']=='owner'?'المدير':data['role']=='pending'?'بانتظار التفعيل':'${data['branchId'] ?? ''} • ${data['canPurchase']==true?'المشتريات مسموحة':'المشتريات ممنوعة'}'),
+          trailing:data['role']=='owner'?const Icon(Icons.verified_user):Row(mainAxisSize:MainAxisSize.min,children:[
+            IconButton(tooltip:'صلاحيات الموظف',icon:const Icon(Icons.manage_accounts),onPressed:()=>assignEmployee(context,row.id,data)),
+            IconButton(tooltip:'حذف الموظف',icon:const Icon(Icons.delete_forever,color:Colors.redAccent),onPressed:()=>deleteEmployee(context,row.id,data)),
+          ]));});
+    });
   });
 }
 Future<void> deleteEmployee(BuildContext context,String id,Map<String,dynamic> data) async {
@@ -2546,24 +2578,34 @@ class ReceiptVouchers extends StatelessWidget {
           if (rows.isEmpty) return const Center(child: Text('لا توجد سندات قبض بعد'));
           return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
             final row = rows[index], data = row.data();
-            return Card(child: ListTile(
-              leading: const Icon(Icons.payments_outlined, color: gold),
-              title: Text('${data['customerName']} • ${data['amount']} ج.م'),
-              subtitle: Text('سند: ${row.id}\n${formatDate(receiptEffectiveTimestamp(data))} • ${data['actorName'] ?? ''}\nالرصيد بعد القبض: ${data['balanceAfter']} ج.م'),
-              isThreeLine: true,
-              trailing: Wrap(children:[
-                IconButton(tooltip:'إرسال سند القبض PDF للعميل',icon:const Icon(Icons.share,color:Colors.greenAccent),
+            final rawNumber='${data['receiptNumber'] ?? row.id}';
+            final shortNumber=rawNumber.length>18?'${rawNumber.substring(0,10)}…${rawNumber.substring(rawNumber.length-5)}':rawNumber;
+            return Card(child:Padding(padding:const EdgeInsets.fromLTRB(12,10,12,6),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+              Row(children:[
+                const Icon(Icons.payments_outlined,color:gold,size:21),const SizedBox(width:8),
+                Expanded(child:Text('${data['customerName'] ?? 'عميل غير مسجل'}',maxLines:1,overflow:TextOverflow.ellipsis,
+                  style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold,fontSize:15))),
+                const SizedBox(width:8),Text('${data['amount'] ?? 0} ج.م',style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
+              ]),
+              Padding(padding:const EdgeInsetsDirectional.only(start:29,top:4),child:Text('سند: $shortNumber • ${formatDate(receiptEffectiveTimestamp(data))}',
+                maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12))),
+              Padding(padding:const EdgeInsetsDirectional.only(start:29,top:2),child:Text('الموظف: ${data['actorName'] ?? 'المدير'}',
+                maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12,color:Colors.white70))),
+              Padding(padding:const EdgeInsetsDirectional.only(start:29,top:2),child:Text('الرصيد بعد القبض: ${data['balanceAfter'] ?? 0} ج.م',
+                style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold,fontSize:13))),
+              Wrap(alignment:WrapAlignment.start,spacing:2,runSpacing:0,children:[
+                IconButton(visualDensity:VisualDensity.compact,tooltip:'إرسال سند القبض PDF للعميل',icon:const Icon(Icons.share,color:Colors.greenAccent,size:21),
                   onPressed:()=>shareReceiptVoucher(context,row.id,data)),
-                IconButton(tooltip: 'طباعة / حفظ PDF', icon: const Icon(Icons.picture_as_pdf),
-                  onPressed: () => printReceiptVoucher(context, row.id, data)),
+                IconButton(visualDensity:VisualDensity.compact,tooltip:'طباعة / حفظ PDF',icon:const Icon(Icons.picture_as_pdf,size:21),
+                  onPressed:()=>printReceiptVoucher(context,row.id,data)),
                 if(owner) StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
                   stream:db.collection('voucherCancellations').doc('receipt_${row.id}').snapshots(),
                   builder:(context,cancelSnap)=>cancelSnap.data?.exists==true
                     ? const Padding(padding:EdgeInsets.all(12),child:Text('ملغي',style:TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold)))
-                    : IconButton(tooltip:'إلغاء سند القبض وعكس أثره المحاسبي',icon:const Icon(Icons.undo,color:Colors.redAccent),
+                    : IconButton(visualDensity:VisualDensity.compact,tooltip:'إلغاء سند القبض وعكس أثره المحاسبي',icon:const Icon(Icons.undo,color:Colors.redAccent,size:21),
                       onPressed:()=>cancelReceiptVoucher(context,row.id,data))),
               ]),
-            ));
+            ])));
           });
         },
       )),
@@ -3179,10 +3221,13 @@ class AccountDirectory extends StatelessWidget {
           if (docs.isEmpty) return Center(child: Text(suppliers ? 'لا يوجد موردون مسجلون' : 'لا يوجد عملاء مسجلون'));
           return ListView.builder(itemCount: docs.length, itemBuilder: (context, index) {
             final d = docs[index], account = d.data();
+            final balance=(account['balance'] as num?) ?? 0;
             return ListTile(
-              title: Text('${account['name'] ?? ''}'),
-              subtitle: Text('هاتف: ${account['phone'] ?? 'غير مسجل'} • الرصيد: ${account['balance'] ?? 0} ج.م\n${accountBalanceLabel((account['balance'] as num?) ?? 0, supplier: suppliers)}'),
-              isThreeLine: true,
+              title: Text('${account['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
+              subtitle: Column(crossAxisAlignment:CrossAxisAlignment.start,mainAxisSize:MainAxisSize.min,children:[
+                Text('الهاتف: ${account['phone'] ?? 'غير مسجل'}',style:const TextStyle(color:Colors.redAccent)),
+                Text('${accountBalanceLabel(balance,supplier:suppliers)}: ${balance.toStringAsFixed(2)} ج.م',style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)),
+              ]),
               trailing: TextButton.icon(
                 style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
                 icon: const Icon(Icons.summarize_outlined, size: 16),
@@ -5315,10 +5360,11 @@ class _StaffCustomersState extends State<StaffCustomers> {
       if (rows.isEmpty) return const Center(child: Text('لا يوجد عملاء مطابقون'));
       return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
         final data = rows[index].data();
-        return ListTile(title: Text('${data['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent)),
-          subtitle: Text('${data['phone'] ?? ''}'),
+        final balance=(data['balance'] as num?) ?? 0;
+        return ListTile(title: Text('${data['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
+          subtitle: Text('الهاتف: ${data['phone'] ?? 'غير مسجل'}',style:const TextStyle(color:Colors.redAccent)),
           trailing: Wrap(crossAxisAlignment:WrapCrossAlignment.center,children:[
-            if(widget.canViewBalance)Text('الرصيد: ${data['balance'] ?? 0} ج.م',style:const TextStyle(color:Colors.redAccent)),
+            if(widget.canViewBalance)Text('المتبقي: ${balance.toStringAsFixed(2)} ج.م',style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)),
             if(widget.canViewStatement)IconButton(tooltip:'كشف حساب من تاريخ إلى تاريخ',icon:const Icon(Icons.summarize_outlined),
               onPressed:()=>openVibReport(context,'كشف حساب العميل ${data['name'] ?? ''}',
                 AccountStatementPage(collection:'customers',id:rows[index].id))),
