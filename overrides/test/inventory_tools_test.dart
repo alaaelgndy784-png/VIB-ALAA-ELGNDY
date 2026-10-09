@@ -11,7 +11,7 @@ void main() {
       await tester.pumpWidget(MaterialApp(home:MediaQuery(data:const MediaQueryData(size:Size(360,640),viewInsets:EdgeInsets.only(bottom:280),textScaler:TextScaler.linear(1.3)),child:Directionality(textDirection:TextDirection.rtl,child:Scaffold(body:InvoiceReturnPage(key:ValueKey(type),type:type))))));
       expect(find.textContaining('من:'),findsOneWidget);expect(find.textContaining('إلى:'),findsOneWidget);
       await tester.enterText(find.byType(TextField),'TEST-123');await tester.pump();
-      expect(find.text('بحث'),findsOneWidget);expect(tester.takeException(),isNull);
+      expect(find.textContaining('في الفترة'),findsOneWidget);expect(tester.takeException(),isNull);
     }
   });
   test('price adjustments use current prices and round fractional amounts', () {
