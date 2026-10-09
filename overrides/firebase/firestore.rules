@@ -66,6 +66,24 @@ service cloud.firestore {
         && next.receiptPaid == resource.data.get('receiptPaid', 0) + r.amount
         && r.amount > 0 && next.receiptPaid <= resource.data.due;
     }
+    function validPartialSalesReturnUpdate(id) {
+      let next = request.resource.data;
+      let old = resource.data;
+      let returnId = next.get('lastPartialReturnId', '');
+      let returnPath = /databases/$(database)/documents/salesReturns/$(returnId);
+      let r = getAfter(returnPath).data;
+      return returnId is string && returnId != ''
+        && !exists(returnPath)
+        && r.sourceInvoiceId == id && r.returnType == 'partial'
+        && r.actorId == request.auth.uid
+        && r.items is list && r.items.size() == 1
+        && r.total is number && r.total > 0
+        && r.cashRefund is number && r.debtReduction is number
+        && r.total == r.cashRefund + r.debtReduction
+        && next.get('partialReturnTotal', 0) == old.get('partialReturnTotal', 0) + r.total
+        && next.get('partialCashRefund', 0) == old.get('partialCashRefund', 0) + r.cashRefund
+        && next.get('partialDebtReduction', 0) == old.get('partialDebtReduction', 0) + r.debtReduction;
+    }
     function saleHasNoReceipt(s) {
       let cid = s.get('customerId', '');
       let customer = cid == '' ? {} : get(/databases/$(database)/documents/customers/$(cid)).data;
@@ -570,7 +588,8 @@ service cloud.firestore {
       allow update: if owner() && resource.data.status == 'completed'
         && resource.data.get('onlinePaid', 0) == 0
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
-          ['partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction','lastPartialReturnId','status','returnedAt','returnId']);
+          ['partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction','lastPartialReturnId','status','returnedAt','returnId'])
+        && validPartialSalesReturnUpdate(id);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy'])
         && (resource.data.get('onlinePaid', 0) == 0 || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy']));
