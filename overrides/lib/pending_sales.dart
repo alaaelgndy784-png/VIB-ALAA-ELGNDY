@@ -129,7 +129,7 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                 for (final e in entries) {
                   final product = (await tx.get(db.collection('products').doc(e.id))).data();
                   if (product == null || product['active'] != true) throw Exception('الصنف غير متاح');
-                  if ((!owner || (pending != null && pending['managerOffline']!=true)) && sellerProfile?['canEditSalePrice']!=true && ((product['price'] as num?)?.toDouble() != e.basePrice || (e.price-e.basePrice*(1-e.discount/100)).abs()>0.000001)) {
+                  if (!managerPriceEdits.containsKey(e.id) && (!owner || (pending != null && pending['managerOffline']!=true)) && sellerProfile?['canEditSalePrice']!=true && ((product['price'] as num?)?.toDouble() != e.basePrice || (e.price-e.basePrice*(1-e.discount/100)).abs()>0.000001)) {
                     throw Exception('سعر الصنف اتغير؛ افتح الفاتورة من جديد');
                   }
                   final cost = (product['purchasePrice'] as num?)?.toDouble();
