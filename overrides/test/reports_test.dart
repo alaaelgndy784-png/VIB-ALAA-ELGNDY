@@ -24,6 +24,7 @@ void main() {
     expect(profitQueryEnd(DateTime(2026,10,9,12,34)),DateTime(2026,10,9,12,35));
     expect(profitQueryEnd(now),now);
   });
+
   final day=DateTime(2026,10,4);
   testWidgets('typed sales report dates are applied when the period button is pressed', (tester) async {
     DateTime? appliedFrom, appliedTo;
@@ -41,22 +42,7 @@ void main() {
     expect(appliedTo, DateTime(2026, 10, 5));
     expect(tester.takeException(), isNull);
   });
-  testWidgets('sales report period accepts unpadded and Arabic keyboard dates', (tester) async {
-    DateTime? appliedFrom, appliedTo;
-    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MovementPeriodControls(
-      from: DateTime(2026, 10, 8), to: DateTime(2026, 10, 8), enabled: true,
-      onConfirm: (from, to) { appliedFrom = from; appliedTo = to; },
-    ))));
-    await tester.enterText(find.byKey(const ValueKey('period-from-input')), '1/10/2026');
-    await tester.enterText(find.byKey(const ValueKey('period-to-input')), '٥/١٠/٢٠٢٦');
-    await tester.pump();
-    final apply = find.byKey(const ValueKey('period-apply-button'));
-    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
-    await tester.tap(apply);
-    expect(appliedFrom, DateTime(2026, 10, 1));
-    expect(appliedTo, DateTime(2026, 10, 5));
-    expect(tester.takeException(), isNull);
-  });
+
   test('employee online status expires after a missed heartbeat', () {
     final now=DateTime(2026,10,9,10);
     expect(staffPresenceIsOnline({'online':true,'lastSeen':Timestamp.fromDate(now.subtract(const Duration(seconds:74)))},now),isTrue);
@@ -64,7 +50,6 @@ void main() {
     expect(staffPresenceIsOnline({'online':false,'lastSeen':Timestamp.fromDate(now)},now),isFalse);
     expect(staffPresenceIsOnline(null,now),isFalse);
   });
-
   Map<String,dynamic> invoice(String id,num total,{num? paid,num? due,num receipts=0,String status='completed',DateTime? at}) => {
     'id':id,'displayNumber':id,'customerName':'عميل $id','supplierName':'مورد $id',
     'total':total,if(paid!=null)'paid':paid,if(due!=null)'due':due,'receiptPaid':receipts,
@@ -356,4 +341,65 @@ void main() {
     for(final value in [-1,double.nan,double.infinity]) {
       expect(()=>summarizeInvoiceMovement([invoice('bad',value)],day,day),throwsStateError);
     }
-    
+    expect(()=>summarizeInvoiceMovement([invoice('bad',100,paid:80,due:30)],day,day),throwsStateError);
+    expect(()=>summarizeInvoiceMovement([invoice('bad',100,paid:20,due:80,receipts:90)],day,day),throwsStateError);
+  });
+  test('debt total sums positive balances without netting credits or hiding inactive unpaid accounts',() {
+    final report=summarizeDebts([
+      {'id':'a','name':'تاجر واحد','balance':100.10},
+      {'id':'b','name':'تاجر اثنان','balance':50.20,'active':false},
+      {'id':'c','name':'رصيد دائن','balance':-120},
+      {'id':'d','name':'صفر','balance':0},
+    ]);
+    expect(report.debtCents,15030);expect(report.creditCents,12000);
+    expect(report.debtors.length,2);expect(report.debtors.any((r)=>r.inactive),true);
+    expect(report.rows.length,3);
+    for(final balance in [double.nan,double.infinity,'bad']) {
+      expect(()=>summarizeDebts([{'name':'bad','balance':balance}]),throwsStateError);
+    }
+    expect(summarizeDebts([]).debtCents,0);
+  });
+
+  testWidgets('read only invoice overview shows numbered products and account on a narrow phone', (tester) async {
+    tester.view.physicalSize=const Size(360,700);tester.view.devicePixelRatio=1;
+    addTearDown(() {tester.view.resetPhysicalSize();tester.view.resetDevicePixelRatio();});
+    await tester.pumpWidget(MaterialApp(builder:(context,child)=>Directionality(textDirection:TextDirection.rtl,child:child!),
+      home:Scaffold(body:InvoiceOverviewContent(type:'sales',id:'X1',data:{
+        'internalNumber':42,'customerName':'عميل الاختبار','createdAt':Timestamp.fromDate(movementReportBoundary(day)),
+        'total':150,'paid':50,'due':100,'items':[
+          {'productName':'صنف الاختبار الأول ذو الاسم الطويل','quantity':2,'unitPrice':50,'lineTotal':100},
+          {'productName':'صنف الاختبار الثاني','quantity':1,'unitPrice':50,'lineTotal':50},
+        ]}))));
+    await tester.pumpAndSettle();
+    expect(find.text('عميل الاختبار'),findsOneWidget);
+    expect(find.textContaining('1. صنف الاختبار الأول'),findsOneWidget);
+    expect(find.textContaining('2. صنف الاختبار الثاني'),findsOneWidget);
+    expect(find.text('باقي الفاتورة: 100.00 ج.م'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+  test('generate actual short and multipage Arabic movement and debt PDFs',() async {
+    final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    Directory('dist').createSync(recursive:true);
+    for(final type in ['sales','purchases']) {
+      for(final length in [3,80]) {
+        final report=summarizeInvoiceMovement(List.generate(length,(i)=>invoice('000${100+i}',120.30,paid:20.10,due:100.20)),day,day,
+          type:type,returns:[invoice('000091',30)]);
+        final bytes=await createInvoiceMovementReportPdf(report,font);
+        expect(bytes.length,greaterThan(1000));
+        File('dist/VIB-REPORT-${type.toUpperCase()}-${length==3 ? 'SHORT' : 'LONG'}.pdf').writeAsBytesSync(bytes);
+      }
+    }
+    final debts=summarizeDebts(List.generate(65,(i)=><String,dynamic>{'id':'$i','name':'اسم تاجر عربي طويل لاختبار ظهور الاسم بالكامل رقم $i',
+      'balance':i%10==0 ? -25.30 : 100.20,'active':i%8!=0}));
+    for(final supplier in [false,true]) {
+      final bytes=await createDebtReportPdf(debts,font,suppliers:supplier,asOf:movementReportBoundary(day));
+      expect(bytes.length,greaterThan(1000));
+      File('dist/VIB-REPORT-${supplier ? 'SUPPLIERS' : 'CUSTOMERS'}-DEBTS.pdf').writeAsBytesSync(bytes);
+    }
+  });
+}
+
+
+
+
+

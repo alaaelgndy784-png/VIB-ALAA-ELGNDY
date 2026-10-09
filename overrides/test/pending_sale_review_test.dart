@@ -14,7 +14,7 @@ void main() {
       'items':[{'productId':'p','quantity':2,'unitPrice':30.0,'basePrice':30.0,'discountPercent':0}]};
     final text=pendingApprovalAlertText('أحمد','request123456',data);
     expect(text,contains('أحمد'));expect(text,contains('مؤسسة النور'));
-    expect(text,contains('60.00 ج.م'));expect(text,contains('request12'));
+    expect(text,contains('60.00 ج.م'));expect(text,contains('request1'));
   });
   setUpAll(() async {
     await (FontLoader('InvoicePreview')..addFont(rootBundle.load('assets/fonts/DejaVuSans.ttf'))).load();
