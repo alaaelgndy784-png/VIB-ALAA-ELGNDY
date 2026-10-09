@@ -354,6 +354,35 @@ String pendingSaleStatus(Object? status)=>status=='approved'?'تم اعتماد 
 
 bool pendingSaleIsVisible(Map<String,dynamic> data)=>data['removed']!=true;
 
+String pendingApprovalAlertText(String employeeName,String requestId,Map<String,dynamic> data) {
+  final parsed=PendingSaleData.parse(data);
+  final customer='${data['customerName'] ?? 'عميل'}';
+  final shortId=requestId.substring(0,requestId.length < 8 ? requestId.length : 8);
+  return '🔔 طلب اعتماد فاتورة من $employeeName • العميل $customer • ${parsed.total.toStringAsFixed(2)} ج.م • طلب $shortId';
+}
+
+Future<bool> requestPendingSaleApproval(DocumentReference<Map<String,dynamic>> ref) async {
+  final uid=FirebaseAuth.instance.currentUser?.uid;
+  if(uid==null)throw StateError('سجّل الدخول مرة أخرى');
+  final thread=db.collection('staffChats').doc(uid),messageRef=thread.collection('messages').doc();
+  await db.runTransaction((tx) async {
+    final current=(await tx.get(ref)).data();
+    final employee=(await tx.get(db.collection('users').doc(uid))).data();
+    if(current==null || current['status']!='pending' || current['employeeId']!=uid)
+      throw StateError('الفاتورة لم تعد في انتظار اعتمادك');
+    if(employee?['role']!='employee' || employee?['active']!=true)
+      throw StateError('طلب الاعتماد متاح للموظف المفعل فقط');
+    final text=pendingApprovalAlertText('${employee?['name'] ?? ''}',ref.id,current);
+    final now=FieldValue.serverTimestamp();
+    tx.set(messageRef,{'senderId':uid,'senderName':'${employee?['name'] ?? ''}',
+      'senderRole':'employee','text':text,'createdAt':now});
+    tx.set(thread,{'employeeId':uid,'employeeName':'${employee?['name'] ?? ''}',
+      'branchId':'${employee?['branchId'] ?? ''}','lastMessageId':messageRef.id,
+      'lastText':text,'lastSenderId':uid,'lastSenderRole':'employee','lastMessageAt':now},SetOptions(merge:true));
+  });
+  return true;
+}
+
 // Keep the rejected payload and audit trail; hide it in both applications.
 Future<bool> removeRejectedPendingSale(BuildContext context,DocumentReference<Map<String,dynamic>> ref) async {
   final confirmed=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(
@@ -424,6 +453,18 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
       final pending=data['status']=='pending';
       return PendingSaleInvoiceDialog(data:data,actions:[
         TextButton(onPressed:busy?null:()=>Navigator.pop(c),child:const Text('إغلاق')),
+        if(!owner && pending) OutlinedButton.icon(
+          onPressed:busy?null:()async {
+            update(()=>busy=true);
+            try {
+              await requestPendingSaleApproval(ref);
+              if(c.mounted)ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content:Text('وصل طلب الاعتماد للمدير، ورنّ تنبيه المحادثة.')));
+            } catch(e) {
+              if(c.mounted)await showInvoiceSaveProblem(c,'تعذر إرسال التنبيه: $e',title:'طلب اعتماد الفاتورة',button:'تمام');
+            } finally { if(c.mounted)update(()=>busy=false); }
+          },
+          icon:const Icon(Icons.notifications_active,color:Colors.greenAccent),
+          label:Text(busy?'جارٍ إرسال التنبيه…':'رنّ عند المدير')),
         if(owner && data['status']=='rejected')TextButton.icon(icon:const Icon(Icons.delete_outline,color:Colors.redAccent),label:const Text('مسح الطلب'),
           onPressed:busy?null:()async {update(()=>busy=true);final removed=await removeRejectedPendingSale(c,ref);if(!c.mounted)return;if(removed)Navigator.pop(c);else update(()=>busy=false);}),
         if(owner && pending)TextButton(onPressed:busy?null:()async {

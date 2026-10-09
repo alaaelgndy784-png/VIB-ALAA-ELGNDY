@@ -1493,27 +1493,52 @@ class ProfitReport extends StatefulWidget {
 
 class _ProfitReportState extends State<ProfitReport> {
   String period = 'day';
-  @override Widget build(BuildContext context) {
+  late DateTime start, end;
+  @override void initState() {
+    super.initState();
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final start = switch (period) {
-      'week' => today.subtract(Duration(days: today.weekday - 1)),
-      'month' => DateTime(now.year, now.month, 1),
-      _ => today,
-    };
-    final end = switch (period) {
-      'week' => start.add(const Duration(days: 7)),
-      'month' => DateTime(now.year, now.month + 1, 1),
-      _ => start.add(const Duration(days: 1)),
-    };
+    start = DateTime(now.year, now.month, now.day);
+    end = now;
+  }
+  void chooseProfitPeriod(String value) {
+    final range = profitPresetRange(value, DateTime.now());
+    setState(() { period = value; start = range.start; end = range.end; });
+  }
+  Future<void> chooseProfitBoundary(bool isStart) async {
+    final current = isStart ? start : end;
+    final date = await showDatePicker(context: context,
+      initialDate: DateTime(current.year, current.month, current.day),
+      firstDate: DateTime(2000), lastDate: DateTime(2100));
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(context: context,
+      initialTime: TimeOfDay(hour: current.hour, minute: current.minute));
+    if (time == null || !mounted) return;
+    final value = DateTime(date.year, date.month, date.day, time.hour, time.minute);
+    setState(() { period = 'custom'; if (isStart) { start = value; } else { end = value; } });
+  }
+  String profitDateTime(DateTime value) => DateFormat('dd/MM/yyyy • HH:mm').format(value);
+  @override Widget build(BuildContext context) {
+    final queryEnd = profitQueryEnd(end);
+    final validRange = queryEnd.isAfter(start);
+    final presets = const [('day','يومي'),('twoDays','يومين'),('threeDays','٣ أيام'),
+      ('week','أسبوع'),('month','شهر'),('year','سنة')];
     return Column(children: [
-      Padding(padding: const EdgeInsets.all(12), child: SegmentedButton<String>(
-        segments: const [ButtonSegment(value: 'day', label: Text('يومي')),
-          ButtonSegment(value: 'week', label: Text('أسبوعي')),
-          ButtonSegment(value: 'month', label: Text('شهري'))],
-        selected: {period}, onSelectionChanged: (v) => setState(() => period = v.first))),
-      Text('من ${DateFormat('dd/MM/yyyy').format(start)} إلى ${DateFormat('dd/MM/yyyy').format(end.subtract(const Duration(days: 1)))}'),
-      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      Padding(padding: const EdgeInsets.fromLTRB(8,10,8,4), child: Wrap(
+        alignment: WrapAlignment.center, spacing: 6, runSpacing: 4,
+        children: [for (final item in presets) FilterChip(label: Text(item.$2),
+          selected: period == item.$1, onSelected: (_) => chooseProfitPeriod(item.$1))])),
+      Padding(padding: const EdgeInsets.symmetric(horizontal:8), child: Row(children:[
+        Expanded(child:OutlinedButton.icon(key:const ValueKey('profit-from-button'),
+          onPressed:()=>chooseProfitBoundary(true),icon:const Icon(Icons.calendar_month),
+          label:Text('من ${profitDateTime(start)}',maxLines:1,overflow:TextOverflow.ellipsis))),
+        const SizedBox(width:6),
+        Expanded(child:OutlinedButton.icon(key:const ValueKey('profit-to-button'),
+          onPressed:()=>chooseProfitBoundary(false),icon:const Icon(Icons.schedule),
+          label:Text('إلى ${profitDateTime(end)}',maxLines:1,overflow:TextOverflow.ellipsis))),
+      ])),
+      Text(validRange ? 'الفترة: ${profitDateTime(start)} إلى ${profitDateTime(end)}' : 'وقت النهاية لازم يكون بعد وقت البداية',
+        textAlign:TextAlign.center,style:TextStyle(color:validRange ? Colors.white70 : Colors.redAccent)),
+      if(!validRange) const Expanded(child:SizedBox.shrink()) else Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: db.collection('products').snapshots(),
         builder: (context, productsSnap) {
           if (productsSnap.hasError) return const Center(child: Text('تعذر تحميل تكلفة الأصناف'));
@@ -1522,13 +1547,13 @@ class _ProfitReportState extends State<ProfitReport> {
           return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: db.collection('sales')
               .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-              .where('createdAt', isLessThan: Timestamp.fromDate(end)).snapshots(),
+              .where('createdAt', isLessThan: Timestamp.fromDate(queryEnd)).snapshots(),
             builder: (context, salesSnap) {
               if (salesSnap.hasError) return const Center(child: Text('تعذر تحميل المبيعات'));
               if (!salesSnap.hasData) return const Center(child: CircularProgressIndicator());
               final sales = salesSnap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
               return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: db.collection('salesReturns').where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start)).where('createdAt', isLessThan: Timestamp.fromDate(end)).snapshots(),
+                stream: db.collection('salesReturns').where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start)).where('createdAt', isLessThan: Timestamp.fromDate(queryEnd)).snapshots(),
                 builder: (context, returnsSnap) {
                   if (returnsSnap.hasError) return const Center(child: Text('تعذر تحميل المرتجعات'));
                   if (!returnsSnap.hasData) return const Center(child: CircularProgressIndicator());
@@ -1565,7 +1590,7 @@ class _ProfitReportState extends State<ProfitReport> {
               return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'expenses').snapshots(), builder: (context, expensesSnap) {
                 if (expensesSnap.hasError) return const Center(child: Text('تعذر تحميل المصروفات'));
                 if (!expensesSnap.hasData) return const Center(child: CircularProgressIndicator());
-                final expenses = expensesSnap.data!.docs.where((d) { final data = d.data(); final date = (data['createdAt'] as Timestamp?)?.toDate(); return visibleAfterReset(data) && date != null && !date.isBefore(start) && date.isBefore(end); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
+                final expenses = expensesSnap.data!.docs.where((d) { final data = d.data(); final date = (data['createdAt'] as Timestamp?)?.toDate(); return visibleAfterReset(data) && date != null && !date.isBefore(start) && date.isBefore(queryEnd); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
               return ListView(padding: const EdgeInsets.all(16), children: [
                 ListTile(title: const Text('عدد فواتير البيع'), trailing: Text('${sales.length}')),
                 ListTile(title: const Text('عدد المرتجعات خلال الفترة'), trailing: Text('${returns.length}')),

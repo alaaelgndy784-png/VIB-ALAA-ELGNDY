@@ -7,6 +7,18 @@ DateTime chequeReminderBefore(DateTime due, int days, int hour, int minute) =>
     tz.TZDateTime(chequeZone, due.year, due.month, due.day - days, hour, minute);
 String chequeTimeLabel(Timestamp stamp) => DateFormat('yyyy/MM/dd • HH:mm').format(tz.TZDateTime.from(stamp.toDate(), chequeZone));
 
+String? nearestRemindedChequeId(List<Map<String,dynamic>> rows,DateTime now) {
+  final open=rows.where((row)=>row['status']!='done' && row['reminderEnabled']==true && row['dueDate'] is String).toList();
+  if(open.isEmpty)return null;
+  open.sort((a,b) {
+    final da=DateTime.parse(a['dueDate']),db=DateTime.parse(b['dueDate']);
+    final distanceA=da.difference(DateTime(now.year,now.month,now.day)).inDays.abs();
+    final distanceB=db.difference(DateTime(now.year,now.month,now.day)).inDays.abs();
+    return distanceA.compareTo(distanceB);
+  });
+  return '${open.first['id'] ?? ''}';
+}
+
 class ChequeReminderJob {
   final int id;
   final String title, body, payload;
@@ -168,14 +180,18 @@ class _ChequeAgendaState extends State<ChequeAgenda> with WidgetsBindingObserver
       final rows=((snapshot.data!.data()?['records'] as List?) ?? []).map((r) => Map<String,dynamic>.from(r as Map)).where((r) => (r['status'] == 'done') == completed).toList()..sort((a,b) => '${a['dueDate']}'.compareTo('${b['dueDate']}'));
       if(rows.isEmpty) return Center(child:Text(completed ? 'لا توجد شيكات منفذة' : 'سجل أول شيك وحدد ميعاد تذكيره'));
       final today=chequeDate(tz.TZDateTime.now(chequeZone));
+      final nearestReminderId=completed ? null : nearestRemindedChequeId(rows,tz.TZDateTime.now(chequeZone));
       return ListView.builder(itemCount:rows.length,itemBuilder:(context,i) {
         final row=rows[i],due='${row['dueDate']}',late=!completed && due.compareTo(today)<0;
+        final highlighted=!completed && '${row['id'] ?? ''}'==nearestReminderId;
         final status=completed ? 'تم التنفيذ' : late ? 'متأخر' : due == today ? 'مستحق اليوم' : 'قادم';
-        return Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+        return Card(color:highlighted ? const Color(0xFF123B2D) : null,
+          shape:highlighted ? RoundedRectangleBorder(borderRadius:BorderRadius.circular(12),side:const BorderSide(color:Colors.greenAccent,width:2)) : null,
+          child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
           Text('${row['party']} • شيك ${row['type'] == 'received' ? 'وارد' : 'صادر'}',style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
           Text('رقم الشيك: ${row['number']} • البنك: ${row['bank']}'),
           Text('${(row['amount'] as num).toDouble().toStringAsFixed(2)} ج.م • الاستحقاق: $due'),
-          Text(status,style:TextStyle(color:late ? Colors.redAccent : gold)),
+          Text(highlighted ? '$status • أقرب شيك بتذكير نشط' : status,style:TextStyle(color:highlighted ? Colors.greenAccent : late ? Colors.redAccent : gold,fontWeight:highlighted ? FontWeight.bold : FontWeight.normal)),
           if(row['reminderEnabled'] == true && row['reminderAt'] is Timestamp && !completed) Text('التذكير: ${chequeTimeLabel(row['reminderAt'])}'),
           if('${row['note'] ?? ''}'.isNotEmpty) Text('${row['note']}'),
           Wrap(spacing:6,children:[TextButton.icon(onPressed:() => editChequeDialog(context,widget.uid,existing:row),icon:const Icon(Icons.edit),label:const Text('تعديل')),TextButton.icon(onPressed:() => changeChequeStatus(context,widget.uid,row,!completed),icon:Icon(completed ? Icons.restore : Icons.check_circle),label:Text(completed ? 'إعادة فتح' : 'تم التنفيذ')),IconButton(tooltip:'حذف الشيك',onPressed:() => deleteCheque(context,widget.uid,row),icon:const Icon(Icons.delete_outline,color:Colors.redAccent))]),
