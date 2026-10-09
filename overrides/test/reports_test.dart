@@ -234,9 +234,11 @@ void main() {
       from:DateTime(2026,10,1),to:DateTime(2026,10,3),enabled:true,
       onConfirm:(a,b){selectedStart=a;selectedEnd=b;}))));
     expect(selectedStart,isNull);
-    expect(find.text('من: 01/10/2026'),findsOneWidget);
-    expect(find.text('إلى: 03/10/2026'),findsOneWidget);
-    await tester.tap(find.text('موافق'));await tester.pump();
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('period-from-input'))).controller!.text,'01/10/2026');
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('period-to-input'))).controller!.text,'03/10/2026');
+    final apply=find.byKey(const ValueKey('period-apply-button'));
+    expect(tester.widget<FilledButton>(apply).onPressed,isNotNull);
+    await tester.tap(apply);await tester.pump();
     expect(selectedStart,DateTime(2026,10,1));expect(selectedEnd,DateTime(2026,10,3));
     final report=summarizeInvoiceMovement([
       invoice('first',10,at:movementReportBoundary(selectedStart!)),
