@@ -13,6 +13,23 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async { initializeChequeTimeZones(); final loader=FontLoader('VIBQA')..addFont(rootBundle.load('assets/fonts/DejaVuSans.ttf'));await loader.load(); });
   final day=DateTime(2026,10,4);
+  testWidgets('typed sales report dates are applied when the period button is pressed', (tester) async {
+    DateTime? appliedFrom, appliedTo;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MovementPeriodControls(
+      from: DateTime(2026, 10, 8), to: DateTime(2026, 10, 8), enabled: true,
+      onConfirm: (from, to) { appliedFrom = from; appliedTo = to; },
+    ))));
+    await tester.enterText(find.byKey(const ValueKey('period-from-input')), '01/10/2026');
+    await tester.enterText(find.byKey(const ValueKey('period-to-input')), '05/10/2026');
+    await tester.pump();
+    final apply = find.byKey(const ValueKey('period-apply-button'));
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+    await tester.tap(apply);
+    expect(appliedFrom, DateTime(2026, 10, 1));
+    expect(appliedTo, DateTime(2026, 10, 5));
+    expect(tester.takeException(), isNull);
+  });
+
   Map<String,dynamic> invoice(String id,num total,{num? paid,num? due,num receipts=0,String status='completed',DateTime? at}) => {
     'id':id,'displayNumber':id,'customerName':'عميل $id','supplierName':'مورد $id',
     'total':total,if(paid!=null)'paid':paid,if(due!=null)'due':due,'receiptPaid':receipts,
