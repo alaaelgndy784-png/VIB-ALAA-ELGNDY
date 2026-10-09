@@ -2655,458 +2655,6 @@ class CustomerPaymentReport extends StatefulWidget {
 }
 
 class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
-  late DateTime day,endDay;
-  late final Stream<QuerySnapshot<Map<String,dynamic>>> receipts;
-  late final Stream<QuerySnapshot<Map<String,dynamic>>> customers;
-  String? selectedCustomerId;
-  @override void initState(){
-    super.initState(); final now=tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
-    day=endDay=DateTime(now.year,now.month,now.day);
-    Query<Map<String,dynamic>> q=db.collection('receipts');
-    if(!widget.owner)q=q.where('actorId',isEqualTo:FirebaseAuth.instance.currentUser!.uid);
-    receipts=q.snapshots(includeMetadataChanges:true);
-    customers=db.collection('customers').snapshots();
-  }
-  @override Widget build(BuildContext context)=>Scaffold(
-    appBar:AppBar(title:const Text('حركة سداد عميل محدد')),
-    body:Column(children:[
-      StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:customers,builder:(context,snap){
-        if(snap.hasError)return const Padding(padding:EdgeInsets.all(12),child:Text('تعذر تحميل قائمة العملاء'));
-        if(!snap.hasData)return const LinearProgressIndicator();
-        final list=snap.data!.docs.toList()..sort((a,b)=>'${a.data()['name']??''}'.compareTo('${b.data()['name']??''}'));
-        final valid=list.any((d)=>d.id==selectedCustomerId);
-        return Padding(padding:const EdgeInsets.fromLTRB(12,12,12,0),child:DropdownButtonFormField<String>(
-          value:valid?selectedCustomerId:null,decoration:const InputDecoration(labelText:'اختر العميل'),
-          items:list.map((d)=>DropdownMenuItem(value:d.id,child:Text('${d.data()['name']??'عميل'}'))).toList(),
-          onChanged:(v)=>setState(()=>selectedCustomerId=v)));
-      }),
-      MovementPeriodControls(from:day,to:endDay,enabled:true,onConfirm:(a,b)=>setState((){day=a;endDay=b;})),
-      Expanded(child:selectedCustomerId==null?const Center(child:Text('اختر عميلًا لعرض سندات سداده فقط')):
-       StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:receipts,builder:(context,snapshot){
-        if(snapshot.hasError)return const Center(child:Text('تعذر تحميل تقرير السداد؛ راجع الاتصال والصلاحيات'));
-        if(!snapshot.hasData)return const Center(child:CircularProgressIndicator());
-        final rows=receiptRowsForCustomer(snapshot.data!.docs.where((d)=>visibleAfterReset(d.data()))
-          .map((d)=><String,dynamic>{...d.data(),'id':d.id}).toList(),selectedCustomerId!);
-        final report=summarizeReceiptPeriod(rows,day,endDay);
-        final selectedName=rows.isNotEmpty?'${rows.first['customerName']??''}':'العميل المحدد';
-        final pending=snapshot.data!.metadata.hasPendingWrites,cached=snapshot.data!.metadata.isFromCache;
-        return Column(children:[
-          Padding(padding:const EdgeInsets.all(10),child:Text('حركة سداد: $selectedName\n${DateFormat('dd/MM/yyyy').format(day)} - ${DateFormat('dd/MM/yyyy').format(endDay)}',
-            textAlign:TextAlign.center,style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
-          Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(children:[
-            Text('إجمالي ما سدده العميل: ${receiptReportMoney(report.totalCents)}',style:const TextStyle(color:gold,fontSize:19,fontWeight:FontWeight.bold)),
-            Text('عدد سندات القبض: ${report.receiptCount}'),
-            if(cached||pending)const Text('انتظر تأكيد مزامنة البيانات قبل الطباعة')
-          ]))),
-          Row(children:[
-            Expanded(child:OutlinedButton.icon(onPressed:report.receiptCount==0||cached||pending?null:()=>printCustomerPaymentReport(context,day,report,owner:widget.owner,to:endDay),icon:const Icon(Icons.picture_as_pdf),label:const Text('طباعة A4'))),
-            Expanded(child:OutlinedButton.icon(onPressed:report.receiptCount==0||cached||pending?null:()=>printCustomerPaymentReport(context,day,report,owner:widget.owner,thermal:true,to:endDay),icon:const Icon(Icons.receipt_long),label:const Text('طباعة 80 مم')))
-          ]),
-          Expanded(child:report.receiptCount==0?const Center(child:Text('لا توجد سندات قبض لهذا العميل في الفترة المختارة')):ListView(children:report.customers.expand((customer)=>customer.receipts.map((row)=>Card(child:ListTile(
-            title:Text('${receiptReportStamp(row,endDay)} • ${receiptReportMoney(((row['amount'] as num)*100).round())}'),
-            subtitle:Text('رقم السند: ${receiptDisplayNumber(row)}\nالمحصّل: ${row['actorName']??''}\nطريقة الدفع: ${row['paymentMethod']??'غير محددة'}\n${row['note']??''}')
-          )))).toList()))
-        ]);
-       }))
-    ]));
-}
-
-String receiptReportStamp(Map<String,dynamic> row,DateTime? to) {
-  final at=receiptEffectiveTimestamp(row)!.toDate();
-  return to==null ? DateFormat('HH:mm').format(at.toLocal()) : DateFormat('dd/MM/yyyy HH:mm').format(tz.TZDateTime.from(at,tz.getLocation('Africa/Cairo')));
-}
-
-Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport report, pw.Font font, {required bool owner, bool thermal = false,DateTime? to}) async {
-  final pdf = pw.Document();
-  final period=to==null ? 'اليوم: ${DateFormat('yyyy/MM/dd').format(day)}' : 'من ${DateFormat('dd/MM/yyyy').format(day)} إلى ${DateFormat('dd/MM/yyyy').format(to)} (شامل اليوم الأخير)';
-  if (thermal) {
-    pw.Widget line(String value, {bool bold = false}) => pw.Text(value, textAlign: pw.TextAlign.right,
-      style: pw.TextStyle(fontSize: bold ? 10 : 8, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal));
-    pdf.addPage(pw.Page(pageFormat: PdfPageFormat.roll80, margin: const pw.EdgeInsets.all(4 * PdfPageFormat.mm),
-      theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
-      build: (_) => pw.Column(mainAxisSize: pw.MainAxisSize.min, crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-        line('VIB للتجارة والتوزيع', bold: true), line('حركة سداد العملاء', bold: true),
-        line(period),
-        line(owner ? 'تحصيلات المدير وجميع الموظفين' : 'تحصيلاتي فقط'),
-        line('عدد التجار: ${report.customers.length} • السندات: ${report.receiptCount}'), pw.Divider(),
-        for (var i = 0; i < report.customers.length; i++) ...[
-          line('${i + 1}. ${report.customers[i].name}', bold: true),
-          line('إجمالي السداد: ${receiptReportMoney(report.customers[i].amountCents)}', bold: true),
-          for (final row in report.customers[i].receipts) ...[
-            line('${receiptReportStamp(row,to)} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
-            line('سند: ${row['id']}'), line('المحصّل: ${row['actorName'] ?? ''}'),
-          ], pw.Divider(),
-        ],
-        line(to==null ? 'إجمالي تحصيل اليوم' : 'إجمالي تحصيل الفترة', bold: true), line(receiptReportMoney(report.totalCents), bold: true),
-      ])));
-    return pdf.save();
-  }
-  const navy = PdfColor.fromInt(0xFF14263D), accent = PdfColor.fromInt(0xFFB58A38);
-  pw.Widget cell(String value, {bool header = false}) => pw.Padding(
-    padding: const pw.EdgeInsets.all(6), child: pw.Text(value, textAlign: pw.TextAlign.right,
-      style: pw.TextStyle(fontSize: 10, color: header ? PdfColors.white : PdfColors.black)));
-  final movements = report.customers.expand((c) => c.receipts).toList();
-  pdf.addPage(pw.MultiPage(pageFormat: PdfPageFormat.a4, maxPages: 1000,
-    theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
-    footer: (context) => pw.Text('${context.pageNumber} / ${context.pagesCount}', textAlign: pw.TextAlign.center),
-    build: (_) => [
-      pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 22, color: navy)),
-      pw.SizedBox(height: 12), pw.Text('تقرير حركة سداد العملاء', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 18)),
-      pw.Text(period),
-      pw.Text(owner ? 'سندات القبض من جميع الموظفين والمدير' : 'سندات القبض التي سجلتها فقط'),
-      pw.Text('عدد التجار: ${report.customers.length} • عدد السندات: ${report.receiptCount}'),
-      pw.SizedBox(height: 12),
-      pw.Table(border: pw.TableBorder.all(color: accent, width: .5), columnWidths: {
-        0: const pw.FlexColumnWidth(2), 1: const pw.FlexColumnWidth(1), 2: const pw.FlexColumnWidth(4), 3: const pw.FlexColumnWidth(.5)},
-        children: [
-          pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
-            children: ['إجمالي السداد', 'عدد السندات', 'اسم التاجر / العميل', 'م'].map((v) => cell(v, header: true)).toList()),
-          for (var i = 0; i < report.customers.length; i++) pw.TableRow(children: [
-            cell(receiptReportMoney(report.customers[i].amountCents)), cell('${report.customers[i].receipts.length}'),
-            cell(report.customers[i].name), cell('${i + 1}')]),
-        ]),
-      pw.SizedBox(height: 10), pw.Text('إجمالي المبالغ المحصّلة للفترة: ${receiptReportMoney(report.totalCents)}',
-        style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
-      pw.SizedBox(height: 16), pw.Text('تفاصيل حركة السداد'), pw.SizedBox(height: 6),
-      pw.Table(border: pw.TableBorder.all(color: accent, width: .5), columnWidths: {
-        0: const pw.FlexColumnWidth(1.5), 1: const pw.FlexColumnWidth(2), 2: const pw.FlexColumnWidth(2.5),
-        3: const pw.FlexColumnWidth(3), 4: const pw.FlexColumnWidth(2)}, children: [
-          pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
-            children: ['المبلغ', 'المحصّل', 'رقم السند', 'العميل', to==null ? 'الوقت' : 'التاريخ / الوقت'].map((v) => cell(v, header: true)).toList()),
-          for (final row in movements) pw.TableRow(children: [
-            cell(receiptReportMoney(((row['amount'] as num) * 100).round())), cell('${row['actorName'] ?? ''}'),
-            cell('${row['id']}'), cell('${row['customerName'] ?? ''}'),
-            cell(receiptReportStamp(row,to))]),
-        ]),
-    ]));
-  return pdf.save();
-}
-
-Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, ReceiptDayReport report, {required bool owner, bool thermal = false,DateTime? to}) async {
-  try {
-    final query=owner ? db.collection('receipts') : db.collection('receipts').where('actorId',isEqualTo:FirebaseAuth.instance.currentUser!.uid);
-    final snapshot=await query.get(const GetOptions(source:Source.server));
-    if(snapshot.metadata.isFromCache || snapshot.metadata.hasPendingWrites) throw StateError('انتظر تأكيد السداد من السيرفر');
-    final rows=snapshot.docs.where((d)=>visibleAfterReset(d.data())).map((d)=>{...d.data(),'id':d.id}).toList();
-    final confirmed=to==null ? summarizeReceiptDay(rows,day) : summarizeReceiptPeriod(rows,day,to);
-    if(confirmed.receiptCount==0) throw StateError('لا توجد سندات قبض في الفترة المحددة');
-    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-    final bytes = await createCustomerPaymentReportPdf(day, confirmed, font, owner: owner, thermal: thermal,to:to);
-    await Printing.layoutPdf(name: 'VIB-CUSTOMER-PAYMENTS-${DateFormat('yyyy-MM-dd').format(day)}-${DateFormat('yyyy-MM-dd').format(to ?? day)}-${thermal ? '80MM' : 'A4'}.pdf', onLayout: (_) async => bytes);
-  } catch (e) {
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر طباعة تقرير السداد: $e')));
-  }
-}
-
-Future<void> createReceiptVoucher(BuildContext context, String branchId, {required bool owner, String? initialCustomerId}) async {
-  final amount = TextEditingController(), note = TextEditingController();
-  DateTime selectedReceiptDate=tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
-  // Reuse this ID on transaction retries and after an uncertain network response.
-  final receiptRef = db.collection('receipts').doc();
-  final customerMovement = db.collection('accountMovements').doc();
-  final cashMovement = db.collection('accountMovements').doc();
-  String? customerId = initialCustomerId;
-  bool saving = false;
-  String paymentMethod='نقدي';
-  String? saveError;
-  await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(
-    builder: (dialog, update) => AlertDialog(
-      title: Text(owner ? 'سند قبض من عميل' : 'إرسال سند قبض للمدير'),
-      content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-        OutlinedButton.icon(icon: const Icon(Icons.person_search),
-          label: const Text('اختيار عميل مسجل / تغيير العميل'),
-          onPressed: saving ? null : () async {
-            final id = await selectRegisteredCustomer(dialog);
-            if (id != null && dialog.mounted) update(() => customerId = id);
-          }),
-        if (customerId != null) StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-          stream: db.collection('customers').doc(customerId).snapshots(),
-          builder: (context, snap) => Text(snap.hasError ? 'تعذر تحميل رصيد العميل' : !snap.hasData ? 'جارٍ تحميل الرصيد' : '${snap.data?.data()?['name'] ?? ''} — الرصيد الحالي: ${snap.data?.data()?['balance'] ?? 0} ج.م'),
-        ),
-        TextField(controller: amount, enabled: !saving,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          onChanged: (_) { if (saveError != null) update(() => saveError = null); },
-          decoration: const InputDecoration(labelText: 'المبلغ المقبوض')),
-        OutlinedButton.icon(icon:const Icon(Icons.calendar_month),label:Text('تاريخ ووقت السداد: ${DateFormat('dd/MM/yyyy HH:mm').format(selectedReceiptDate)}'),
-          onPressed:saving ? null : () async {
-            final day=await showDatePicker(context:dialog,initialDate:selectedReceiptDate,firstDate:DateTime(2000),lastDate:DateTime(2100));
-            if(day==null || !dialog.mounted)return;
-            final time=await showTimePicker(context:dialog,initialTime:TimeOfDay.fromDateTime(selectedReceiptDate));
-            if(time!=null && dialog.mounted)update(()=>selectedReceiptDate=tz.TZDateTime(tz.getLocation('Africa/Cairo'),day.year,day.month,day.day,time.hour,time.minute));
-          }),
-        DropdownButtonFormField<String>(value:paymentMethod,decoration:const InputDecoration(labelText:'طريقة الدفع / البيان'),
-          items:const ['نقدي','تحويل إنستا باي','تحويل فودافون كاش','تحويل محفظة X','تحويل عن طريق الحساب البنكي']
-            .map((x)=>DropdownMenuItem(value:x,child:Text(x))).toList(),
-          onChanged:saving?null:(v)=>update(()=>paymentMethod=v??'نقدي')),
-        TextField(controller: note, enabled: !saving, decoration: const InputDecoration(labelText: 'البيان / ملاحظات')),
-        const SizedBox(height: 12),
-        Text(owner ? 'يُخصم المبلغ من مديونية العميل ويُضاف للصندوق عند حفظ السند.' : 'بعد الإرسال سيظهر السند في نسخة المدير، ويُحدّث رصيد العميل والصندوق.'),
-        if (saveError != null) Padding(padding: const EdgeInsets.only(top: 8), child: Text(saveError!, style: const TextStyle(color: Colors.redAccent)) ),
-      ])),
-      actions: [
-        TextButton(onPressed: saving ? null : () => Navigator.pop(dialog), child: const Text('إلغاء')),
-        FilledButton(onPressed: saving ? null : () async {
-          final paid = parseReceiptAmount(amount.text);
-          final id = customerId;
-          if (id == null || paid == null || !paid.isFinite || paid <= 0) {
-            update(() => saveError = 'اختر العميل واكتب مبلغًا صحيحًا أكبر من صفر.');
-            return;
-          }
-          update(() { saving = true; saveError = null; });
-          try {
-            final actor = FirebaseAuth.instance.currentUser!.uid;
-            final profile = (await db.collection('users').doc(actor).get()).data();
-            final receiptDate=Timestamp.fromDate(selectedReceiptDate);
-            Map<String,dynamic>? savedReceipt;
-            await db.runTransaction((tx) async {
-              final existing = await tx.get(receiptRef);
-              if (existing.exists) return;
-              final customerRef = db.collection('customers').doc(id);
-              final customer = await tx.get(customerRef);
-              final cashRef = db.collection('settings').doc('cash');
-              final cash = await tx.get(cashRef);
-              if (!customer.exists || customer.data()?['active'] == false) throw Exception('العميل غير متاح');
-              final balance = (customer.data()?['balance'] as num?)?.toDouble() ?? 0;
-              if (paid > balance) throw Exception('المبلغ أكبر من المديونية الحالية للعميل');
-              final beforeCash = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
-              final now = FieldValue.serverTimestamp();
-              final customerName = '${customer.data()?['name'] ?? ''}';
-              savedReceipt={
-                'customerId':id,'customerName':customerName,'customerPhone':'${customer.data()?['phone'] ?? ''}',
-                'receiptDate':receiptDate,'createdAt':receiptDate,'amount':paid,'balanceBefore':balance,
-                'balanceAfter':balance-paid,'actorId':actor,'actorName':'${profile?['name'] ?? ''}',
-                'branchId':branchId,'note':note.text.trim(),'paymentMethod':paymentMethod,'receiptNumber':'VIB-RC-${DateFormat('yyyyMMdd').format(selectedReceiptDate)}-${receiptRef.id.substring(0,6).toUpperCase()}',
-              };
-              tx.update(customerRef, {'balance': balance - paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now});
-              tx.set(cashRef, {'balance': beforeCash + paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now}, SetOptions(merge: true));
-              tx.set(receiptRef, {
-                'customerId': id, 'customerName': customerName, 'customerPhone': '${customer.data()?['phone'] ?? ''}',
-                'receiptDate':receiptDate,
-                'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
-                'cashBefore': beforeCash, 'cashAfter': beforeCash + paid,
-                'actorId': actor, 'actorName': '${profile?['name'] ?? ''}', 'branchId': branchId,
-                'note': note.text.trim(), 'paymentMethod':paymentMethod,'receiptNumber':'VIB-RC-${DateFormat('yyyyMMdd').format(selectedReceiptDate)}-${receiptRef.id.substring(0,6).toUpperCase()}', 'createdAt': now,
-                'customerMovementId': customerMovement.id, 'cashMovementId': cashMovement.id,
-              });
-              tx.set(customerMovement, {
-                'accountType': 'customers', 'accountId': id, 'accountName': customerName, 'kind': 'collection',
-                'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
-                'referenceId': receiptRef.id, 'actorId': actor, 'branchId': branchId, 'createdAt': now, 'receiptDate':receiptDate,
-              });
-              tx.set(cashMovement, {
-                'accountType': 'cash', 'accountId': id, 'accountName': customerName, 'kind': 'customerCollection',
-                'amount': paid, 'delta': paid, 'balanceBefore': beforeCash, 'balanceAfter': beforeCash + paid,
-                'referenceId': receiptRef.id, 'reason': 'سند قبض من عميل', 'actorId': actor, 'branchId': branchId, 'createdAt': now, 'receiptDate':receiptDate,
-              });
-            });
-            final saved=savedReceipt;
-            if (dialog.mounted) Navigator.pop(dialog);
-            if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text(owner ? 'تم حفظ سند القبض وتحديث رصيد العميل والصندوق.' : 'تم حفظ سند القبض وإرساله للمدير، وتحديث رصيد العميل والصندوق.'),
-              action:saved==null?null:SnackBarAction(label:'إرسال PDF للعميل',onPressed:()=>shareReceiptVoucher(context,receiptRef.id,saved)),
-            ));
-          } catch (e) {
-            if (dialog.mounted) {
-              update(() { saving = false; saveError = 'تعذر حفظ/إرسال سند القبض: $e'; });
-            }
-          }
-        }, child: Text(saving ? (owner ? 'جارٍ الحفظ…' : 'جارٍ الإرسال…') : (owner ? 'حفظ سند القبض' : 'حفظ وإرسال للمدير'))),
-      ],
-    ),
-  ));
-  amount.dispose();
-  note.dispose();
-}
-
-Future<void> printReceiptVoucher(BuildContext context, String id, Map<String, dynamic> data) async {
-  try {
-    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-    final bytes=await createReceiptVoucherPdf(id,data,font);
-    await Printing.layoutPdf(name: 'VIB-RECEIPT-$id.pdf', onLayout: (_) async => bytes);
-  } catch (e) {
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر طباعة سند القبض: $e')));
-  }
-}
-
-Future<void> shareReceiptVoucher(BuildContext context,String id,Map<String,dynamic> data) async {
-  try {
-    final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-    final bytes=await createReceiptVoucherPdf(id,data,font);
-    await Printing.sharePdf(bytes:bytes,filename:'VIB-RECEIPT-$id.pdf');
-  } catch(e) {
-    if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر إرسال سند القبض PDF: $e')));
-  }
-}
-
-Future<Uint8List> createReceiptVoucherPdf(String id,Map<String,dynamic> data,pw.Font font) async {
-  final pdf=pw.Document();
-  Map<String,dynamic> brand={};
-  try {
-    if(Firebase.apps.isNotEmpty) {
-    final a=(await db.collection('settings').doc('invoiceBranding').get()).data();
-    final b=(await db.collection('settings').doc('main').get()).data();
-    brand={...?b,...?a};
-    }
-  } catch (_) {}
-  pw.ImageProvider? logo;
-  final encoded='${brand['logoBase64']??''}';
-  try {
-    if(encoded.isNotEmpty)logo=pw.MemoryImage(base64Decode(encoded));
-    else logo=pw.MemoryImage((await rootBundle.load('assets/vip-logo.png')).buffer.asUint8List());
-  } catch (_) {}
-  final stamp=receiptEffectiveTimestamp(data);
-  final date=stamp is Timestamp?DateFormat('dd/MM/yyyy').format(stamp.toDate().toLocal()):DateFormat('dd/MM/yyyy').format(DateTime.now());
-  final name='${brand['companyName']??'VIB للتجارة والتوزيع'}';
-  final before=(data['balanceBefore'] as num?)?.toDouble()??0;
-  final paid=(data['amount'] as num?)?.toDouble()??0;
-  final after=(data['balanceAfter'] as num?)?.toDouble()??(before-paid);
-  final number='${data['receiptNumber']??'VIB-RC-$date-${id.length>6?id.substring(0,6).toUpperCase():id.toUpperCase()}'}';
-  pw.Widget detail(String label,String value,{bool strong=false})=>pw.Container(
-    margin:const pw.EdgeInsets.only(bottom:8),padding:const pw.EdgeInsets.symmetric(horizontal:12,vertical:10),
-    decoration:pw.BoxDecoration(color:strong?const PdfColor(0.97,0.94,0.87):const PdfColor(0.99,0.99,0.99),
-      border:pw.Border.all(color:const PdfColor(0.78,0.62,0.29),width:strong?1.2:.6),borderRadius:pw.BorderRadius.circular(5)),
-    child:pw.Row(children:[pw.Expanded(child:pw.Text(label,style:pw.TextStyle(fontWeight:pw.FontWeight.bold))),
-      pw.Text(value,style:pw.TextStyle(fontWeight:pw.FontWeight.bold,fontSize:strong?13:11))]));
-  pdf.addPage(pw.Page(pageFormat:PdfPageFormat.a4,theme:pw.ThemeData.withFont(base:font,bold:font),
-    margin:const pw.EdgeInsets.all(32),build:(_)=>pw.Directionality(textDirection:pw.TextDirection.rtl,
-      child:pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.stretch,children:[
-        pw.Container(padding:const pw.EdgeInsets.all(15),decoration:pw.BoxDecoration(
-          border:pw.Border.all(color:const PdfColor(0.72,0.53,0.18),width:2),borderRadius:pw.BorderRadius.circular(8)),
-          child:pw.Row(crossAxisAlignment:pw.CrossAxisAlignment.center,children:[
-            pw.SizedBox(width:110,child:logo==null?pw.Text('VIB',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:30,fontWeight:pw.FontWeight.bold,color:const PdfColor(0.72,0.53,0.18))):pw.Image(logo!,height:78,fit:pw.BoxFit.contain)),
-            pw.SizedBox(width:16),
-            pw.Expanded(child:pw.Column(crossAxisAlignment:pw.CrossAxisAlignment.start,children:[
-              pw.Text(name,style:pw.TextStyle(fontSize:20,fontWeight:pw.FontWeight.bold,color:const PdfColor(0.12,0.12,0.12))),
-              pw.SizedBox(height:7),
-              for(final line in [
-                if('${brand['taxNumber']??''}'.isNotEmpty)'البطاقة الضريبية: ${brand['taxNumber']}',
-                if('${brand['commercialRegister']??''}'.isNotEmpty)'السجل التجاري: ${brand['commercialRegister']}',
-                if('${brand['phone']??''}'.isNotEmpty)'تليفون: ${brand['phone']}',
-                if('${brand['phone2']??''}'.isNotEmpty)'تليفون إضافي: ${brand['phone2']}',
-                if('${brand['address']??''}'.isNotEmpty)'العنوان: ${brand['address']}',
-              ])pw.Padding(padding:const pw.EdgeInsets.only(bottom:3),child:pw.Text(line,style:const pw.TextStyle(fontSize:9))),
-            ]))
-          ])),
-        pw.SizedBox(height:18),
-        pw.Container(padding:const pw.EdgeInsets.symmetric(vertical:9),decoration:const pw.BoxDecoration(color:PdfColor(0.10,0.10,0.10)),
-          child:pw.Text('سند قبض',textAlign:pw.TextAlign.center,style:pw.TextStyle(color:const PdfColor(0.88,0.71,0.39),fontSize:21,fontWeight:pw.FontWeight.bold))),
-        pw.SizedBox(height:12),
-        detail('تاريخ السند',date,strong:true),
-        detail('رقم السند',number,strong:true),
-        pw.SizedBox(height:8),
-        pw.Text('استلمنا من العميل /',style:pw.TextStyle(fontSize:14,fontWeight:pw.FontWeight.bold)),
-        detail('اسم العميل','${data['customerName']??''}'),
-        detail('رقم التليفون','${data['customerPhone']??'غير مسجل'}'),
-        detail('المبلغ المستحق قبل السداد','${before.toStringAsFixed(2)} ج.م'),
-        detail('المبلغ المدفوع','${paid.toStringAsFixed(2)} ج.م',strong:true),
-        detail('الرصيد المتبقي بعد الدفع','${after.toStringAsFixed(2)} ج.م',strong:true),
-        detail('طريقة الدفع','${data['paymentMethod']??'نقدي'}'),
-        if('${data['note']??''}'.trim().isNotEmpty)detail('البيان','${data['note']}'),
-        pw.SizedBox(height:20),
-        pw.Row(children:[pw.Expanded(child:pw.Text('توقيع المستلم: ____________________')),pw.Text('ختم الشركة: ______________')]),
-        pw.Spacer(),
-        pw.Container(padding:const pw.EdgeInsets.all(12),decoration:pw.BoxDecoration(
-          color:const PdfColor(0.97,0.94,0.87),border:pw.Border.all(color:const PdfColor(0.78,0.62,0.29))),
-          child:pw.Text('شكراً لثقتكم وتعاملكم الكريم مع VIB للتجارة والتوزيع.\nنسعد دائمًا بخدمتكم ونتمنى لكم دوام النجاح والتوفيق.',
-            textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:11,fontWeight:pw.FontWeight.bold))),
-      ]))));
-  return pdf.save();
-}
-
-class Accounts extends StatelessWidget {
-  final bool startWithSuppliers;
-  const Accounts({super.key, this.startWithSuppliers = false});
-
-  @override
-  Widget build(BuildContext context) => DefaultTabController(
-    length: 2,
-    initialIndex: startWithSuppliers ? 1 : 0,
-    child: Column(children: [
-      Material(
-        color: Theme.of(context).colorScheme.surface,
-        child: const TabBar(tabs: [
-          Tab(icon: Icon(Icons.people_outline), text: 'العملاء'),
-          Tab(icon: Icon(Icons.business_outlined), text: 'الموردون'),
-        ]),
-      ),
-      const Expanded(child: TabBarView(children: [
-        AccountDirectory(suppliers: false),
-        AccountDirectory(suppliers: true),
-      ])),
-    ]),
-  );
-}
-
-class AccountDirectory extends StatelessWidget {
-  final bool suppliers;
-  const AccountDirectory({super.key, required this.suppliers});
-
-  @override
-  Widget build(BuildContext context) {
-    final collection = suppliers ? 'suppliers' : 'customers';
-    return Column(children: [
-      Padding(padding: const EdgeInsets.all(12), child: Column(children: [
-        Text(suppliers ? 'حسابات الموردين' : 'حسابات العملاء',
-          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-        Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(
-          onPressed: () => openVibReport(context,
-            suppliers ? 'تقرير ذمم الموردين' : 'تقرير ذمم العملاء',
-            DebtReportPage(suppliers: suppliers)),
-          icon: const Icon(Icons.summarize_outlined),
-          label: Text(suppliers ? 'تقرير ذمم الموردين — إجمالي الدين' : 'تقرير ذمم العملاء — إجمالي الدين'))),
-        if (suppliers) Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(
-          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) =>
-            Directionality(textDirection: TextDirection.rtl, child: Scaffold(
-              appBar: AppBar(title: const Text('سندات صرف الموردين')),
-              body: const SafeArea(child: SupplierPaymentVouchers()))))),
-          icon: const Icon(Icons.receipt_long), label: const Text('سندات صرف الموردين'))),
-        const SizedBox(height: 8),
-        FilledButton.icon(
-          onPressed: () => createAccountDialog(context, collection, suppliers),
-          icon: const Icon(Icons.person_add),
-          label: Text(suppliers ? 'إضافة مورد' : 'إضافة عميل')),
-      ])),
-      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: db.collection(collection).snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) return const Center(child: Text('تعذر تحميل الحسابات'));
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          final docs = snapshot.data!.docs
-              .where((d) => d.data()['active'] != false)
-              .toList()
-            ..sort((a, b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
-          if (docs.isEmpty) return Center(child: Text(suppliers ? 'لا يوجد موردون مسجلون' : 'لا يوجد عملاء مسجلون'));
-          return ListView.builder(itemCount: docs.length, itemBuilder: (context, index) {
-            final d = docs[index], account = d.data();
-            return ListTile(
-              title: Text('${account['name'] ?? ''}'),
-              subtitle: Text('هاتف: ${account['phone'] ?? 'غير مسجل'} • الرصيد: ${account['balance'] ?? 0} ج.م\n${accountBalanceLabel((account['balance'] as num?) ?? 0, supplier: suppliers)}'),
-              isThreeLine: true,
-              trailing: TextButton.icon(
-                style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
-                icon: const Icon(Icons.summarize_outlined, size: 16),
-                label: const Text('كشف الحساب'),
-                onPressed: () => openVibReport(context, 'كشف حساب ${account['name'] ?? ''}',
-                  AccountStatementPage(collection: collection, id: d.id))),
-              onTap: () => showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Column(
-                mainAxisSize: MainAxisSize.min, children: [
-                  ListTile(leading: const Icon(Icons.summarize),
-                    title: const Text('كشف حساب من تاريخ إلى تاريخ'),
-                    onTap: () { Navigator.pop(c); openVibReport(context, 'كشف حساب ${account['name'] ?? ''}',
-                      AccountStatementPage(collection: collection, id: d.id)); }),
-                  ListTile(leading: const Icon(Icons.payments),
-                    title: Text(suppliers ? 'سند صرف للمورد' : 'سند قبض من العميل'),
-                    onTap: () { Navigator.pop(c); accountDialog(context, collection, d.id, account); }),
-                ]))),
-            );
-          });
-        },
-      )),
-    ]);
-  }
-}
-
-class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
   late DateTime day, endDay;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> receipts;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> customers;
@@ -3561,55 +3109,91 @@ Future<Uint8List> createReceiptVoucherPdf(String id,Map<String,dynamic> data,pw.
   return pdf.save();
 }
 
-class Accounts extends StatefulWidget {
+class Accounts extends StatelessWidget {
   final bool startWithSuppliers;
   const Accounts({super.key, this.startWithSuppliers = false});
+
   @override
-  State<Accounts> createState() => _AccountsState();
+  Widget build(BuildContext context) => DefaultTabController(
+    length: 2,
+    initialIndex: startWithSuppliers ? 1 : 0,
+    child: Column(children: [
+      Material(
+        color: Theme.of(context).colorScheme.surface,
+        child: const TabBar(tabs: [
+          Tab(icon: Icon(Icons.people_outline), text: 'العملاء'),
+          Tab(icon: Icon(Icons.business_outlined), text: 'الموردون'),
+        ]),
+      ),
+      const Expanded(child: TabBarView(children: [
+        AccountDirectory(suppliers: false),
+        AccountDirectory(suppliers: true),
+      ])),
+    ]),
+  );
 }
-class _AccountsState extends State<Accounts> {
-  late bool suppliers;
-  @override
-  void initState() {
-    super.initState();
-    suppliers = widget.startWithSuppliers;
-  }
+
+class AccountDirectory extends StatelessWidget {
+  final bool suppliers;
+  const AccountDirectory({super.key, required this.suppliers});
+
   @override
   Widget build(BuildContext context) {
     final collection = suppliers ? 'suppliers' : 'customers';
     return Column(children: [
-      Padding(padding: const EdgeInsets.all(12), child: Column(children: [SegmentedButton<bool>(
-        segments: const [ButtonSegment(value: false, label: Text('العملاء')), ButtonSegment(value: true, label: Text('الموردون'))],
-        selected: {suppliers}, onSelectionChanged: (values) => setState(() => suppliers = values.first)),
-        Padding(padding: const EdgeInsets.only(top:8), child: OutlinedButton.icon(
-          onPressed: () => openVibReport(context, suppliers ? 'تقرير ذمم الموردين' : 'تقرير ذمم العملاء', DebtReportPage(suppliers:suppliers)),
-          icon: const Icon(Icons.summarize_outlined), label: Text(suppliers ? 'تقرير ذمم الموردين — إجمالي الدين' : 'تقرير ذمم العملاء — إجمالي الدين'))),
-        if (suppliers) Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => Directionality(textDirection: TextDirection.rtl, child: Scaffold(appBar: AppBar(title: const Text('سندات صرف الموردين')), body: const SafeArea(child: SupplierPaymentVouchers()))))), icon: const Icon(Icons.receipt_long), label: const Text('سندات صرف الموردين'))),
-        const SizedBox(height: 8), FilledButton.icon(onPressed: () => createAccountDialog(context, collection, suppliers), icon: const Icon(Icons.person_add), label: Text(suppliers ? 'إضافة مورد' : 'إضافة عميل')),
+      Padding(padding: const EdgeInsets.all(12), child: Column(children: [
+        Text(suppliers ? 'حسابات الموردين' : 'حسابات العملاء',
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
+        Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(
+          onPressed: () => openVibReport(context,
+            suppliers ? 'تقرير ذمم الموردين' : 'تقرير ذمم العملاء',
+            DebtReportPage(suppliers: suppliers)),
+          icon: const Icon(Icons.summarize_outlined),
+          label: Text(suppliers ? 'تقرير ذمم الموردين — إجمالي الدين' : 'تقرير ذمم العملاء — إجمالي الدين'))),
+        if (suppliers) Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) =>
+            Directionality(textDirection: TextDirection.rtl, child: Scaffold(
+              appBar: AppBar(title: const Text('سندات صرف الموردين')),
+              body: const SafeArea(child: SupplierPaymentVouchers()))))),
+          icon: const Icon(Icons.receipt_long), label: const Text('سندات صرف الموردين'))),
+        const SizedBox(height: 8),
+        FilledButton.icon(
+          onPressed: () => createAccountDialog(context, collection, suppliers),
+          icon: const Icon(Icons.person_add),
+          label: Text(suppliers ? 'إضافة مورد' : 'إضافة عميل')),
       ])),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: db.collection(collection).snapshots(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return const Center(child: Text('تعذر تحميل الذمم'));
+          if (snapshot.hasError) return const Center(child: Text('تعذر تحميل الحسابات'));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           final docs = snapshot.data!.docs
               .where((d) => d.data()['active'] != false)
               .toList()
-            ..sort((a,b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
-          if (docs.isEmpty) return const Center(child: Text('لا توجد حسابات بعد'));
+            ..sort((a, b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
+          if (docs.isEmpty) return Center(child: Text(suppliers ? 'لا يوجد موردون مسجلون' : 'لا يوجد عملاء مسجلون'));
           return ListView.builder(itemCount: docs.length, itemBuilder: (context, index) {
             final d = docs[index], account = d.data();
             return ListTile(
               title: Text('${account['name'] ?? ''}'),
               subtitle: Text('هاتف: ${account['phone'] ?? 'غير مسجل'} • الرصيد: ${account['balance'] ?? 0} ج.م\n${accountBalanceLabel((account['balance'] as num?) ?? 0, supplier: suppliers)}'),
-              isThreeLine:true,
-              trailing: TextButton.icon(style:TextButton.styleFrom(visualDensity:VisualDensity.compact,padding:const EdgeInsets.symmetric(horizontal:4)),
-                icon:const Icon(Icons.summarize_outlined,size:16),label:const Text('كشف الحساب'),
-                onPressed:()=>openVibReport(context,'كشف حساب ${account['name'] ?? ''}',AccountStatementPage(collection:collection,id:d.id))),
-              onTap: () => showModalBottomSheet<void>(context:context,builder:(c)=>SafeArea(child:Column(mainAxisSize:MainAxisSize.min,children:[
-                ListTile(leading:const Icon(Icons.summarize),title:const Text('كشف حساب من تاريخ إلى تاريخ'),onTap:(){Navigator.pop(c);openVibReport(context,'كشف حساب ${account['name'] ?? ''}',AccountStatementPage(collection:collection,id:d.id));}),
-                ListTile(leading:const Icon(Icons.payments),title:Text(suppliers?'سند صرف للمورد':'سند قبض من العميل'),onTap:(){Navigator.pop(c);accountDialog(context,collection,d.id,account);}),
-              ]))),
+              isThreeLine: true,
+              trailing: TextButton.icon(
+                style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
+                icon: const Icon(Icons.summarize_outlined, size: 16),
+                label: const Text('كشف الحساب'),
+                onPressed: () => openVibReport(context, 'كشف حساب ${account['name'] ?? ''}',
+                  AccountStatementPage(collection: collection, id: d.id))),
+              onTap: () => showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Column(
+                mainAxisSize: MainAxisSize.min, children: [
+                  ListTile(leading: const Icon(Icons.summarize),
+                    title: const Text('كشف حساب من تاريخ إلى تاريخ'),
+                    onTap: () { Navigator.pop(c); openVibReport(context, 'كشف حساب ${account['name'] ?? ''}',
+                      AccountStatementPage(collection: collection, id: d.id)); }),
+                  ListTile(leading: const Icon(Icons.payments),
+                    title: Text(suppliers ? 'سند صرف للمورد' : 'سند قبض من العميل'),
+                    onTap: () { Navigator.pop(c); accountDialog(context, collection, d.id, account); }),
+                ]))),
             );
           });
         },
