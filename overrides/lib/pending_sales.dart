@@ -77,7 +77,7 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
   required bool credit, required String customerId,
   required DocumentReference<Map<String,dynamic>> saleRef,
   String invoiceNote='', bool allowShortage=false, bool allowBelowCost=false, String overrideReason='',
-  DocumentReference<Map<String,dynamic>>? pendingRef}) async {
+  DocumentReference<Map<String,dynamic>>? pendingRef, Map<String,double> managerPriceEdits=const {}}) async {
   final due=total-payment;
   return db.runTransaction<Map<String,dynamic>>((tx) async {
 
@@ -109,11 +109,19 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                     (!managerOffline && sellerProfile?['branchId'] != actualBranch))) {
                   throw Exception('الطلب لم يعد معلقًا أو حساب الموظف غير مفعل');
                 }
+                if(managerPriceEdits.isNotEmpty && (!owner || pending==null || pending['managerOffline']==true ||
+                  managerPriceEdits.keys.any((id)=>!entries.any((e)=>e.id==id && managerPriceEdits[id]==e.price)))) {
+                  throw Exception('تعديل السعر مسموح للمدير أثناء مراجعة فاتورة الموظف فقط');
+                }
+                PendingSaleData? pendingProposal;
                 if(pending != null) {
                   final proposal=PendingSaleData.parse(pending);
-                  if(proposal.customerId!=customerId || proposal.credit!=credit || proposal.paid!=payment || proposal.lines.length!=entries.length ||
+                  pendingProposal=proposal;
+                  final cashManagerEdit=owner && managerPriceEdits.isNotEmpty && !proposal.credit && payment==total;
+                  if(proposal.customerId!=customerId || proposal.credit!=credit || (proposal.paid!=payment && !cashManagerEdit) || proposal.lines.length!=entries.length ||
                     List.generate(entries.length,(i)=>proposal.lines[i].id!=entries[i].id || proposal.lines[i].quantity!=entries[i].qty ||
-                      proposal.lines[i].price!=entries[i].price || proposal.lines[i].basePrice!=entries[i].basePrice || proposal.lines[i].discount!=entries[i].discount).any((x)=>x)) {
+                      (proposal.lines[i].price!=entries[i].price && managerPriceEdits[entries[i].id]!=entries[i].price) ||
+                      proposal.lines[i].basePrice!=entries[i].basePrice || proposal.lines[i].discount!=entries[i].discount).any((x)=>x)) {
                     throw Exception('بيانات الطلب اتغيرت؛ افتحه من جديد');
                   }
                 }
@@ -276,6 +284,14 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                     'allowBelowCost': allowBelowCost,
                     'actorId': actor,
                   },
+                  if(managerPriceEdits.isNotEmpty) 'managerPriceEdits': {
+                    'actorId':actor,
+                    'items':entries.where((e)=>managerPriceEdits.containsKey(e.id)).map((e)=>{
+                      'productId':e.id,
+                      'from':pendingProposal!.lines.firstWhere((line)=>line.id==e.id).price,
+                      'to':e.price,
+                    }).toList(),
+                  },
                 };
                 tx.set(saleRef, invoiceData);
                 if(pendingRef != null) tx.update(pendingRef, {'status':'approved','saleId':saleRef.id,'reviewedBy':actor,'reviewedAt':FieldValue.serverTimestamp()});
@@ -424,6 +440,7 @@ class PendingSaleInvoiceDialog extends StatelessWidget {
             Text('التاريخ: ${formatDate(data['createdAt'])}'),
             if(data['status']!='approved')const Text('رقم الفاتورة: يُخصص عند الاعتماد'),
             Text(data['credit']==true?'طريقة الدفع: آجل':'طريقة الدفع: نقدي'),
+            if(data['managerPriceEditPreview']==true)const Text('الأسعار المعروضة معدلة من المدير قبل الاعتماد.',style:TextStyle(color:Colors.lightBlueAccent)),
           ])),
           const SizedBox(height:8),const InvoiceCompactTableHeader(),
           for(var i=0;i<items.length;i++)InvoiceCompactReadOnlyLine(number:i+1,name:'${items[i]['productName'] ?? ''}',
@@ -443,15 +460,66 @@ class PendingSaleInvoiceDialog extends StatelessWidget {
   }
 }
 
+Future<({Map<String,double> prices,double paid})?> editPendingSalePrices(
+    BuildContext context, Map<String,dynamic> data, Map<String,double> currentPrices) async {
+  final proposal=PendingSaleData.parse(data);
+  final names=<String,String>{for(final raw in (data['items'] as List? ?? const []).whereType<Map>())
+    '${raw['productId']}':'${raw['productName']??raw['productId']}'};
+  final values=<String,double>{for(final line in proposal.lines)line.id:currentPrices[line.id]??line.price};
+  bool valid=true;
+  double total=0;
+  double paid=proposal.paid;
+  void recalculate(){
+    total=proposal.lines.fold<double>(0,(sum,line)=>sum+line.quantity*(values[line.id]??line.price));
+    paid=proposal.credit?proposal.paid:total;
+    valid=proposal.lines.every((line)=>values[line.id]!=null && values[line.id]!.isFinite && values[line.id]!>0) && paid<=total;
+  }
+  recalculate();
+  return showDialog<({Map<String,double> prices,double paid})>(context:context,builder:(dialog)=>StatefulBuilder(builder:(dialog,update){
+    recalculate();
+    return Directionality(textDirection:TextDirection.rtl,child:AlertDialog(
+      title:const Text('تعديل أسعار الفاتورة'),
+      content:SizedBox(width:500,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
+        for(final line in proposal.lines)Padding(padding:const EdgeInsets.only(bottom:10),child:Row(children:[
+          Expanded(child:Text('${names[line.id]??line.id} × ${line.quantity}',maxLines:2,overflow:TextOverflow.ellipsis)),
+          const SizedBox(width:8),SizedBox(width:120,child:TextFormField(
+            key:ValueKey('manager-price-${line.id}'),initialValue:'${values[line.id]}',
+            keyboardType:const TextInputType.numberWithOptions(decimal:true),
+            decoration:const InputDecoration(labelText:'سعر الوحدة'),
+            onChanged:(text){final value=double.tryParse(text.trim());update(()=>values[line.id]=value??double.nan);},
+          )),
+        ])),
+        const Divider(),
+        Align(alignment:AlignmentDirectional.centerStart,child:Text('الإجمالي بعد التعديل: ${total.toStringAsFixed(2)} ج.م',style:const TextStyle(fontWeight:FontWeight.bold))),
+        Align(alignment:AlignmentDirectional.centerStart,child:Text(proposal.credit
+          ? 'المدفوع: ${paid.toStringAsFixed(2)} • المتبقي: ${(total-paid).toStringAsFixed(2)} ج.م'
+          : 'المدفوع النقدي بعد التعديل: ${paid.toStringAsFixed(2)} ج.م')),
+        if(!valid)const Align(alignment:AlignmentDirectional.centerStart,child:Text('راجع الأسعار؛ لا يمكن أن يتجاوز المدفوع إجمالي الفاتورة.',style:TextStyle(color:Colors.redAccent))),
+      ]))),
+      actions:[TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('إلغاء')),
+        FilledButton(onPressed:valid?()=>Navigator.pop(dialog,(prices:Map<String,double>.from(values),paid:paid)):null,child:const Text('تطبيق الأسعار'))],
+    ));
+  }));
+}
+
 Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String,dynamic>> ref,bool owner) async {
   bool busy=false;
+  Map<String,double> adjustedPrices={};
+  double? adjustedPaid;
   await showDialog<void>(context:context,barrierDismissible:false,builder:(outer)=>StatefulBuilder(builder:(c,update)=>
     StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(stream:ref.snapshots(),builder:(c,snapshot) {
       final data=snapshot.data?.data();
       if(data==null)return AlertDialog(title:const Text('طلب فاتورة موظف'),content:Text(snapshot.hasError?'تعذر تحميل الطلب':'جارٍ التحميل'),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إغلاق'))]);
       if(!pendingSaleIsVisible(data))return AlertDialog(title:const Text('تم مسح الطلب'),content:const Text('ابدأ فاتورة جديدة من شاشة المبيعات.'),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إغلاق'))]);
       final pending=data['status']=='pending';
-      return PendingSaleInvoiceDialog(data:data,actions:[
+      final rawItems=(data['items'] as List? ?? const []).whereType<Map>().map((x){
+        final item=Map<String,dynamic>.from(x);final id='${item['productId']??''}';
+        if(adjustedPrices.containsKey(id))item['unitPrice']=adjustedPrices[id];
+        return item;
+      }).toList();
+      final displayData=<String,dynamic>{...data,'items':rawItems,if(adjustedPaid!=null)'paid':adjustedPaid,
+        if(adjustedPrices.isNotEmpty)'managerPriceEditPreview':true};
+      return PendingSaleInvoiceDialog(data:displayData,actions:[
         TextButton(onPressed:busy?null:()=>Navigator.pop(c),child:const Text('إغلاق')),
         if(!owner && pending) OutlinedButton.icon(
           onPressed:busy?null:()async {
@@ -478,15 +546,24 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
             tx.update(ref,{'status':'rejected','rejectionReason':result,'reviewedBy':FirebaseAuth.instance.currentUser!.uid,'reviewedAt':FieldValue.serverTimestamp()});
           });if(c.mounted)Navigator.pop(c);}catch(e){if(c.mounted){update(()=>busy=false);await showInvoiceSaveProblem(c,invoiceSaveFailureMessage(e));}}
         },child:const Text('رفض مع السبب')),
+        if(owner && pending)OutlinedButton.icon(onPressed:busy?null:()async {
+          try {
+            final edited=await editPendingSalePrices(c,data,adjustedPrices);
+            if(edited!=null && c.mounted)update((){adjustedPrices=edited.prices;adjustedPaid=edited.paid;});
+          }catch(e){if(c.mounted)await showInvoiceSaveProblem(c,'تعذر تعديل الأسعار: $e',title:'تعديل الفاتورة',button:'تمام');}
+        },icon:const Icon(Icons.edit,color:Colors.lightBlueAccent),label:const Text('تعديل الأسعار')),
         if(owner && pending)FilledButton(onPressed:busy?null:()async {
           update(()=>busy=true);
           try {
             final latest=(await ref.get(const GetOptions(source:Source.server))).data();
             if(latest==null)throw Exception('الطلب غير موجود');
             final parsed=PendingSaleData.parse(latest);
-            final entries=parsed.lines.map((x)=>(id:x.id,name:'',qty:x.quantity,price:x.price,cost:null as double?,discount:x.discount,basePrice:x.basePrice)).toList();
-            final saved=await commitGroupedSale(owner:true,branchId:'${latest['branchId']}',entries:entries,total:parsed.total,payment:parsed.paid,
-              credit:parsed.credit,customerId:parsed.customerId,saleRef:db.collection('sales').doc(ref.id),pendingRef:ref);
+            final entries=parsed.lines.map((x)=>(id:x.id,name:x.name,qty:x.quantity,price:adjustedPrices[x.id]??x.price,cost:null as double?,discount:x.discount,basePrice:x.basePrice)).toList();
+            final total=entries.fold<double>(0,(sum,e)=>sum+e.qty*e.price);
+            final payment=parsed.credit?parsed.paid:total;
+            final priceEdits=<String,double>{for(final e in entries)if((parsed.lines.firstWhere((line)=>line.id==e.id).price-e.price).abs()>0.000001)e.id:e.price};
+            final saved=await commitGroupedSale(owner:true,branchId:'${latest['branchId']}',entries:entries,total:total,payment:payment,
+              credit:parsed.credit,customerId:parsed.customerId,saleRef:db.collection('sales').doc(ref.id),pendingRef:ref,managerPriceEdits:priceEdits);
             if(c.mounted)Navigator.pop(c);
             if(context.mounted)await showInvoiceSavedActions(context,'sales',ref.id,saved);
           }catch(e){if(c.mounted){update(()=>busy=false);await showInvoiceSaveProblem(c,invoiceSaveFailureMessage(e));}}

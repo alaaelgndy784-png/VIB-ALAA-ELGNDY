@@ -5416,7 +5416,8 @@ class ChatShortcut extends StatelessWidget {
   Widget build(BuildContext context) {
     final uid = FirebaseAuth.instance.currentUser!.uid;
     Widget button(bool unread) {
-      final icon = Badge(isLabelVisible: unread, backgroundColor:Colors.greenAccent,smallSize:10,child: const Icon(Icons.chat_bubble_outline, color: gold));
+      final icon = Badge(isLabelVisible: unread, label:unread?const Text('!'):null, backgroundColor:Colors.blueAccent,
+        child: Icon(Icons.chat_bubble_outline, color: unread?Colors.lightBlueAccent:gold));
       return showLabel
           ? TextButton.icon(onPressed: () => openStaffChat(context, owner: owner, initialDraft: initialDraft), icon: icon,
               label: Text(owner ? 'محادثات الموظفين' : 'محادثة المدير'))
@@ -5459,7 +5460,8 @@ class StaffChatInbox extends StatelessWidget {
             final unread = thread?['lastSenderRole'] == 'employee' && sent != null && (seen == null || sent.compareTo(seen) > 0);
             final name = '${employee.data()['name'] ?? employee.data()['phone'] ?? employee.id}';
             return Card(child: ListTile(
-              leading: Badge(isLabelVisible: unread, backgroundColor:Colors.greenAccent,smallSize:10,child: const Icon(Icons.person_outline, color: gold)),
+              leading: Badge(isLabelVisible: unread,label:unread?const Text('!'):null,backgroundColor:Colors.blueAccent,
+                child:Icon(Icons.person_outline,color:unread?Colors.lightBlueAccent:gold)),
               title: Text(name), subtitle: Text('${thread?['lastText'] ?? 'ابدأ محادثة مع الموظف'}', maxLines: 2, overflow: TextOverflow.ellipsis),
               trailing: const Icon(Icons.chevron_left),
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(textDirection: TextDirection.rtl,

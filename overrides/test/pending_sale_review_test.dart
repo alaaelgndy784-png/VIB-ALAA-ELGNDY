@@ -16,6 +16,22 @@ void main() {
     expect(text,contains('أحمد'));expect(text,contains('مؤسسة النور'));
     expect(text,contains('60.00 ج.م'));expect(text,contains('request1'));
   });
+  testWidgets('manager price editor recalculates a pending invoice before approval',(tester)async{
+    Map<String,double>? applied;
+    double? paid;
+    const proposal=<String,dynamic>{'customerId':'customer','credit':true,'paid':10.0,
+      'items':[{'productId':'p','productName':'صنف تجريبي','quantity':2,'unitPrice':30.0,'basePrice':30.0,'discountPercent':0}]};
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:Builder(builder:(context)=>ElevatedButton(onPressed:()async{
+      final result=await editPendingSalePrices(context,proposal,const {});
+      applied=result?.prices;paid=result?.paid;
+    },child:const Text('تعديل'))))));
+    await tester.tap(find.text('تعديل'));await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('manager-price-p')), '35');await tester.pumpAndSettle();
+    expect(find.text('الإجمالي بعد التعديل: 70.00 ج.م'),findsOneWidget);
+    expect(find.text('المدفوع: 10.00 • المتبقي: 60.00 ج.م'),findsOneWidget);
+    await tester.tap(find.text('تطبيق الأسعار'));await tester.pumpAndSettle();
+    expect(applied,{'p':35.0});expect(paid,10.0);expect(tester.takeException(),isNull);
+  });
   setUpAll(() async {
     await (FontLoader('InvoicePreview')..addFont(rootBundle.load('assets/fonts/DejaVuSans.ttf'))).load();
   });
