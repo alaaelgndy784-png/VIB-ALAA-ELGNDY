@@ -192,6 +192,7 @@ class Gate extends StatelessWidget {
           final home = Home(canPurchase:data['canPurchase']==true,
             canViewCustomerBalance:data['canViewCustomerBalance']!=false,
             canViewCustomerStatement:data['canViewCustomerStatement']==true,
+            canAddCustomer:data['canAddCustomer']==true,
             key:ValueKey('${auth.data!.uid}:${data['role']}'), uid: auth.data!.uid,
             role: data['role'] as String, branchId: (data['branchId'] ?? '') as String,
             name: (data['name'] ?? '') as String);
@@ -508,9 +509,9 @@ class OfflineCacheNotice extends StatelessWidget {
 
 class Home extends StatefulWidget {
   final String uid, role, branchId, name;
-  final bool canPurchase,canViewCustomerBalance,canViewCustomerStatement;
+  final bool canPurchase,canViewCustomerBalance,canViewCustomerStatement,canAddCustomer;
   const Home({super.key, required this.uid, required this.role, required this.branchId, required this.name,
-    this.canPurchase=false,this.canViewCustomerBalance=true,this.canViewCustomerStatement=false});
+    this.canPurchase=false,this.canViewCustomerBalance=true,this.canViewCustomerStatement=false,this.canAddCustomer=false});
   @override
   State<Home> createState() => _HomeState();
 }
@@ -560,7 +561,7 @@ class _HomeState extends State<Home> {
           : page == 1
               ? Sales(owner: false, branchId: widget.branchId)
               : page == 2
-                  ? StaffCustomers(canViewBalance:widget.canViewCustomerBalance,canViewStatement:widget.canViewCustomerStatement)
+                  ? StaffCustomers(canViewBalance:widget.canViewCustomerBalance,canViewStatement:widget.canViewCustomerStatement,canAddCustomer:widget.canAddCustomer)
                   : ReceiptVouchers(owner: false, branchId: widget.branchId),
       bottomNavigationBar: NavigationBar(
         selectedIndex: page,
@@ -2427,6 +2428,7 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
   bool canEditSalePrice=data['canEditSalePrice']==true;
   bool canViewCustomerBalance=data['canViewCustomerBalance']!=false;
   bool canViewCustomerStatement=data['canViewCustomerStatement']==true;
+  bool canAddCustomer=data['canAddCustomer']==true;
   await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(
     builder: (c, setDialogState) => AlertDialog(
       title: const Text('صلاحيات الموظف'),
@@ -2448,6 +2450,8 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
           onChanged:(v)=>setDialogState(()=>canViewCustomerBalance=v)),
         SwitchListTile(title:const Text('السماح بكشف حساب العميل من تاريخ إلى تاريخ'),value:canViewCustomerStatement,
           onChanged:(v)=>setDialogState(()=>canViewCustomerStatement=v)),
+        SwitchListTile(title:const Text('السماح للموظف بإضافة عميل جديد'),value:canAddCustomer,
+          onChanged:(v)=>setDialogState(()=>canAddCustomer=v)),
       ])),
       actions: [TextButton(onPressed: () => Navigator.pop(c), child: const Text('إلغاء')),
         FilledButton(onPressed: () async {
@@ -2459,6 +2463,7 @@ Future<void> assignEmployee(BuildContext context, String uid, Map<String, dynami
               'showSaleCost':showSaleCost, 'canEditSalePrice':canEditSalePrice,
               'canViewCustomerBalance':canViewCustomerBalance,
               'canViewCustomerStatement':canViewCustomerStatement,
+              'canAddCustomer':canAddCustomer,
             });
             if (c.mounted) Navigator.pop(c);
           } catch (_) {
@@ -5284,15 +5289,23 @@ Future<String?> selectSaleProduct(BuildContext context, List<QueryDocumentSnapsh
   );
 
 class StaffCustomers extends StatefulWidget {
-  final bool canViewBalance,canViewStatement;
-  const StaffCustomers({super.key,this.canViewBalance=true,this.canViewStatement=false});
+  final bool canViewBalance,canViewStatement,canAddCustomer;
+  const StaffCustomers({super.key,this.canViewBalance=true,this.canViewStatement=false,this.canAddCustomer=false});
   @override
   State<StaffCustomers> createState() => _StaffCustomersState();
 }
 class _StaffCustomersState extends State<StaffCustomers> {
   String query = '';
+  Future<void> addCustomer() async {
+    final created = await createInvoiceParty(context, 'customers', false);
+    if (created != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إضافة العميل')));
+    }
+  }
   @override
   Widget build(BuildContext context) => Column(children: [
+    if (widget.canAddCustomer) Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: SizedBox(width: double.infinity,
+      child: FilledButton.icon(onPressed: addCustomer, icon: const Icon(Icons.person_add), label: const Text('إضافة عميل جديد')))),
     Padding(padding: const EdgeInsets.all(12), child: TextField(decoration: const InputDecoration(labelText: 'بحث عن عميل بالاسم أو الهاتف', prefixIcon: Icon(Icons.search)),
       onChanged: (value) => setState(() => query = value.trim().toLowerCase()))),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('customers').snapshots(), builder: (context, snapshot) {

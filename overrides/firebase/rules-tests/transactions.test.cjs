@@ -19,6 +19,22 @@ beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRulesDisab
     await setDoc(doc(db,'stock/main_p'+i),{branchId:'main',productId:'p'+i,quantity:10});
   }
 })});
+function newEmployeeCustomer(overrides={}) {
+  return {name:'New Customer',phone:'01123456789',address:'',note:'',openingBalance:0,balance:0,active:true,
+    createdAt:serverTimestamp(),updatedAt:serverTimestamp(),...overrides};
+}
+test('employee customer creation is disabled until owner grants the explicit permission',async()=>{
+ const staff=env.authenticatedContext('staff').firestore();
+ await assertFails(setDoc(doc(staff,'customers/staff-denied'),newEmployeeCustomer()));
+ await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),'users/staff'),{canAddCustomer:true},{merge:true}));
+ await assertSucceeds(setDoc(doc(staff,'customers/staff-added'),newEmployeeCustomer()));
+ await assertFails(setDoc(doc(staff,'customers/staff-opening-balance'),newEmployeeCustomer({openingBalance:50,balance:50})));
+});
+test('customer-add permission does not authorize adding suppliers',async()=>{
+ await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),'users/staff'),{canAddCustomer:true},{merge:true}));
+ const staff=env.authenticatedContext('staff').firestore();
+ await assertFails(setDoc(doc(staff,'suppliers/staff-added'),newEmployeeCustomer()));
+});
 function saleBatch(db,{n=1,paid,customer=true,mutate=()=>{},omit='',saleId='sale',cashBefore=500,createCash=false,unitPrice=12.35}={}){
   const items=Array.from({length:n},(_,i)=>({productId:'p'+i,productName:'Product'+i,quantity:2,unitPrice,lineTotal:unitPrice*2,purchasePriceAtSale:5}));
   const total=n*unitPrice*2,payment=paid??total,due=total-payment;

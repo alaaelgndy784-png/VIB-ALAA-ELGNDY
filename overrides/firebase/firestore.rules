@@ -6,6 +6,18 @@ service cloud.firestore {
     function active() { return signed() && profile().active == true; }
     function owner() { return signed() && profile().role == 'owner' && profile().active == true; }
     function employee() { return signed() && profile().role == 'employee' && profile().active == true; }
+    function employeeCanAddCustomer() { return employee() && profile().get('canAddCustomer', false) == true; }
+    function validEmployeeCustomer() {
+      let c = request.resource.data;
+      return c.keys().hasOnly(['name','phone','address','note','openingBalance','balance','active','createdAt','updatedAt'])
+        && c.keys().hasAll(['name','phone','address','note','openingBalance','balance','active','createdAt','updatedAt'])
+        && c.name is string && c.name.size() > 0 && c.name.size() <= 100
+        && c.phone is string && c.phone.size() >= 6 && c.phone.size() <= 16
+        && c.address is string && c.address.size() <= 200
+        && c.note is string && c.note.size() <= 500
+        && c.openingBalance == 0 && c.balance == 0 && c.active == true
+        && c.createdAt == request.time && c.updatedAt == request.time;
+    }
     function branch() { return profile().branchId; }
     function whole(n) { return n is int; }
     function natural(n) { return whole(n) && n >= 0; }
@@ -433,7 +445,8 @@ service cloud.firestore {
         && receipt(request.resource.data.lastReceiptId).customerId == id
         && request.resource.data.balance == resource.data.balance - receipt(request.resource.data.lastReceiptId).amount
         && request.resource.data.updatedAt == request.time;
-      allow read, create, update: if owner();
+      allow read, update: if owner();
+      allow create: if owner() || (employeeCanAddCustomer() && validEmployeeCustomer());
       allow delete: if false;
     }
     match /suppliers/{id} {
