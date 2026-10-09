@@ -6,6 +6,18 @@ service cloud.firestore {
     function active() { return signed() && profile().active == true; }
     function owner() { return signed() && profile().role == 'owner' && profile().active == true; }
     function employee() { return signed() && profile().role == 'employee' && profile().active == true; }
+    function employeeCanAddCustomer() { return employee() && profile().get('canAddCustomer', false) == true; }
+    function validEmployeeCustomer() {
+      let c = request.resource.data;
+      return c.keys().hasOnly(['name','phone','address','note','openingBalance','balance','active','createdAt','updatedAt'])
+        && c.keys().hasAll(['name','phone','address','note','openingBalance','balance','active','createdAt','updatedAt'])
+        && c.name is string && c.name.size() > 0 && c.name.size() <= 100
+        && c.phone is string && c.phone.size() >= 6 && c.phone.size() <= 16
+        && c.address is string && c.address.size() <= 200
+        && c.note is string && c.note.size() <= 500
+        && c.openingBalance == 0 && c.balance == 0 && c.active == true
+        && c.createdAt == request.time && c.updatedAt == request.time;
+    }
     function branch() { return profile().branchId; }
     function whole(n) { return n is int; }
     function natural(n) { return whole(n) && n >= 0; }
@@ -30,14 +42,12 @@ service cloud.firestore {
       let cm = getAfter(/databases/$(database)/documents/accountMovements/$(r.customerMovementId)).data;
       let km = getAfter(/databases/$(database)/documents/accountMovements/$(r.cashMovementId)).data;
       return r.keys().hasOnly(['customerId','customerName','customerPhone','amount','balanceBefore','balanceAfter',
-          'cashBefore','cashAfter','actorId','actorName','branchId','note','createdAt','customerMovementId','cashMovementId','invoiceId','receiptDate','paymentMethod','receiptNumber'])
+          'cashBefore','cashAfter','actorId','actorName','branchId','note','createdAt','customerMovementId','cashMovementId','invoiceId','receiptDate'])
         && receiptInvoiceValid(r, id) && validReceiptDate(r)
         && r.actorId == request.auth.uid && r.branchId == branch() && r.actorName == profile().name
         && r.createdAt == request.time && r.amount is number && r.amount > 0 && r.amount <= c.balance
         && c.get('active', true) == true && r.customerName == c.name && r.customerPhone == c.get('phone', '')
         && r.note is string && r.note.size() <= 2000
-        && r.get('paymentMethod', 'نقدي') in ['نقدي','تحويل إنستا باي','تحويل فودافون كاش','تحويل محفظة X','تحويل عن طريق الحساب البنكي']
-        && r.get('receiptNumber', '') is string && r.get('receiptNumber', '').size() <= 80
         && r.balanceBefore == c.balance && r.balanceAfter == c.balance - r.amount
         && ca.balance == r.balanceAfter && ca.lastReceiptId == id
         && r.cashBefore == oldCash && r.cashAfter == oldCash + r.amount
@@ -67,6 +77,24 @@ service cloud.firestore {
         && r.customerId == resource.data.customerId && r.actorId == request.auth.uid
         && next.receiptPaid == resource.data.get('receiptPaid', 0) + r.amount
         && r.amount > 0 && next.receiptPaid <= resource.data.due;
+    }
+    function validPartialSalesReturnUpdate(id) {
+      let next = request.resource.data;
+      let old = resource.data;
+      let returnId = next.get('lastPartialReturnId', '');
+      let returnPath = /databases/$(database)/documents/salesReturns/$(returnId);
+      let r = getAfter(returnPath).data;
+      return returnId is string && returnId != ''
+        && !exists(returnPath)
+        && r.sourceInvoiceId == id && r.returnType == 'partial'
+        && r.actorId == request.auth.uid
+        && r.items is list && r.items.size() == 1
+        && r.total is number && r.total > 0
+        && r.cashRefund is number && r.debtReduction is number
+        && r.total == r.cashRefund + r.debtReduction
+        && next.get('partialReturnTotal', 0) == old.get('partialReturnTotal', 0) + r.total
+        && next.get('partialCashRefund', 0) == old.get('partialCashRefund', 0) + r.cashRefund
+        && next.get('partialDebtReduction', 0) == old.get('partialDebtReduction', 0) + r.debtReduction;
     }
     function saleHasNoReceipt(s) {
       let cid = s.get('customerId', '');
@@ -378,7 +406,6 @@ service cloud.firestore {
       allow create: if purchasingStaff() && staffPurchaseStock(id, 0);
       allow update: if purchasingStaff() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['quantity','lastPurchaseId']) && staffPurchaseStock(id, resource.data.quantity);
     }
-    // Receipt permission-denied follow-up: republish the validated employee receipt rules.
     match /receipts/{id} {
       allow read: if owner();
       allow create: if owner() && receiptInvoiceValid(request.resource.data, id) && validReceiptDate(request.resource.data);
@@ -386,6 +413,32 @@ service cloud.firestore {
       allow list: if employee() && resource.data.actorId == request.auth.uid;
       allow create: if employee() && validReceipt(id);
       allow update, delete: if false;
+    }
+    match /voucherCancellations/{id} {
+      // Cancellation is append-only; the original voucher remains immutable.
+      allow read, create: if owner();
+      allow update, delete: if false;
+    }
+    match /managerOfflineVoucherCancellations/{id} {
+      allow read: if owner();
+      allow create: if owner()
+        && request.resource.data.keys().hasOnly(['type','originalId','actorId','status','createdAt'])
+        && request.resource.data.type in ['receipt','payment']
+        && request.resource.data.originalId is string && request.resource.data.originalId.size() > 0
+        && ((request.resource.data.type == 'receipt' && exists(/databases/$(database)/documents/receipts/$(request.resource.data.originalId)))
+          || (request.resource.data.type == 'payment' && exists(/databases/$(database)/documents/accountMovements/$(request.resource.data.originalId))))
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time;
+      allow update: if owner() && resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','completedAt'])
+        && request.resource.data.status == 'completed' && request.resource.data.completedAt == request.time;
+      allow update: if owner() && resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['createdAt'])
+        && request.resource.data.type == resource.data.type
+        && request.resource.data.originalId == resource.data.originalId
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.createdAt == request.time;
+      allow delete: if false;
     }
     match /stockAdjustments/{id} {
       allow read, create: if owner();
@@ -402,7 +455,8 @@ service cloud.firestore {
         && receipt(request.resource.data.lastReceiptId).customerId == id
         && request.resource.data.balance == resource.data.balance - receipt(request.resource.data.lastReceiptId).amount
         && request.resource.data.updatedAt == request.time;
-      allow read, create, update: if owner();
+      allow read, update: if owner();
+      allow create: if owner() || (employeeCanAddCustomer() && validEmployeeCustomer());
       allow delete: if false;
     }
     match /suppliers/{id} {
@@ -489,10 +543,6 @@ service cloud.firestore {
       allow update: if employee() && resource.data.actorId == request.auth.uid && profile().get('canPrint', false) == true
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy']) && request.resource.data.printedBy == request.auth.uid;
       allow read, create: if owner();
-      allow update: if owner() && resource.data.status == 'completed'
-        && resource.data.get('onlinePaid', 0) == 0
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
-          ['partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction','lastPartialReturnId','status','returnedAt','returnId']);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cashPaidPosted','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
@@ -515,6 +565,26 @@ service cloud.firestore {
         && request.resource.data.total is number && request.resource.data.total >= 0
         && request.resource.data.paid is number && request.resource.data.paid >= 0 && request.resource.data.paid <= request.resource.data.total
         && request.resource.data.requestKey is string && request.resource.data.requestKey.size() <= 100000;
+      // A manager may save a sale draft offline. The draft has no accounting
+      // effect until the normal server transaction revalidates and posts it.
+      allow create: if owner()
+        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey','managerOffline','note','allowShortage','allowBelowCost','overrideReason'])
+        && request.resource.data.id == id && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.employeeName == profile().name && request.resource.data.managerOffline == true
+        && request.resource.data.branchId is string && request.resource.data.branchId.size() > 0
+        && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time
+        && request.resource.data.customerId is string
+        && ((request.resource.data.customerId.size() > 0 && exists(/databases/$(database)/documents/customers/$(request.resource.data.customerId)))
+          || (request.resource.data.customerId == '' && request.resource.data.credit == false
+            && request.resource.data.paid == request.resource.data.total))
+        && request.resource.data.customerName is string && request.resource.data.credit is bool
+        && request.resource.data.items is list && request.resource.data.items.size() > 0 && request.resource.data.items.size() <= 50
+        && request.resource.data.total is number && request.resource.data.total >= 0
+        && request.resource.data.paid is number && request.resource.data.paid >= 0 && request.resource.data.paid <= request.resource.data.total
+        && request.resource.data.requestKey is string && request.resource.data.requestKey.size() <= 100000
+        && request.resource.data.note is string && request.resource.data.note.size() <= 1000
+        && request.resource.data.allowShortage is bool && request.resource.data.allowBelowCost is bool
+        && request.resource.data.overrideReason is string && request.resource.data.overrideReason.size() <= 500;
       allow update: if owner() && resource.data.status == 'pending'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','saleId','reviewedBy','reviewedAt','rejectionReason'])
         && request.resource.data.reviewedBy == request.auth.uid && request.resource.data.reviewedAt == request.time
@@ -525,6 +595,23 @@ service cloud.firestore {
           || (request.resource.data.status == 'rejected' && request.resource.data.rejectionReason is string
             && request.resource.data.rejectionReason.size() > 0 && request.resource.data.rejectionReason.size() <= 500
             && !exists(/databases/$(database)/documents/sales/$(id))));
+      // The manager can correct draft line prices before approval. This only
+      // changes the proposal and audit metadata; it never posts accounting.
+      allow update: if owner() && resource.data.status == 'pending'
+        && request.resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'items','total','paid','requestKey','managerPriceAdjusted','managerOriginalItems',
+          'managerOriginalTotal','managerAdjustedBy','managerAdjustedAt'])
+        && request.resource.data.managerPriceAdjusted == true
+        && request.resource.data.managerAdjustedBy == request.auth.uid
+        && request.resource.data.managerAdjustedAt == request.time
+        && request.resource.data.items is list && request.resource.data.items.size() == resource.data.items.size()
+        && request.resource.data.total is number && request.resource.data.total >= 0
+        && request.resource.data.paid is number && request.resource.data.paid >= 0
+        && request.resource.data.paid <= request.resource.data.total
+        && request.resource.data.requestKey is string && request.resource.data.requestKey.size() <= 100000
+        && request.resource.data.managerOriginalItems is list
+        && request.resource.data.managerOriginalTotal is number;
       // Owner-only removal of rejected proposals. Preserve payload and review audit.
       allow update: if owner() && resource.data.status == 'rejected'
         && resource.data.get('removed', false) == false
@@ -541,7 +628,8 @@ service cloud.firestore {
       allow update: if owner() && resource.data.status == 'completed'
         && resource.data.get('onlinePaid', 0) == 0
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
-          ['partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction','lastPartialReturnId','status','returnedAt','returnId']);
+          ['partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction','lastPartialReturnId','status','returnedAt','returnId'])
+        && validPartialSalesReturnUpdate(id);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy'])
         && (resource.data.get('onlinePaid', 0) == 0 || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy']));

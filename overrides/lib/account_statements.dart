@@ -4,9 +4,10 @@ class AccountPeriodReport {
   final DateTime from,to;
   final String name;
   final bool supplier;
+  final bool fromCache,pendingWrites;
   final int opening,closing,current,increase,decrease;
   final List<Map<String,dynamic>> rows;
-  AccountPeriodReport(this.from,this.to,this.name,this.supplier,this.opening,this.closing,this.current,this.increase,this.decrease,this.rows);
+  AccountPeriodReport(this.from,this.to,this.name,this.supplier,this.opening,this.closing,this.current,this.increase,this.decrease,this.rows,{this.fromCache=false,this.pendingWrites=false});
 }
 int ledgerCents(Object? value) {
   if(value is! num || !value.toDouble().isFinite) throw StateError('يوجد رصيد غير صحيح؛ راجع الحساب');
@@ -48,24 +49,29 @@ class _AccountStatementPageState extends State<AccountStatementPage> {
     from=DateTime(now.year,now.month,1);to=DateTime(now.year,now.month,now.day);report=loadReport();
   }
   Future<AccountPeriodReport> loadReport() async {
-    final snapshot=await db.collection('accountMovements').where('accountId',isEqualTo:widget.id).get(const GetOptions(source:Source.server));
-    final account=await db.collection(widget.collection).doc(widget.id).get(const GetOptions(source:Source.server));
-    if(snapshot.metadata.hasPendingWrites || account.metadata.hasPendingWrites)throw StateError('انتظر تأكيد الحركات من السيرفر');
+    // Firestore can serve this from its persistent local cache when the manager
+    // is offline. Metadata is carried through so stale reports are clearly marked.
+    final snapshot=await db.collection('accountMovements').where('accountId',isEqualTo:widget.id).get();
+    final account=await db.collection(widget.collection).doc(widget.id).get();
     if(account.data()==null)throw StateError('الحساب غير موجود');
     final rows=snapshot.docs.where((d)=>d.data()['accountType']==widget.collection && visibleAfterReset(d.data())).map((d)=>{...d.data(),'id':d.id}).toList();
     for(final row in rows) {
       final ref='${row['referenceId'] ?? ''}',kind='${row['kind'] ?? ''}';
       final type=kind=='sale' || kind=='saleCorrection' ? 'sales' : kind=='purchase' || kind=='purchaseCorrection' ? 'purchases' : null;
       if(type!=null && ref.isNotEmpty) {
-        final invoice=(await db.collection(type).doc(ref).get(const GetOptions(source:Source.server))).data();
+        final invoice=(await db.collection(type).doc(ref).get()).data();
         row['referenceLabel']=invoice==null?ref:invoiceDisplayNumber(type,ref,invoice);
       } else row['referenceLabel']=ref;
     }
-    return summarizeAccountPeriod(rows,account.data()!,from,to,supplier:widget.collection=='suppliers');
+    final report=summarizeAccountPeriod(rows,account.data()!,from,to,supplier:widget.collection=='suppliers');
+    return AccountPeriodReport(report.from,report.to,report.name,report.supplier,report.opening,report.closing,report.current,
+      report.increase,report.decrease,report.rows,fromCache:snapshot.metadata.isFromCache||account.metadata.isFromCache,
+      pendingWrites:snapshot.metadata.hasPendingWrites||account.metadata.hasPendingWrites);
   }
   Future<void> printReport(AccountPeriodReport data) async {
     try {
       final confirmed=await loadReport();
+      if(confirmed.fromCache||confirmed.pendingWrites)throw StateError('يتطلب حفظ كشف الحساب تأكيد مزامنة البيانات أولًا');
       final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
       final bytes=await createAccountStatementPdf(confirmed,font);
       await Printing.layoutPdf(name:'VIB-ACCOUNT-${widget.id}.pdf',onLayout:(_)async=>bytes);
@@ -80,11 +86,13 @@ class _AccountStatementPageState extends State<AccountStatementPage> {
       return Column(children:[
         Card(child:Padding(padding:const EdgeInsets.all(10),child:Column(children:[
           Text(r.name,style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
+          if(r.fromCache||r.pendingWrites)Text(r.pendingWrites?'بيانات محلية بها تغييرات تنتظر المزامنة':'كشف من النسخة المحلية؛ اتصل بالإنترنت لتأكيد الأرقام والطباعة',
+            style:const TextStyle(color:Colors.orangeAccent,fontWeight:FontWeight.bold),textAlign:TextAlign.center),
           Text('رصيد أول المدة: ${receiptReportMoney(r.opening)}'),
           Text('زيادة الدين: ${receiptReportMoney(r.increase)} • تخفيض الدين: ${receiptReportMoney(r.decrease)}'),
           Text('رصيد آخر المدة: ${receiptReportMoney(r.closing)}',style:const TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold)),
           Text('الرصيد الحالي: ${receiptReportMoney(r.current)}'),
-          OutlinedButton.icon(onPressed:()=>printReport(r),icon:const Icon(Icons.picture_as_pdf),label:const Text('طباعة / حفظ كشف الحساب PDF')),
+          OutlinedButton.icon(onPressed:r.fromCache||r.pendingWrites?null:()=>printReport(r),icon:const Icon(Icons.picture_as_pdf),label:const Text('طباعة / حفظ كشف الحساب PDF')),
         ]))),
         Expanded(child:r.rows.isEmpty?const Center(child:Text('لا توجد حركات خلال الفترة؛ رصيد أول وآخر المدة ظاهر بالأعلى')):
           ListView.builder(itemCount:r.rows.length,itemBuilder:(context,i){final row=r.rows[i];final delta=row['deltaCents'] as int;

@@ -10,27 +10,100 @@ class MovementPeriodControls extends StatefulWidget {
 }
 class _MovementPeriodControlsState extends State<MovementPeriodControls> {
   late DateTime start = widget.from, end = widget.to;
+  late final TextEditingController startText = TextEditingController(text: _format(start));
+  late final TextEditingController endText = TextEditingController(text: _format(end));
+  bool startInputValid = true, endInputValid = true;
+
+  String _format(DateTime value) => DateFormat('dd/MM/yyyy').format(value);
+  DateTime? _parse(String value) {
+    try {
+      final normalized = invoiceSearchText(value);
+      // People often type dates without leading zeroes (1/10/2026), and the
+      // Android Arabic keyboard can enter Arabic-Indic digits. Normalize both
+      // forms before validating so the apply button does not stay disabled for
+      // an otherwise valid date.
+      final match = RegExp(r'^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$').firstMatch(normalized);
+      if (match == null) return null;
+      final day = int.parse(match.group(1)!);
+      final month = int.parse(match.group(2)!);
+      final year = int.parse(match.group(3)!);
+      final date = DateTime(year, month, day);
+      if (date.year != year || date.month != month || date.day != day) return null;
+      final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
+      if (date.year < 2000 || date.isAfter(DateTime(now.year, now.month, now.day))) return null;
+      return date;
+    } catch (_) { return null; }
+  }
+  void _editDate(bool first, String value) {
+    final parsed = _parse(value);
+    setState(() {
+      if (first) {
+        startInputValid = parsed != null;
+        if (parsed != null) start = parsed;
+      } else {
+        endInputValid = parsed != null;
+        if (parsed != null) end = parsed;
+      }
+    });
+  }
+  void _setDate(bool first, DateTime value) {
+    final date = DateTime(value.year, value.month, value.day);
+    setState(() {
+      if (first) { start = date; startText.text = _format(date); startInputValid = true; }
+      else { end = date; endText.text = _format(date); endInputValid = true; }
+    });
+  }
   Future<void> pick(bool first) async {
     final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
     final date = await showDatePicker(context: context, initialDate: first ? start : end,
       firstDate: DateTime(2000), lastDate: DateTime(now.year, now.month, now.day),
       helpText: first ? 'من تاريخ' : 'إلى تاريخ', confirmText: 'اختيار', cancelText: 'إلغاء');
-    if (date != null && mounted) setState(() { if (first) start = date; else end = date; });
+    if (date != null && mounted) _setDate(first, date);
+  }
+  @override void dispose() {
+    startText.dispose();
+    endText.dispose();
+    super.dispose();
   }
   @override Widget build(BuildContext context) => Padding(padding: const EdgeInsets.all(12),
-    child: Column(children: [Wrap(spacing: 8, runSpacing: 8, children: [
-      OutlinedButton.icon(onPressed: widget.enabled ? () => pick(true) : null,
-        icon: const Icon(Icons.calendar_month), label: Text('من: ${DateFormat('dd/MM/yyyy').format(start)}')),
-      OutlinedButton.icon(onPressed: widget.enabled ? () => pick(false) : null,
-        icon: const Icon(Icons.calendar_month), label: Text('إلى: ${DateFormat('dd/MM/yyyy').format(end)}')),
-      FilledButton.icon(onPressed: widget.enabled && !end.isBefore(start) ? () => widget.onConfirm(start, end) : null,
-        icon: const Icon(Icons.check), label: const Text('موافق')),
-      TextButton.icon(onPressed: widget.enabled ? () => setState(() {
-        final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
-        start = end = DateTime(now.year, now.month, now.day);
-      }) : null, icon: const Icon(Icons.today), label: const Text('اليوم')),
-    ]), if(end.isBefore(start)) const Text('تاريخ النهاية يجب أن يكون بعد البداية أو نفس اليوم', style: TextStyle(color: Colors.redAccent)),
-      const Text('اختر البداية والنهاية ثم اضغط موافق لعرض إجمالي الفترة، شامل يوم النهاية.'),
+    child: Column(children: [
+      Row(children: [
+        Expanded(child: TextField(key: const ValueKey('period-from-input'), controller: startText,
+          enabled: widget.enabled, keyboardType: TextInputType.datetime, textAlign: TextAlign.center,
+          onChanged: (value) => _editDate(true, value),
+          decoration: const InputDecoration(labelText: 'من تاريخ', hintText: 'يوم/شهر/سنة',
+            border: OutlineInputBorder(), isDense: true))),
+        const SizedBox(width: 8),
+        Expanded(child: TextField(key: const ValueKey('period-to-input'), controller: endText,
+          enabled: widget.enabled, keyboardType: TextInputType.datetime, textAlign: TextAlign.center,
+          onChanged: (value) => _editDate(false, value),
+          decoration: const InputDecoration(labelText: 'إلى تاريخ', hintText: 'يوم/شهر/سنة',
+            border: OutlineInputBorder(), isDense: true))),
+      ]),
+      const SizedBox(height: 8),
+      Wrap(spacing: 8, runSpacing: 8, children: [
+        OutlinedButton.icon(onPressed: widget.enabled ? () => pick(true) : null,
+          icon: const Icon(Icons.calendar_month), label: const Text('اختيار البداية')),
+        OutlinedButton.icon(onPressed: widget.enabled ? () => pick(false) : null,
+          icon: const Icon(Icons.calendar_month), label: const Text('اختيار النهاية')),
+        FilledButton.icon(key: const ValueKey('period-apply-button'), onPressed: widget.enabled && startInputValid && endInputValid && !end.isBefore(start)
+            ? () => widget.onConfirm(start, end) : null,
+          icon: const Icon(Icons.check), label: const Text('تطبيق الفترة')),
+        TextButton.icon(onPressed: widget.enabled ? () {
+          final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
+          final today = DateTime(now.year, now.month, now.day);
+          setState(() {
+            start = end = today;
+            startText.text = endText.text = _format(today);
+            startInputValid = endInputValid = true;
+          });
+        } : null, icon: const Icon(Icons.today), label: const Text('اليوم')),
+      ]),
+      if (!startInputValid || !endInputValid)
+        const Text('اكتب التاريخ بصيغة يوم/شهر/سنة، مثل 05/10/2026.', style: TextStyle(color: Colors.redAccent)),
+      if (startInputValid && endInputValid && end.isBefore(start))
+        const Text('تاريخ النهاية يجب أن يكون بعد البداية أو في نفس اليوم.', style: TextStyle(color: Colors.redAccent)),
+      const Text('اكتب التاريخين أو اخترهما، ثم اضغط تطبيق الفترة لعرض الحركة شاملًا يوم النهاية.'),
     ]));
 }
 

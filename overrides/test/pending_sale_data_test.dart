@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import '../lib/pending_sale_data.dart';
 
-Map<String,dynamic> request(int n)=>{'customerId':'customer','credit':true,'paid':10.0,'total':-999,
+Map<String,dynamic> request(int n)=>{'customerId':'customer','credit':true,'paid':10.0,'total':n*22.23,
   'items':[for(var i=0;i<n;i++){'productId':'p$i','quantity':2,'unitPrice':11.115,'basePrice':12.35,'discountPercent':10}]};
 void main() {
   test('five and fifty item proposals recalculate totals instead of trusting supplied totals',() {
@@ -27,5 +27,24 @@ void main() {
   test('cash proposal must pay the complete calculated amount',() {
     final draft=request(5);draft['credit']=false;draft['paid']=5*22.23;
     expect(PendingSaleData.parse(draft).paid,closeTo(111.15,0.000001));
+  });
+  test('manager repricing recalculates totals and preserves the original quote',() {
+    final draft=request(5);
+    final edited=repricePendingSale(draft,List<double>.filled(5,20));
+    expect(edited['total'],closeTo(200,0.000001));expect(edited['paid'],10);
+    expect(edited['managerPriceAdjusted'],true);expect(edited['managerOriginalTotal'],closeTo(111.15,0.000001));
+    expect((edited['managerOriginalItems'] as List).first['unitPrice'],11.115);
+    final cash=request(5)..['credit']=false..['paid']=111.15;
+    final cashEdited=repricePendingSale(cash,List<double>.filled(5,20));
+    expect(cashEdited['total'],closeTo(200,0.000001));expect(cashEdited['paid'],closeTo(200,0.000001));
+    expect(()=>repricePendingSale(request(5),[1]),throwsFormatException);
+    final mismatch=request(5)..['total']=999;
+    expect(()=>PendingSaleData.parse(mismatch),throwsFormatException);
+  });
+  test('cash offline sale can be queued without a customer; credit sale still requires one',() {
+    final draft=request(1);draft['customerId']='';draft['credit']=false;draft['paid']=22.23;
+    expect(PendingSaleData.parse(draft).customerId,'');
+    draft['credit']=true;
+    expect(()=>PendingSaleData.parse(draft),throwsFormatException);
   });
 }

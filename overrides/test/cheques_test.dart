@@ -31,6 +31,19 @@ void main() {
     expect(() => planChequeReminders([cheque(),cheque(id:'collision')],now),throwsStateError);
     expect(() => planChequeReminders(List.generate(301,(i) => cheque(id:'$i',notificationId:i+1)),now),throwsStateError);
   });
+  test('nearest cheque with an active reminder stays highlighted until marked done',(){
+    final rows=<Map<String,dynamic>>[
+      {'id':'far','dueDate':'2026-11-20','status':'open','reminderEnabled':true},
+      {'id':'near','dueDate':'2026-10-10','status':'open','reminderEnabled':true},
+      {'id':'disabled','dueDate':'2026-10-09','status':'open','reminderEnabled':false},
+      {'id':'done','dueDate':'2026-10-09','status':'done','reminderEnabled':true},
+    ];
+    expect(nearestRemindedChequeId(rows,DateTime(2026,10,9)),'near');
+    rows[1]['status']='done';
+    expect(nearestRemindedChequeId(rows,DateTime(2026,10,9)),'far');
+    rows[0]['status']='done';
+    expect(nearestRemindedChequeId(rows,DateTime(2026,10,9)),isNull);
+  });
   test('editing, completion and deletion retain notification identity and reject stale edits',() {
     final created=editChequeLedger([],{'id':'one','number':'1'},1);
     expect(created.records.single['notificationId'],1);expect(created.nextId,2);

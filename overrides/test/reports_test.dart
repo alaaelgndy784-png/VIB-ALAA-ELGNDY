@@ -12,7 +12,44 @@ import '../lib/inventory_rows.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async { initializeChequeTimeZones(); final loader=FontLoader('VIBQA')..addFont(rootBundle.load('assets/fonts/DejaVuSans.ttf'));await loader.load(); });
+  test('profit presets cover one, two, three, seven days, month and year; custom end includes its selected minute',(){
+    final now=DateTime(2026,10,9,12,34,27);
+    expect(profitPresetRange('day',now).start,DateTime(2026,10,9));
+    expect(profitPresetRange('twoDays',now).start,DateTime(2026,10,8));
+    expect(profitPresetRange('threeDays',now).start,DateTime(2026,10,7));
+    expect(profitPresetRange('week',now).start,DateTime(2026,10,3));
+    expect(profitPresetRange('month',now).start,DateTime(2026,10,1));
+    expect(profitPresetRange('year',now).start,DateTime(2026,1,1));
+    expect(profitPresetRange('day',now).end,now);
+    expect(profitQueryEnd(DateTime(2026,10,9,12,34)),DateTime(2026,10,9,12,35));
+    expect(profitQueryEnd(now),now);
+  });
+
   final day=DateTime(2026,10,4);
+  testWidgets('typed sales report dates are applied when the period button is pressed', (tester) async {
+    DateTime? appliedFrom, appliedTo;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MovementPeriodControls(
+      from: DateTime(2026, 10, 8), to: DateTime(2026, 10, 8), enabled: true,
+      onConfirm: (from, to) { appliedFrom = from; appliedTo = to; },
+    ))));
+    await tester.enterText(find.byKey(const ValueKey('period-from-input')), '01/10/2026');
+    await tester.enterText(find.byKey(const ValueKey('period-to-input')), '05/10/2026');
+    await tester.pump();
+    final apply = find.byKey(const ValueKey('period-apply-button'));
+    expect(tester.widget<FilledButton>(apply).onPressed, isNotNull);
+    await tester.tap(apply);
+    expect(appliedFrom, DateTime(2026, 10, 1));
+    expect(appliedTo, DateTime(2026, 10, 5));
+    expect(tester.takeException(), isNull);
+  });
+
+  test('employee online status expires after a missed heartbeat', () {
+    final now=DateTime(2026,10,9,10);
+    expect(staffPresenceIsOnline({'online':true,'lastSeen':Timestamp.fromDate(now.subtract(const Duration(seconds:74)))},now),isTrue);
+    expect(staffPresenceIsOnline({'online':true,'lastSeen':Timestamp.fromDate(now.subtract(const Duration(seconds:76)))},now),isFalse);
+    expect(staffPresenceIsOnline({'online':false,'lastSeen':Timestamp.fromDate(now)},now),isFalse);
+    expect(staffPresenceIsOnline(null,now),isFalse);
+  });
   Map<String,dynamic> invoice(String id,num total,{num? paid,num? due,num receipts=0,String status='completed',DateTime? at}) => {
     'id':id,'displayNumber':id,'customerName':'عميل $id','supplierName':'مورد $id',
     'total':total,if(paid!=null)'paid':paid,if(due!=null)'due':due,'receiptPaid':receipts,
@@ -41,6 +78,15 @@ void main() {
     expect(summarizeReceiptPeriod([row],DateTime(2026,10,5),DateTime(2026,10,5)).receiptCount,0);
     final statement=summarizeAccountPeriod([row],{'name':'عميل','balance':80},DateTime(2026,10,1),DateTime(2026,10,3),supplier:false);
     expect(statement.opening,10000);expect(statement.closing,8000);expect(statement.rows.length,1);
+  });
+  test('append-only receipt cancellation reverses the customer ledger without deleting the receipt',(){
+    final at=Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,2)));
+    final report=summarizeAccountPeriod([
+      {'id':'receipt','kind':'collection','amount':20,'balanceBefore':100,'balanceAfter':80,'createdAt':at},
+      {'id':'cancel','kind':'collectionCancellation','amount':20,'balanceBefore':80,'balanceAfter':100,'createdAt':Timestamp.fromDate(at.toDate().add(const Duration(minutes:5)))},
+    ],{'name':'عميل','balance':100},DateTime(2026,10,1),DateTime(2026,10,3),supplier:false);
+    expect(report.opening,10000);expect(report.closing,10000);expect(report.rows.length,2);
+    expect(report.increase,2000);expect(report.decrease,2000);
   });
   testWidgets('staff percentage discount stays available with manual price locked',(tester)async{
     staffApp=true;addTearDown(()=>staffApp=false);
@@ -208,9 +254,11 @@ void main() {
       from:DateTime(2026,10,1),to:DateTime(2026,10,3),enabled:true,
       onConfirm:(a,b){selectedStart=a;selectedEnd=b;}))));
     expect(selectedStart,isNull);
-    expect(find.text('من: 01/10/2026'),findsOneWidget);
-    expect(find.text('إلى: 03/10/2026'),findsOneWidget);
-    await tester.tap(find.text('موافق'));await tester.pump();
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('period-from-input'))).controller!.text,'01/10/2026');
+    expect(tester.widget<TextField>(find.byKey(const ValueKey('period-to-input'))).controller!.text,'03/10/2026');
+    final apply=find.byKey(const ValueKey('period-apply-button'));
+    expect(tester.widget<FilledButton>(apply).onPressed,isNotNull);
+    await tester.tap(apply);await tester.pump();
     expect(selectedStart,DateTime(2026,10,1));expect(selectedEnd,DateTime(2026,10,3));
     final report=summarizeInvoiceMovement([
       invoice('first',10,at:movementReportBoundary(selectedStart!)),
@@ -350,6 +398,7 @@ void main() {
     }
   });
 }
+
 
 
 

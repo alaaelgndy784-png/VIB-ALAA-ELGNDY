@@ -1,5 +1,22 @@
 part of 'main.dart';
 
+DateTimeRange profitPresetRange(String period, DateTime now) {
+  final today = DateTime(now.year, now.month, now.day);
+  final start = switch (period) {
+    'twoDays' => today.subtract(const Duration(days: 1)),
+    'threeDays' => today.subtract(const Duration(days: 2)),
+    'week' => today.subtract(const Duration(days: 6)),
+    'month' => DateTime(now.year, now.month, 1),
+    'year' => DateTime(now.year, 1, 1),
+    _ => today,
+  };
+  return DateTimeRange(start: start, end: now);
+}
+
+DateTime profitQueryEnd(DateTime selectedEnd) =>
+    selectedEnd.second == 0 && selectedEnd.millisecond == 0 && selectedEnd.microsecond == 0
+        ? selectedEnd.add(const Duration(minutes: 1)) : selectedEnd;
+
 class InvoiceMovementReportRow {
   final String id, number, customer;
   final DateTime date;

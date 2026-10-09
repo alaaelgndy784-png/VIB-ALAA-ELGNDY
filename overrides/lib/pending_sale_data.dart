@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 // Pending invoices are untrusted proposals. Revalidate before posting accounts.
 class PendingSaleLine {
   final String id;
@@ -34,12 +36,35 @@ class PendingSaleData {
       lines.add(PendingSaleLine(id,qty,price,base,discount));
       total+=qty*price;
     }
-    final customer=data['customerId'],credit=data['credit'];
-    if(customer is! String || customer.isEmpty || customer.contains('/') || credit is! bool || !total.isFinite) {
-      throw const FormatException('اختر عميلًا مسجلًا وراجع طريقة الدفع');
+    final declaredTotal=data['total'];
+    if(declaredTotal is! num || !declaredTotal.toDouble().isFinite ||
+      (declaredTotal.toDouble()-total).abs()>0.005) {
+      throw const FormatException('إجمالي الفاتورة لا يطابق أسعار الأصناف');
     }
+    final customer=data['customerId'],credit=data['credit'];
     final paid=amount(data['paid']);
+    if(customer is! String || (customer.isNotEmpty && customer.contains('/')) || credit is! bool || !total.isFinite ||
+      (customer.isEmpty && (credit || (paid-total).abs()>0.000001))) throw const FormatException('اختر عميلًا مسجلًا للآجل وراجع طريقة الدفع');
     if(paid>total || (!credit && (paid-total).abs()>0.000001)) throw const FormatException('المدفوع غير صحيح');
     return PendingSaleData(lines,customer,credit,total,paid);
   }
+}
+
+Map<String,dynamic> repricePendingSale(Map<String,dynamic> data,List<double> prices) {
+  final parsed=PendingSaleData.parse(data);
+  if(prices.length!=parsed.lines.length || prices.any((p)=>!p.isFinite || p<0)) {
+    throw const FormatException('راجع أسعار الأصناف');
+  }
+  final items=(data['items'] as List).map((x)=>Map<String,dynamic>.from(x as Map)).toList();
+  var total=0.0;
+  for(var i=0;i<items.length;i++) {
+    items[i]['unitPrice']=prices[i];
+    total+=prices[i]*parsed.lines[i].quantity;
+  }
+  final paid=parsed.credit ? parsed.paid : total;
+  if(paid>total+0.005) throw const FormatException('المدفوع أكبر من الإجمالي الجديد؛ راجع المبلغ المدفوع');
+  final requestKey=jsonEncode({'customerId':parsed.customerId,'credit':parsed.credit,'paid':paid,'items':items});
+  return {'items':items,'total':total,'paid':paid,'requestKey':requestKey,
+    'managerPriceAdjusted':true,'managerOriginalItems':data['managerOriginalItems'] ?? data['items'],
+    'managerOriginalTotal':data['managerOriginalTotal'] ?? parsed.total};
 }

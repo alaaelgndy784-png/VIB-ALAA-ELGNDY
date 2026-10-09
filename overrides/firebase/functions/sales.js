@@ -20,16 +20,12 @@ async function saveStaffSale(db, FieldValue, ErrorType, uid, input) {
         !Number.isSafeInteger(item.quantity) || item.quantity < 1 || item.quantity > 1000000)
       fail('invalid-argument', 'راجع الأصناف والكميات ولا تكرر الصنف');
     money(item.unitPrice);
-    if (item.basePrice !== undefined) money(item.basePrice);
-    const discount = item.discountPercent === undefined ? 0 : item.discountPercent;
-    if (typeof discount !== 'number' || !Number.isFinite(discount) || discount < 0 || discount > 100)
-      fail('invalid-argument', 'نسبة الخصم غير صحيحة');
     seen.add(item.productId);
   }
   const requestedPaid = money(input.paid);
   const fingerprint = crypto.createHash('sha256').update(JSON.stringify({
     customerId: input.customerId, credit: input.credit, paid: requestedPaid,
-    items: input.items.map(x => [x.productId, x.quantity, money(x.unitPrice), money(x.basePrice ?? x.unitPrice), x.discountPercent ?? 0]),
+    items: input.items.map(x => [x.productId, x.quantity, money(x.unitPrice)]),
   })).digest('hex');
   const saleRef = db.collection('sales').doc(input.requestId);
   return db.runTransaction(async (tx) => {
@@ -61,13 +57,8 @@ async function saveStaffSale(db, FieldValue, ErrorType, uid, input) {
     const items = input.items.map((line, i) => {
       const product = products[i].data();
       if (!product || product.active !== true) fail('failed-precondition', 'الصنف غير متاح');
-      const productPrice = money(product.price);
-      const basePrice = money(line.basePrice ?? line.unitPrice);
-      const price = money(line.unitPrice);
-      const discount = line.discountPercent ?? 0;
-      const discountedPrice = Math.round(basePrice * (100 - discount) / 100);
-      if (profile.canEditSalePrice !== true && (basePrice !== productPrice || price !== discountedPrice))
-        fail('permission-denied', 'تعديل سعر الصنف يحتاج صلاحية المدير');
+      const price = money(product.price);
+      if (price !== money(line.unitPrice)) fail('failed-precondition', 'سعر الصنف اتغير؛ افتح الفاتورة من جديد');
       if (product.purchasePrice != null && price < money(product.purchasePrice))
         fail('permission-denied', 'البيع أقل من التكلفة يحتاج صلاحية المدير');
       const available = stocks[i].data()?.quantity ?? 0;
@@ -75,9 +66,8 @@ async function saveStaffSale(db, FieldValue, ErrorType, uid, input) {
         fail('failed-precondition', 'الكمية غير متاحة للصنف ' + product.name);
       totalCents += price * line.quantity;
       return {productId: line.productId, productName: product.name,
-        quantity: line.quantity, unitPrice: price / 100, basePrice: basePrice / 100,
-        discountPercent: discount, lineTotal: price * line.quantity / 100,
-        purchasePriceAtSale: product.purchasePrice ?? 0};
+        quantity: line.quantity, unitPrice: price / 100, lineTotal: price * line.quantity / 100,
+        ...(product.purchasePrice != null ? {purchasePriceAtSale: product.purchasePrice} : {})};
     });
     if (!Number.isSafeInteger(totalCents) || totalCents > 1e12) fail('invalid-argument', 'إجمالي الفاتورة غير صحيح');
     const paidCents = input.credit ? requestedPaid : totalCents;
@@ -125,9 +115,7 @@ async function saveStaffSale(db, FieldValue, ErrorType, uid, input) {
     const sale = {branchId: profile.branchId, stockBranchId: 'main', employeeId: uid,
       customerId: input.customerId, customerName, customerPhone,
       customerPreviousBalance: beforeCustomer / 100, customerBalanceAfter: afterCustomer / 100,
-      items, itemCount: items.length, stockIndex: Object.fromEntries(items.map((item, i) => [item.productId, i])),
-      cashBefore: beforeCash / 100, cashAfter: (beforeCash + paidCents) / 100,
-      total: totalCents / 100, paid: paidCents / 100,
+      items, itemCount: items.length, total: totalCents / 100, paid: paidCents / 100,
       due: dueCents / 100, paymentStatus: dueCents > 0 ? 'credit' : 'cash',
       status: 'completed', createdAt: now, requestFingerprint: fingerprint,
       ...(items.length === 1 ? {productId: items[0].productId, productName: items[0].productName,
