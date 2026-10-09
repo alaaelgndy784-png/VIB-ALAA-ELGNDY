@@ -239,6 +239,22 @@ test('owner cannot update partial-return summary without a matching return recor
  await assertFails(setDoc(doc(db,'sales/editable'),{partialReturnQuantities:{'0':1},partialReturnTotal:12.35,
   partialCashRefund:0,partialDebtReduction:12.35,lastPartialReturnId:'missing'},{merge:true}));
 });
+test('owner can atomically record a partial purchase return with its invoice summary',async()=>{
+ await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'purchases/purchase-editable'),{id:'purchase-editable',status:'completed',total:30,paid:10,due:20,cashPosted:true,supplierId:'supplier',createdAt:new Date('2026-01-01')}));
+ const db=env.authenticatedContext('owner').firestore(),b=writeBatch(db),ts=serverTimestamp();
+ b.set(doc(db,'purchaseReturns/partial-purchase'),{sourceInvoiceId:'purchase-editable',returnType:'partial',sourceItemIndex:0,
+  items:[{sourceItemIndex:0,productId:'p0',productName:'Product0',quantity:1,unitCost:12.35,lineTotal:12.35}],
+  total:12.35,cashRefund:4.12,debtReduction:8.23,supplierId:'supplier',supplierName:'Supplier',createdAt:ts,actorId:'owner'});
+ b.update(doc(db,'purchases/purchase-editable'),{partialReturnQuantities:{'0':1},partialReturnTotal:12.35,
+  partialCashRefund:4.12,partialDebtReduction:8.23,lastPartialReturnId:'partial-purchase'});
+ await assertSucceeds(b.commit());
+});
+test('owner cannot change partial purchase totals without a matching return record',async()=>{
+ await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'purchases/purchase-editable'),{id:'purchase-editable',status:'completed',total:30,paid:10,due:20,cashPosted:true,supplierId:'supplier'}));
+ const db=env.authenticatedContext('owner').firestore();
+ await assertFails(setDoc(doc(db,'purchases/purchase-editable'),{partialReturnQuantities:{'0':1},partialReturnTotal:12.35,
+  partialCashRefund:4.12,partialDebtReduction:8.23,lastPartialReturnId:'missing'},{merge:true}));
+});
 test('staff receipt links invoice atomically and prevents later edits',async()=>{
  await seedEditableSale();
  const db=env.authenticatedContext('staff').firestore(),b=writeBatch(db),ts=serverTimestamp();
