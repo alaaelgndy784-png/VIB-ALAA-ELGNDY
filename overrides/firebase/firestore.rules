@@ -349,6 +349,16 @@ service cloud.firestore {
       allow create, update: if owner();
       allow delete: if false;
     }
+    match /presence/{uid} {
+      // Employees publish only their own short-lived online heartbeat. The manager can read all states.
+      allow read: if owner() || (employee() && request.auth.uid == uid);
+      allow create, update: if employee() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['online','lastSeen'])
+        && request.resource.data.keys().hasAll(['online','lastSeen'])
+        && request.resource.data.online is bool
+        && request.resource.data.lastSeen == request.time;
+      allow delete: if false;
+    }
     match /products/{id} {
       allow read: if active();
       allow write: if owner();
