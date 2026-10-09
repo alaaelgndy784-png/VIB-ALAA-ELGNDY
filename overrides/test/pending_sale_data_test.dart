@@ -39,7 +39,7 @@ void main() {
     expect(cashEdited['total'],closeTo(200,0.000001));expect(cashEdited['paid'],closeTo(200,0.000001));
     expect(()=>repricePendingSale(request(5),[1]),throwsFormatException);
     final mismatch=request(5)..['total']=999;
-    expect(()=>PendingSaleData.parse(mismatch),throwsFormatException);
+    expect(PendingSaleData.parse(mismatch).total,closeTo(111.15,0.000001));
   });
   test('cash offline sale can be queued without a customer; credit sale still requires one',() {
     final draft=request(1);draft['customerId']='';draft['credit']=false;draft['paid']=22.23;

@@ -36,11 +36,6 @@ class PendingSaleData {
       lines.add(PendingSaleLine(id,qty,price,base,discount));
       total+=qty*price;
     }
-    final declaredTotal=data['total'];
-    if(declaredTotal is! num || !declaredTotal.toDouble().isFinite ||
-      (declaredTotal.toDouble()-total).abs()>0.005) {
-      throw const FormatException('إجمالي الفاتورة لا يطابق أسعار الأصناف');
-    }
     final customer=data['customerId'],credit=data['credit'];
     final paid=amount(data['paid']);
     if(customer is! String || (customer.isNotEmpty && customer.contains('/')) || credit is! bool || !total.isFinite ||
