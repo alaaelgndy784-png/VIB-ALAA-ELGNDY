@@ -558,7 +558,9 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
             final latest=(await ref.get(const GetOptions(source:Source.server))).data();
             if(latest==null)throw Exception('الطلب غير موجود');
             final parsed=PendingSaleData.parse(latest);
-            final entries=parsed.lines.map((x)=>(id:x.id,name:x.name,qty:x.quantity,price:adjustedPrices[x.id]??x.price,cost:null as double?,discount:x.discount,basePrice:x.basePrice)).toList();
+            final names=<String,String>{for(final raw in (latest['items'] as List? ?? const []).whereType<Map>())
+              '${raw['productId']}':'${raw['productName']??''}'};
+            final entries=parsed.lines.map((x)=>(id:x.id,name:names[x.id]??'',qty:x.quantity,price:adjustedPrices[x.id]??x.price,cost:null as double?,discount:x.discount,basePrice:x.basePrice)).toList();
             final total=entries.fold<double>(0,(sum,e)=>sum+e.qty*e.price);
             final payment=parsed.credit?parsed.paid:total;
             final priceEdits=<String,double>{for(final e in entries)if((parsed.lines.firstWhere((line)=>line.id==e.id).price-e.price).abs()>0.000001)e.id:e.price};
