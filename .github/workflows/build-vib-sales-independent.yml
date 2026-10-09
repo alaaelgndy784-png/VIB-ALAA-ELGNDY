@@ -198,7 +198,7 @@ jobs:
 
 
   publish-direct-apks:
-    if: github.ref == 'refs/heads/main'
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/codex/vib-sales-apk-20261009'
     needs: build
     runs-on: ubuntu-latest
     steps:
