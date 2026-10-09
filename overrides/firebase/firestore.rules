@@ -111,7 +111,7 @@ service cloud.firestore {
         && r.total is number && r.total > 0
         && r.cashRefund is number && r.cashRefund >= 0
         && r.debtReduction is number && r.debtReduction >= 0
-        && r.total == r.cashRefund + r.debtReduction
+        && moneyEqual(r.total, r.cashRefund + r.debtReduction)
         && next.get('partialReturnQuantities', {}).get(lineKey, 0)
           == old.get('partialReturnQuantities', {}).get(lineKey, 0) + r.sourceQuantity
         && next.get('partialReturnTotal', 0) == old.get('partialReturnTotal', 0) + r.total
