@@ -172,43 +172,53 @@ class _InvoiceReturnPageState extends State<InvoiceReturnPage> {
   final number=TextEditingController();
   List<QueryDocumentSnapshot<Map<String,dynamic>>> invoices=[];
   String error='';bool loading=false;
+  late DateTime fromDate,toDate;
   bool get sales=>widget.type=='sales';
+  @override void initState(){super.initState();final today=DateTime.now();fromDate=DateTime(today.year,today.month,today.day);toDate=fromDate;}
   @override void dispose(){number.dispose();super.dispose();}
+  Future<void> chooseDate(bool start) async {
+    final current=start?fromDate:toDate;
+    final value=await showDatePicker(context:context,initialDate:current,firstDate:DateTime(2000),lastDate:DateTime(2100));
+    if(value==null||!mounted)return;
+    setState(()=>start?fromDate=DateTime(value.year,value.month,value.day):toDate=DateTime(value.year,value.month,value.day));
+  }
   Future<void> find() async {
     setState((){loading=true;error='';invoices=[];});
     try {
+      if(toDate.isBefore(fromDate))throw StateError('تاريخ النهاية لازم يكون بعد تاريخ البداية أو نفس اليوم');
       final key=number.text.trim();
       final query=db.collection(widget.type);
-      // Show all matching numbers rather than choosing an ambiguous supplier invoice.
-      final result=key.isEmpty?await query.orderBy('createdAt',descending:true).limit(100).get(const GetOptions(source:Source.server)):
-        await query.where('invoiceNumber',isEqualTo:key).get(const GetOptions(source:Source.server));
-      final rows=result.docs.where((d)=>visibleAfterReset(d.data())).toList();
-      if(key.isNotEmpty){final resolved=await resolveInvoiceNumber(widget.type,key);if(resolved!=key){final match=await query.where(FieldPath.documentId,isEqualTo:resolved).get(const GetOptions(source:Source.server));for(final d in match.docs){if(visibleAfterReset(d.data())&&!rows.any((r)=>r.id==d.id))rows.add(d);}}}
-      if(key.isNotEmpty&&!key.contains('/')){
-        final direct=await query.doc(key).get(const GetOptions(source:Source.server));
-        if(direct.exists&&visibleAfterReset(direct.data()!)&&!rows.any((r)=>r.id==direct.id)){
-          // Resolve document IDs through a bounded query so the row type is consistent.
-          final match=await query.where(FieldPath.documentId,isEqualTo:key).get(const GetOptions(source:Source.server));
-          rows.addAll(match.docs);
-        }
+      final endExclusive=DateTime(toDate.year,toDate.month,toDate.day+1);
+      final result=await query.where('createdAt',isGreaterThanOrEqualTo:Timestamp.fromDate(fromDate))
+        .where('createdAt',isLessThan:Timestamp.fromDate(endExclusive)).orderBy('createdAt',descending:true)
+        .limit(1000).get(const GetOptions(source:Source.server));
+      var rows=result.docs.where((d)=>visibleAfterReset(d.data())).toList();
+      if(key.isNotEmpty){
+        final resolved=await resolveInvoiceNumber(widget.type,key);
+        rows=rows.where((d)=>d.id==key||d.id==resolved||'${d.data()['invoiceNumber']??''}'==key||'${d.data()['internalNumber']??''}'==key).toList();
       }
-      if(mounted)setState(()=>invoices=rows);
+      if(mounted)setState((){invoices=rows;if(result.docs.length==1000)error='تم عرض 1000 فاتورة كحد أقصى؛ ضيّق الفترة إذا لم تظهر الفاتورة المطلوبة.';});
     }catch(e){if(mounted)setState(()=>error='تعذر تحميل الفواتير: $e');}
     finally{if(mounted)setState(()=>loading=false);}
   }
   @override Widget build(BuildContext context)=>Column(children:[
     Flexible(child:SingleChildScrollView(child:Padding(padding:const EdgeInsets.all(12),child:Column(children:[
       Text(sales?'مرتجع المبيعات يضيف الكميات إلى مخزون الفاتورة.':'مرتجع المشتريات يخصم الكميات من المخزون الرئيسي.'),
+      Row(children:[Expanded(child:OutlinedButton.icon(onPressed:loading?null:()=>chooseDate(true),icon:const Icon(Icons.calendar_today),label:Text('من: ${DateFormat('dd/MM/yyyy').format(fromDate)}'))),const SizedBox(width:8),Expanded(child:OutlinedButton.icon(onPressed:loading?null:()=>chooseDate(false),icon:const Icon(Icons.calendar_today),label:Text('إلى: ${DateFormat('dd/MM/yyyy').format(toDate)}')))]),
       TextField(controller:number,decoration:const InputDecoration(labelText:'رقم الفاتورة أو رمزها الكامل'),onChanged:(_)=>setState((){}),onSubmitted:(_)=>find()),
-      FilledButton.icon(onPressed:loading?null:find,icon:const Icon(Icons.search),label:Text(number.text.trim().isEmpty?'عرض آخر 100 فاتورة':'بحث')),
+      FilledButton.icon(onPressed:loading?null:find,icon:const Icon(Icons.search),label:Text(number.text.trim().isEmpty?'عرض الفواتير في الفترة':'بحث في الفترة')),
     ])))),
     if(error.isNotEmpty)Text(error,style:const TextStyle(color:Colors.redAccent)),
     if(loading)const CircularProgressIndicator(),
-    Expanded(child:ListView(children:invoices.map((d){final data=d.data();return Card(child:ListTile(
-      title:Text('فاتورة ${invoiceDisplayNumber(widget.type,d.id,data)}'),
-      subtitle:Text('${data[sales?'customerName':'supplierName'] ?? ''}\n${formatDate(data['createdAt'])} • الإجمالي: ${data['total']}\n${data['status']=='returned'?'تم إرجاعها بالفعل':'اضغط لمراجعة الفاتورة وإرجاعها'}'),
-      onTap:()=>invoiceActions(context,widget.type,d.id,data),
-    ));}).toList())),
+    Expanded(child:ListView(children:invoices.map((d){
+      final data=d.data(),partial=(data['partialReturnTotal'] as num?)?.toDouble()??0;
+      final state=data['status']=='returned'?'تم إرجاعها بالكامل':partial>0?'تم تسجيل مرتجع أصناف بقيمة ${partial.toStringAsFixed(2)}':'اضغط لاختيار إرجاع صنف أو الفاتورة كاملة';
+      return Card(child:ListTile(
+        title:Text('فاتورة ${invoiceDisplayNumber(widget.type,d.id,data)}'),
+        subtitle:Text('${data[sales?'customerName':'supplierName'] ?? ''}\n${formatDate(data['createdAt'])} • الإجمالي: ${data['total']}\n$state'),
+        onTap:()=>invoiceActions(context,widget.type,d.id,data),
+      ));
+    }).toList())),
   ]);
 }
 

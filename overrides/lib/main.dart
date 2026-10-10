@@ -759,6 +759,111 @@ Future<void> productDialog(BuildContext context, {String? id, Map<String, dynami
   ]));
 }
 
+Future<DocumentSnapshot<Map<String, dynamic>>?> _createPurchaseProduct(BuildContext context) async {
+  final name = TextEditingController();
+  final category = TextEditingController();
+  final cost = TextEditingController();
+  final price = TextEditingController();
+  DocumentSnapshot<Map<String, dynamic>>? created;
+  await showDialog<void>(context: context, builder: (dialogContext) => AlertDialog(
+    title: const Text('إضافة صنف جديد للفاتورة'),
+    content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+      TextField(controller: name, autofocus: true, decoration: const InputDecoration(labelText: 'اسم الصنف *')),
+      TextField(controller: category, decoration: const InputDecoration(labelText: 'الفئة (اختياري)')),
+      TextField(controller: cost, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'سعر شراء الوحدة *')),
+      TextField(controller: price, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'سعر البيع')),
+    ])),
+    actions: [
+      TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
+      FilledButton(onPressed: () async {
+        final buy = double.tryParse(cost.text.trim().replaceAll(',', '.'));
+        final sell = price.text.trim().isEmpty ? 0.0 : double.tryParse(price.text.trim().replaceAll(',', '.'));
+        if (name.text.trim().isEmpty || buy == null || !buy.isFinite || buy < 0 || sell == null || !sell.isFinite || sell < 0) {
+          ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('اكتب اسم الصنف وسعر شراء صحيحًا')));
+          return;
+        }
+        final ref = db.collection('products').doc();
+        try {
+          await ref.set({
+            'name': name.text.trim(),
+            'category': category.text.trim().isEmpty ? 'غير مصنف' : category.text.trim(),
+            'price': sell,
+            'purchasePrice': buy,
+            'active': true,
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          final snapshot = await ref.get();
+          if (snapshot.exists) created = snapshot;
+          if (dialogContext.mounted) Navigator.pop(dialogContext);
+        } catch (e) {
+          if (dialogContext.mounted) ScaffoldMessenger.of(dialogContext).showSnackBar(SnackBar(content: Text('تعذر إضافة الصنف: $e')));
+        }
+      }, child: const Text('إضافة')),
+    ],
+  ));
+  name.dispose(); category.dispose(); cost.dispose(); price.dispose();
+  return created;
+}
+
+Future<void> _editPurchaseSellingPrice(
+  BuildContext context,
+  List<DocumentSnapshot<Map<String, dynamic>>> productDocs,
+  List<ScannedLine> lines,
+) async {
+  final ids = lines.map((line) => line.productId).whereType<String>().toSet();
+  final candidates = productDocs.where((product) => ids.contains(product.id)).toList();
+  if (candidates.isEmpty) return;
+  var selectedId = candidates.first.id;
+  final price = TextEditingController(text: '${candidates.first.data()?['price'] ?? ''}');
+  var savingPrice = false;
+  await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(builder: (c, setLocal) => AlertDialog(
+    title: const Text('تعديل سعر البيع'),
+    content: Column(mainAxisSize: MainAxisSize.min, children: [
+      DropdownButtonFormField<String>(
+        initialValue: selectedId,
+        isExpanded: true,
+        decoration: const InputDecoration(labelText: 'اختر الصنف من الفاتورة'),
+        items: [for (final product in candidates) DropdownMenuItem(value: product.id, child: Text('${product.data()?['name'] ?? ''}', overflow: TextOverflow.ellipsis))],
+        onChanged: savingPrice ? null : (id) {
+          if (id == null) return;
+          setLocal(() {
+            selectedId = id;
+            price.text = '${productDocs.firstWhere((product) => product.id == id).data()?['price'] ?? ''}';
+          });
+        },
+      ),
+      TextField(controller: price, enabled: !savingPrice,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: const InputDecoration(labelText: 'سعر البيع الجديد *', suffixText: 'ج.م')),
+    ]),
+    actions: [
+      TextButton(onPressed: savingPrice ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
+      FilledButton.icon(onPressed: savingPrice ? null : () async {
+        final value = double.tryParse(price.text.trim().replaceAll(',', '.'));
+        if (value == null || !value.isFinite || value < 0) {
+          ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اكتب سعر بيع صحيحًا')));
+          return;
+        }
+        setLocal(() => savingPrice = true);
+        try {
+          final ref = db.collection('products').doc(selectedId);
+          await ref.update({'price': value, 'updatedAt': FieldValue.serverTimestamp()});
+          final updated = await ref.get();
+          final index = productDocs.indexWhere((product) => product.id == selectedId);
+          if (index >= 0 && updated.exists) productDocs[index] = updated;
+          if (c.mounted) Navigator.pop(c);
+          if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تحديث سعر البيع')));
+        } catch (e) {
+          if (c.mounted) setLocal(() => savingPrice = false);
+          if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر تحديث سعر البيع: $e')));
+        }
+      }, icon: const Icon(Icons.save_outlined), label: const Text('حفظ')),
+    ],
+  )));
+  price.dispose();
+}
+
 Future<void> archiveProduct(BuildContext context, String id, String name) async {
   final yes = await showDialog<bool>(
     context: context,
@@ -1912,11 +2017,11 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
 
 Future<String?> pickPurchaseProduct(
   BuildContext context,
-  List<QueryDocumentSnapshot<Map<String, dynamic>>> products,
+  List<DocumentSnapshot<Map<String, dynamic>>> products,
   Set<String> excluded,
 ) => showInvoiceProductChoices(context,
-  products:[for(final p in products) (id:p.id,name:'${p.data()['name'] ?? ''}')],
-  excluded:excluded,unitCosts:{for(final p in products) p.id:p.data()['purchasePrice'] as num?},
+  products:[for(final p in products) (id:p.id,name:'${p.data()?['name'] ?? ''}')],
+  excluded:excluded,unitCosts:{for(final p in products) p.id:p.data()?['purchasePrice'] as num?},
   stockStreamFor:invoiceMainStock,
 );
 double purchaseInvoicePayment(double total, bool credit, String paid) => credit
@@ -2151,13 +2256,9 @@ class PurchaseSettlementPanel extends StatelessWidget {
 
 Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
   final products = await db.collection('products').where('active', isEqualTo: true).get();
+  final productDocs = <DocumentSnapshot<Map<String, dynamic>>>[...products.docs];
   final suppliers = await db.collection('suppliers').get();
   if (!context.mounted) return;
-  if (products.docs.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('أضف منتجًا أولًا')));
-    return;
-  }
-
   final activeSuppliers=suppliers.docs.where((d)=>d.data()['active'] != false).toList();
   final addedSuppliers = <String,Map<String,dynamic>>{};
   String supplierId = '';
@@ -2183,7 +2284,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
       final selectedSupplier = supplierId.isEmpty ? null : addedSuppliers[supplierId] ?? activeSuppliers.firstWhere((d) => d.id == supplierId).data();
       final previousSupplierBalance = (selectedSupplier?['balance'] as num?)?.toDouble() ?? 0;
       Future<void> editSelected(ScannedLine row, {bool adding=false}) async {
-        final product=products.docs.firstWhere((d)=>d.id==row.productId).data();
+        final product=productDocs.firstWhere((d)=>d.id==row.productId).data()!;
         final result=await showInvoiceLineEditor(c,name:'${product['name'] ?? ''}',price:row.cost,quantity:row.quantity,
           discount:row.discount,allowDelete:!adding,unitCost:product['purchasePrice'] as num?,stockStream:invoiceMainStock(row.productId!));
         if(!c.mounted) {if(adding) row.dispose();return;}
@@ -2193,9 +2294,9 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
       }
       void addSelected(String id) async {
         if(saving || lines.length >= (owner?50:4) || lines.any((row)=>row.productId == id)) return;
-        final product=products.docs.firstWhere((d)=>d.id == id);
+        final product=productDocs.firstWhere((d)=>d.id == id);
         final row=ScannedLine(productId:id);
-        row.cost.text=((product.data()['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
+        row.cost.text=((product.data()!['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
         await editSelected(row,adding:true);
       }
       return InvoiceEditorFrame(
@@ -2203,16 +2304,36 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
         tableMode:true,invoiceNumber:draftNumber,itemCount:lines.length,
         quantityCount:lines.fold<int>(0,(sum,row)=>sum+(int.tryParse(row.quantity.text) ?? 0)),
         headerAction:IgnorePointer(ignoring:saving,child:ChatShortcut(owner:owner)),
-        toolbar:InvoiceProductsBar(inlineSearch:true,
-          unitCosts:{for(final product in products.docs) product.id:product.data()['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
-          products:[for(final product in products.docs) if(!lines.any((row)=>row.productId == product.id))
-            (id:product.id,name:'${product.data()['name'] ?? ''}')],
+        toolbar:Column(children:[
+          InvoiceProductsBar(inlineSearch:true,
+          unitCosts:{for(final product in productDocs) product.id:product.data()?['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
+          products:[for(final product in productDocs) if(!lines.any((row)=>row.productId == product.id))
+            (id:product.id,name:'${product.data()?['name'] ?? ''}')],
           enabled:!saving && lines.length < (owner?50:4),onSelect:addSelected,
           onSearch:() async {
-            final id=await pickPurchaseProduct(c,products.docs,lines.map((row)=>row.productId).whereType<String>().toSet());
+            final id=await pickPurchaseProduct(c,productDocs,lines.map((row)=>row.productId).whereType<String>().toSet());
             if(id != null && c.mounted) addSelected(id);
           },
         ),
+        if(owner) Wrap(alignment:WrapAlignment.end,spacing:8,children:[
+          if(lines.isNotEmpty) OutlinedButton.icon(
+            key:const ValueKey('edit-purchase-selling-price'),
+            onPressed:saving ? null : () => _editPurchaseSellingPrice(c,productDocs,lines),
+            icon:const Icon(Icons.sell_outlined),label:const Text('تعديل سعر البيع'),
+          ),
+          TextButton.icon(
+            key:const ValueKey('add-purchase-product'),
+            onPressed:saving || lines.length >= 50 ? null : () async {
+              final product=await _createPurchaseProduct(c);
+              if(product != null && c.mounted) {
+                setLocal(()=>productDocs.add(product));
+                addSelected(product.id);
+              }
+            },
+            icon:const Icon(Icons.add_box_outlined),label:const Text('إضافة صنف جديد'),
+          ),
+        ]),
+        ]),
         body:checkout ? ListView(children:[
           if(!owner) const Text('حتى 4 أصناف في الفاتورة؛ المشتريات تُضاف للمخزون الرئيسي وحساب المورد والصندوق.'),
           PurchaseSettlementPanel(total:previewTotal,previousBalance:previousSupplierBalance,credit:credit,
@@ -2240,7 +2361,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
           ]),
         ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
           for(var i=0;i<lines.length;i++) InvoiceCompactTableLine(
-            key:ObjectKey(lines[i]),number:i+1,name:'${products.docs.firstWhere((d)=>d.id==lines[i].productId).data()['name'] ?? ''}',
+            key:ObjectKey(lines[i]),number:i+1,name:'${productDocs.firstWhere((d)=>d.id==lines[i].productId).data()?['name'] ?? ''}',
             price:lines[i].cost,quantity:lines[i].quantity,onEdit:saving ? null : ()=>editSelected(lines[i]),
           ),
         ]),
@@ -2319,8 +2440,8 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
                 tx.update(supplierRef, {'balance': beforeBalance + due, 'updatedAt': FieldValue.serverTimestamp()});
 
                 for (final e in entries) {
-                  final productDoc = products.docs.firstWhere((d) => d.id == e.id);
-                  final product = productDoc.data();
+                  final productDoc = productDocs.firstWhere((d) => d.id == e.id);
+                  final product = productDoc.data()!;
                   final oldQty = (stockSnaps[e.id]?.data()?['quantity'] as num?)?.toInt() ?? 0;
                   final lineTotal = e.qty * e.cost;
                   items.add({
@@ -3948,7 +4069,7 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
     if(canPrint && data['internalNumber'] is int)ListTile(leading:const Icon(Icons.qr_code,color:gold),title:const Text('طباعة باركود الفاتورة'),onTap:(){Navigator.pop(c);printInvoiceBarcode(context,type,id,data);}),
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
     if (type == 'sales') ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال الفاتورة PDF على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
-    if (type == 'sales' && !returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.assignment_return, color: Colors.orangeAccent), title: const Text('إرجاع صنف من الفاتورة'), onTap: () { Navigator.pop(c); confirmPartialSalesReturn(context, id); }),
+    if (!returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.assignment_return, color: Colors.orangeAccent), title: const Text('إرجاع صنف من الفاتورة'), onTap: () { Navigator.pop(c); type=='sales' ? confirmPartialSalesReturn(context, id) : confirmPartialPurchaseReturn(context,id); }),
     if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
   ])));
 }
@@ -4681,6 +4802,73 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
   });
 }
 
+Future<void> confirmPartialPurchaseReturn(BuildContext context, String id) async {
+  try {
+    final invoice=(await db.collection('purchases').doc(id).get(const GetOptions(source:Source.server))).data();
+    if(invoice==null||invoice['status']=='returned'||!visibleAfterReset(invoice))throw StateError('الفاتورة غير متاحة للمرتجع');
+    final items=_saleReturnInvoiceItems(invoice), returnedByLine=<int,int>{};
+    final raw=invoice['partialReturnQuantities'];
+    if(raw is Map){for(final entry in raw.entries){final i=int.tryParse('${entry.key}'),q=entry.value;if(i!=null&&q is num&&q.isFinite&&q>=0)returnedByLine[i]=q.toInt();}}
+    final available=<int,int>{};
+    for(var i=0;i<items.length;i++){final q=items[i]['quantity'];final total=q is num&&q.isFinite?q.toInt():0;final remain=total-(returnedByLine[i]??0);if(remain>0)available[i]=remain;}
+    if(available.isEmpty)throw StateError('تم إرجاع كل أصناف الفاتورة بالفعل');
+    if(!context.mounted)return;
+    final indexes=available.keys.toList();var selected=indexes.first;final quantity=TextEditingController(text:'1');
+    final choice=await showDialog<Map<String,int>>(context:context,builder:(dialogContext)=>StatefulBuilder(builder:(dialogContext,setDialogState)=>AlertDialog(
+      title:const Text('إرجاع صنف من فاتورة المشتريات'),content:Column(mainAxisSize:MainAxisSize.min,children:[
+        DropdownButtonFormField<int>(value:selected,isExpanded:true,decoration:const InputDecoration(labelText:'الصنف'),items:indexes.map((i)=>DropdownMenuItem(value:i,child:Text('${items[i]['productName']??'صنف'} • المتاح للإرجاع ${available[i]}'))).toList(),onChanged:(v){if(v!=null)setDialogState((){selected=v;quantity.text='1';});}),
+        TextField(controller:quantity,keyboardType:TextInputType.number,decoration:InputDecoration(labelText:'الكمية (المتاح ${available[selected]})')),
+      ]),actions:[TextButton(onPressed:()=>Navigator.pop(dialogContext),child:const Text('إلغاء')),FilledButton(onPressed:(){final q=int.tryParse(quantity.text.trim());if(q==null||q<1||q>(available[selected]??0)){ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content:Text('اكتب كمية صحيحة لا تتجاوز المتاح')));return;}Navigator.pop(dialogContext,{'sourceItemIndex':selected,'quantity':q});},child:const Text('متابعة'))])));
+    quantity.dispose();if(choice==null||!context.mounted)return;
+    final index=choice['sourceItemIndex']!,qty=choice['quantity']!,row=items[index];
+    final lineQty=(row['quantity'] as num?)?.toInt()??0;final lineTotal=(row['lineTotal'] as num?)?.toDouble()??lineQty*((row['unitCost'] as num?)?.toDouble()??0);
+    final value=lineQty>0?((lineTotal*100).round()*qty/lineQty).round()/100:0.0;
+    final yes=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('تأكيد إرجاع الصنف'),content:Text('الصنف: ${row['productName']??''}\nالكمية: $qty\nقيمة الصنف: ${value.toStringAsFixed(2)} ج.م\nسيُخصم من المخزون الرئيسي ويُحدّث حساب المورد والصندوق.'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('رجوع')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('تأكيد الإرجاع'))]))??false;
+    if(!yes||!context.mounted)return;await returnPurchaseInvoiceItem(id,index,qty);
+    if(context.mounted)await showInvoiceSaveProblem(context,'تم إرجاع الصنف وتحديث المخزون وحساب المورد والصندوق مع حفظ الفاتورة الأصلية.',title:'تم تسجيل مرتجع الصنف',button:'تمام',success:true);
+  }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر إرجاع الصنف: $e',title:'لم يتم تسجيل المرتجع',button:'رجوع');}
+}
+
+Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantity) async {
+  if(sourceItemIndex<0||quantity<=0)throw StateError('بيانات الصنف غير صحيحة');
+  final actor=FirebaseAuth.instance.currentUser!.uid,invoiceRef=db.collection('purchases').doc(id);
+  await db.runTransaction((tx)async{
+    final snap=await tx.get(invoiceRef),d=snap.data();
+    if(d==null||d['status']=='returned'||!visibleAfterReset(d))throw StateError('الفاتورة غير متاحة للمرتجع');
+    final profile=(await tx.get(db.collection('users').doc(actor))).data();if(profile?['active']!=true||profile?['role']!='owner')throw StateError('المرتجعات للمدير فقط');
+    final rawItems=d['items'];final items=<Map<String,dynamic>>[];if(rawItems is List){for(final raw in rawItems){if(raw is Map)items.add(Map<String,dynamic>.from(raw));}}
+    if(items.isEmpty)items.add({'productId':d['productId'],'productName':d['productName'],'quantity':d['quantity']??0,'unitCost':d['unitCost']??0,'lineTotal':d['total']??0});
+    if(sourceItemIndex>=items.length)throw StateError('الصنف غير موجود في الفاتورة');
+    final item=items[sourceItemIndex],qty=(item['quantity'] as num?)?.toInt()??0;
+    final rawReturned=d['partialReturnQuantities'];final returnedByLine=<int,int>{};if(rawReturned is Map){for(final e in rawReturned.entries){final i=int.tryParse('${e.key}'),q=e.value;if(i!=null&&q is num&&q.isFinite&&q>=0)returnedByLine[i]=q.toInt();}}
+    final already=returnedByLine[sourceItemIndex]??0;if(qty<=0||quantity>qty-already)throw StateError('الكمية المطلوبة أكبر من المتبقي في الفاتورة');
+    final productId='${item['productId']??''}';if(productId.isEmpty||productId=='null')throw StateError('الصنف لا يحتوي على رمز مخزون');
+    final stockRef=db.collection('stock').doc('main_$productId'),stockSnap=await tx.get(stockRef),before=(stockSnap.data()?['quantity'] as num?)?.toInt()??0;
+    if(before<quantity)throw StateError('المخزون الرئيسي لا يكفي لإرجاع الصنف: ${item['productName']??''}');
+    final supplierId='${d['supplierId']??''}';if(supplierId.isEmpty)throw StateError('الفاتورة لا تحتوي على حساب مورد');
+    final supplierRef=db.collection('suppliers').doc(supplierId),supplierSnap=await tx.get(supplierRef);if(!supplierSnap.exists)throw StateError('حساب المورد غير موجود');
+    final cashRef=db.collection('settings').doc('cash'),cashSnap=await tx.get(cashRef);
+    final settlement=returnSettlement(d,sales:false);
+    final priorCash=((d['partialCashRefund'] as num?)?.toDouble()??0),priorDebt=((d['partialDebtReduction'] as num?)?.toDouble()??0);
+    final cashAvailable=((settlement.cash*100).round()-(priorCash*100).round()).clamp(0,1000000000000).toInt();
+    final debtAvailable=((settlement.debt*100).round()-(priorDebt*100).round()).clamp(0,1000000000000).toInt();
+    final lineValue=(item['lineTotal'] as num?)?.toDouble()??qty*((item['unitCost'] as num?)?.toDouble()??0);
+    final amount=((lineValue*100).round()*quantity/qty).round();
+    final cashRefund=partialReturnCashCents(valueCents:amount,cashAvailableCents:cashAvailable,debtAvailableCents:debtAvailable),debtReduction=amount-cashRefund;
+    final returnRef=db.collection('purchaseReturns').doc(),now=FieldValue.serverTimestamp();
+    tx.set(stockRef,{'branchId':'main','productId':productId,'quantity':before-quantity},SetOptions(merge:true));
+    tx.set(db.collection('stockMovements').doc(),{'productId':productId,'productName':item['productName'],'branchId':'main','kind':'purchase_return','quantity':-quantity,'balanceAfter':before-quantity,'referenceId':returnRef.id,'actorId':actor,'createdAt':now});
+    final supplierBefore=(supplierSnap.data()?['balance'] as num?)?.toDouble()??0,supplierAfter=((supplierBefore*100).round()-debtReduction)/100;
+    if(debtReduction>0){tx.update(supplierRef,{'balance':supplierAfter,'updatedAt':now});tx.set(db.collection('accountMovements').doc(),{'accountType':'suppliers','accountId':supplierId,'accountName':d['supplierName'],'kind':'purchase_return','amount':debtReduction/100,'balanceBefore':supplierBefore,'balanceAfter':supplierAfter,'referenceId':returnRef.id,'createdAt':now,'actorId':actor});}
+    final cashBefore=(cashSnap.data()?['balance'] as num?)?.toDouble()??0,cashAfter=((cashBefore*100).round()+cashRefund)/100;
+    if(cashRefund>0){tx.set(cashRef,{'balance':cashAfter,'updatedAt':now},SetOptions(merge:true));tx.set(db.collection('accountMovements').doc(),{'accountType':'cash','kind':'purchase_return','amount':cashRefund/100,'delta':cashRefund/100,'balanceBefore':cashBefore,'balanceAfter':cashAfter,'accountId':supplierId,'accountName':d['supplierName'],'referenceId':returnRef.id,'reason':'استرداد نقدية مرتجع صنف مشتريات','actorId':actor,'createdAt':now});}
+    tx.set(returnRef,{'sourceInvoiceId':id,'returnType':'partial','sourceItemIndex':sourceItemIndex,'sourceLineKey':'$sourceItemIndex','sourceQuantity':quantity,'items':[{'sourceItemIndex':sourceItemIndex,'productId':productId,'productName':item['productName'],'quantity':quantity,'unitCost':item['unitCost']??0,'lineTotal':amount/100}],'total':amount/100,'cashRefund':cashRefund/100,'debtReduction':debtReduction/100,'supplierId':supplierId,'supplierName':d['supplierName'],'invoiceNumber':d['invoiceNumber'],'internalNumber':d['internalNumber'],'invoiceBarcode':d['invoiceBarcode'],'createdAt':now,'actorId':actor});
+    final quantities=Map<String,dynamic>.from(rawReturned is Map?rawReturned:{});quantities['$sourceItemIndex']=already+quantity;
+    final priorTotal=((d['partialReturnTotal'] as num?)?.toDouble()??0),priorCashTotal=((d['partialCashRefund'] as num?)?.toDouble()??0),priorDebtTotal=((d['partialDebtReduction'] as num?)?.toDouble()??0);
+    tx.update(invoiceRef,{'partialReturnQuantities':quantities,'partialReturnTotal':((priorTotal*100).round()+amount)/100,'partialCashRefund':((priorCashTotal*100).round()+cashRefund)/100,'partialDebtReduction':((priorDebtTotal*100).round()+debtReduction)/100,'lastPartialReturnId':returnRef.id});
+  });
+}
+
 ({double cash, double debt}) returnSettlement(Map<String, dynamic> data, {required bool sales}) {
   double read(String key, double fallback) {
     final value = data[key];
@@ -4708,12 +4896,12 @@ Future<void> confirmReturn(BuildContext context, String type, String id, Map<Str
   try {
     final current = (await db.collection(type).doc(id).get(const GetOptions(source: Source.server))).data();
     if (current == null || current['status'] == 'returned' || !visibleAfterReset(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
-    if (type == 'sales') {
-      final priorReturns = await db.collection('salesReturns').where('sourceInvoiceId', isEqualTo: id)
+    if (type == 'sales' || type == 'purchases') {
+      final priorReturns = await db.collection(type=='sales'?'salesReturns':'purchaseReturns').where('sourceInvoiceId', isEqualTo: id)
           .get(const GetOptions(source: Source.server));
       if (priorReturns.docs.any((d) => d.data()['returnType'] == 'partial')) {
         if (context.mounted) await showInvoiceSaveProblem(context,
-          'بدأ إرجاع أصناف منفردة من هذه الفاتورة. أكمل إرجاع الكميات المتبقية من زر «إرجاع صنف من الفاتورة» حتى لا يتكرر الخصم أو رد المبلغ.',
+          'بدأ إرجاع أصناف منفردة من هذه الفاتورة. استخدم «إرجاع صنف من الفاتورة» للكميات المتبقية؛ لا يمكن إرجاع الفاتورة كاملة بعد بدء المرتجع الجزئي.',
           title: 'أكمل المرتجع الجزئي', button: 'تمام');
         return;
       }
@@ -4768,6 +4956,8 @@ Future<void> returnInvoice(String type, String id, {String? expectedSignature}) 
     if (expectedSignature != null && invoiceReturnSignature(d) != expectedSignature) throw StateError('الفاتورة تغيّرت؛ افتح مراجعة المرتجع من جديد');
     if(type=='sales' && ((d['onlinePaid'] as num?)??0)>0)throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
     if (d['status'] == 'returned') throw Exception('الفاتورة مرتجعة بالفعل');
+    final returnedLines=d['partialReturnQuantities'];
+    if(((d['partialReturnTotal'] as num?)?.toDouble()??0)>0||(returnedLines is Map&&returnedLines.isNotEmpty))throw StateError('الفاتورة بدأ لها مرتجع أصناف؛ أكمل الأصناف المتبقية بدل إرجاعها كاملة');
 
     final now = FieldValue.serverTimestamp();
     var items = <Map<String, dynamic>>[];
