@@ -201,6 +201,15 @@ class _InvoiceReturnPageState extends State<InvoiceReturnPage> {
     }catch(e){if(mounted)setState(()=>error='تعذر تحميل الفواتير: $e');}
     finally{if(mounted)setState(()=>loading=false);}
   }
+  Future<void> openReturnOptions(String id,Map<String,dynamic> data) async {
+    final returned=data['status']=='returned';
+    await showModalBottomSheet<void>(context:context,builder:(sheetContext)=>SafeArea(child:Wrap(children:[
+      ListTile(leading:const Icon(Icons.assignment_return_outlined),title:const Text('إرجاع صنف من الفاتورة'),
+        enabled:!returned,onTap:(){Navigator.pop(sheetContext);if(!returned){if(sales){confirmPartialSalesReturn(context,id);}else{confirmPartialPurchaseReturn(context,id);}}}),
+      ListTile(leading:const Icon(Icons.undo),title:const Text('إرجاع الفاتورة كاملة'),
+        enabled:!returned,onTap:(){Navigator.pop(sheetContext);if(!returned)confirmReturn(context,widget.type,id,data);}),
+    ])));
+  }
   @override Widget build(BuildContext context)=>Column(children:[
     Flexible(child:SingleChildScrollView(child:Padding(padding:const EdgeInsets.all(12),child:Column(children:[
       Text(sales?'مرتجع المبيعات يضيف الكميات إلى مخزون الفاتورة.':'مرتجع المشتريات يخصم الكميات من المخزون الرئيسي.'),
@@ -212,11 +221,12 @@ class _InvoiceReturnPageState extends State<InvoiceReturnPage> {
     if(loading)const CircularProgressIndicator(),
     Expanded(child:ListView(children:invoices.map((d){
       final data=d.data(),partial=(data['partialReturnTotal'] as num?)?.toDouble()??0;
-      final state=data['status']=='returned'?'تم إرجاعها بالكامل':partial>0?'تم تسجيل مرتجع أصناف بقيمة ${partial.toStringAsFixed(2)}':'اضغط لاختيار إرجاع صنف أو الفاتورة كاملة';
+      final state=data['status']=='returned'?'تم إرجاعها بالكامل':partial>0?'تم تسجيل مرتجع أصناف بقيمة ${partial.toStringAsFixed(2)}':'اضغط لاختيار الفاتورة ونوع المرتجع';
       return Card(child:ListTile(
         title:Text('فاتورة ${invoiceDisplayNumber(widget.type,d.id,data)}'),
         subtitle:Text('${data[sales?'customerName':'supplierName'] ?? ''}\n${formatDate(data['createdAt'])} • الإجمالي: ${data['total']}\n$state'),
-        onTap:()=>invoiceActions(context,widget.type,d.id,data),
+        trailing:const Icon(Icons.chevron_left),
+        onTap:()=>openReturnOptions(d.id,data),
       ));
     }).toList())),
   ]);
