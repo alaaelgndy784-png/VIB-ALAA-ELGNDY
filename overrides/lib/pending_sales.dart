@@ -303,7 +303,7 @@ Future<void> submitPendingSale(String id,List<SaleEntry> entries,String customer
     final customer=(await tx.get(db.collection('customers').doc(customerId))).data();
     if(profile?['active']!=true || profile?['role']!='employee' || '${profile?['branchId'] ?? ''}'.isEmpty) throw Exception('حساب الموظف غير مفعل');
     if(customer==null || customer['active']==false) throw Exception('العميل غير موجود أو غير نشط');
-    tx.set(ref,{...payload,'id':id,'employeeId':uid,'employeeName':'${profile?['name'] ?? ''}',
+  tx.set(ref,{...payload,'id':id,'employeeId':uid,'employeeName':'${profile?['name'] ?? ''}',
       'branchId':profile!['branchId'],'customerName':'${customer['name'] ?? ''}',
       'total':parsed.total,'status':'pending','createdAt':FieldValue.serverTimestamp(),'requestKey':requestKey});
   });
@@ -406,11 +406,22 @@ Future<bool> removeRejectedPendingSale(BuildContext context,DocumentReference<Ma
   }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,invoiceSaveFailureMessage(e));return false;}
 }
 
-class PendingSaleInvoiceDialog extends StatelessWidget {
+class PendingSaleInvoiceDialog extends StatefulWidget {
   final Map<String,dynamic> data;
   final List<Widget> actions;
-  const PendingSaleInvoiceDialog({super.key,required this.data,required this.actions});
+  final bool showCosts;
+  const PendingSaleInvoiceDialog({super.key,required this.data,required this.actions,this.showCosts=false});
+  @override State<PendingSaleInvoiceDialog> createState()=>_PendingSaleInvoiceDialogState();
+}
+
+class _PendingSaleInvoiceDialogState extends State<PendingSaleInvoiceDialog> {
+  final Map<String,Future<double?>> _costReads={};
+  Future<double?> _readPurchasePrice(String productId) async {
+    final product=(await db.collection('products').doc(productId).get(const GetOptions(source:Source.server))).data();
+    return (product?['purchasePrice'] as num?)?.toDouble();
+  }
   @override Widget build(BuildContext context) {
+    final data=widget.data,actions=widget.actions;
     final items=(data['items'] as List? ?? const []).whereType<Map>().toList();
     final total=items.fold<double>(0,(sum,x)=>sum+((x['unitPrice'] as num?)?.toDouble() ?? 0)*((x['quantity'] as num?)?.toInt() ?? 0));
     final paid=(data['paid'] as num?)?.toDouble() ?? 0;
@@ -430,8 +441,21 @@ class PendingSaleInvoiceDialog extends StatelessWidget {
             Text(data['credit']==true?'طريقة الدفع: آجل':'طريقة الدفع: نقدي'),
           ])),
           const SizedBox(height:8),const InvoiceCompactTableHeader(),
-          for(var i=0;i<items.length;i++)InvoiceCompactReadOnlyLine(number:i+1,name:'${items[i]['productName'] ?? ''}',
-            price:(items[i]['unitPrice'] as num?)?.toDouble() ?? 0,quantity:(items[i]['quantity'] as num?)?.toInt() ?? 0),
+          for(var i=0;i<items.length;i++) ...[
+            InvoiceCompactReadOnlyLine(number:i+1,name:'${items[i]['productName'] ?? ''}',
+              price:(items[i]['unitPrice'] as num?)?.toDouble() ?? 0,quantity:(items[i]['quantity'] as num?)?.toInt() ?? 0),
+            if(widget.showCosts) Builder(builder:(context){
+              final productId='${items[i]['productId'] ?? ''}';
+              if(productId.isEmpty)return const SizedBox.shrink();
+              final future=_costReads.putIfAbsent(productId,()=>_readPurchasePrice(productId));
+              return FutureBuilder<double?>(future:future,builder:(context,cost)=>Padding(
+                padding:const EdgeInsetsDirectional.only(start:28,bottom:5),
+                child:Text(cost.hasError?'تعذر تحميل سعر التكلفة':cost.connectionState!=ConnectionState.done?'جارٍ تحميل سعر التكلفة…':
+                  cost.data==null?'سعر التكلفة: غير مسجل':'سعر التكلفة: ${cost.data!.toStringAsFixed(2)} ج.م للوحدة • تكلفة الكمية: ${(cost.data!*((items[i]['quantity'] as num?)?.toDouble() ?? 0)).toStringAsFixed(2)} ج.م',
+                  style:const TextStyle(color:gold,fontSize:12,fontWeight:FontWeight.bold)),
+              ));
+            }),
+          ],
           if(data['managerPriceAdjusted']==true) ...[
             Padding(padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),child:Text(
               'عدّل المدير الأسعار قبل الاعتماد • ${data['managerAdjustedBy'] ?? ''}',
@@ -511,7 +535,7 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
       if(data==null)return AlertDialog(title:const Text('طلب فاتورة موظف'),content:Text(snapshot.hasError?'تعذر تحميل الطلب':'جارٍ التحميل'),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إغلاق'))]);
       if(!pendingSaleIsVisible(data))return AlertDialog(title:const Text('تم مسح الطلب'),content:const Text('ابدأ فاتورة جديدة من شاشة المبيعات.'),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إغلاق'))]);
       final pending=data['status']=='pending';
-      return PendingSaleInvoiceDialog(data:data,actions:[
+      return PendingSaleInvoiceDialog(data:data,showCosts:owner&&pending,actions:[
         TextButton(onPressed:busy?null:()=>Navigator.pop(c),child:const Text('إغلاق')),
         if(!owner && pending) OutlinedButton.icon(
           onPressed:busy?null:()async {

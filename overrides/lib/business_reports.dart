@@ -440,9 +440,16 @@ Future<void> showInvoiceOverview(BuildContext context,String type,String id) asy
     final data=await numberedInvoiceData(type,id,row.data()!);
     if(!context.mounted)return;
     final choice=await showDialog<String>(context:context,builder:(c)=>Directionality(textDirection:TextDirection.rtl,
-      child:AlertDialog(title:Text(type=='sales' ? 'تفاصيل فاتورة المبيعات' : 'تفاصيل فاتورة المشتريات'),
-        content:SizedBox(width:540,height:MediaQuery.sizeOf(c).height*.55,
-          child:InvoiceOverviewContent(type:type,id:id,data:data)),
+      child:AlertDialog(title:Text(type=='sales' ? 'فاتورة المبيعات' : 'فاتورة المشتريات'),
+        content:SizedBox(width:540,height:MediaQuery.sizeOf(c).height*.64,
+          child:PdfPreview(
+            build:(_)=>createInvoicePdf(type,id,data,paperChoice:'a4'),
+            initialPageFormat:PdfPageFormat.a4,
+            canChangePageFormat:false,canChangeOrientation:false,
+            allowPrinting:false,allowSharing:false,useActions:false,maxPageWidth:600,
+            loadingWidget:const Center(child:CircularProgressIndicator()),
+            onError:(context,error)=>Center(child:Text('تعذر إنشاء معاينة الفاتورة: $error',textAlign:TextAlign.center)),
+          )),
         actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إغلاق')),
           FilledButton.icon(onPressed:()=>Navigator.pop(c,'share'),icon:const Icon(Icons.share),label:const Text('إرسال PDF'))])));
     if(choice=='share' && context.mounted)await exportInvoicePdf(context,type,id,data);
