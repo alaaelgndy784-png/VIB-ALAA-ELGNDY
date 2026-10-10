@@ -15,7 +15,6 @@ Future<void> submitManagerOfflineSale({required String id,required String branch
   final items=entries.map((e)=><String,dynamic>{'productId':e.id,'productName':e.name,'quantity':e.qty,
     'unitPrice':e.price,'basePrice':e.basePrice,'discountPercent':e.discount}).toList();
   final payload=<String,dynamic>{'id':id,'employeeId':uid,'employeeName':'${profile?['name']??''}',
-    'employeePhone':'${profile?['phone']??''}',
     'branchId':branchId,'customerId':customerId,'customerName':'${customer?['name']??''}',
     'credit':credit,'paid':paid,'items':items,'total':total,'status':'pending',
     'managerOffline':true,'note':note,'allowShortage':allowShortage,'allowBelowCost':allowBelowCost,
@@ -251,8 +250,7 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                   'cashBefore': (cashSnap?.data()?['balance'] as num?)?.toDouble() ?? 0,
                   'cashAfter': ((cashSnap?.data()?['balance'] as num?)?.toDouble() ?? 0) + payment,
                   'employeeId': seller,
-                  'employeeName': '${sellerProfile?['name'] ?? pending?['employeeName'] ?? ''}',
-                  'employeePhone': '${sellerProfile?['phone'] ?? pending?['employeePhone'] ?? ''}',
+                  if(pending != null) 'employeeName': pending['employeeName'],
                   if(pending != null) 'approvedBy': actor,
                   if(pending != null) 'sourceRequestId': pendingRef!.id,
                   'customerId': customerId,
@@ -306,7 +304,6 @@ Future<void> submitPendingSale(String id,List<SaleEntry> entries,String customer
     if(profile?['active']!=true || profile?['role']!='employee' || '${profile?['branchId'] ?? ''}'.isEmpty) throw Exception('حساب الموظف غير مفعل');
     if(customer==null || customer['active']==false) throw Exception('العميل غير موجود أو غير نشط');
   tx.set(ref,{...payload,'id':id,'employeeId':uid,'employeeName':'${profile?['name'] ?? ''}',
-    'employeePhone':'${profile?['phone'] ?? ''}',
       'branchId':profile!['branchId'],'customerName':'${customer['name'] ?? ''}',
       'total':parsed.total,'status':'pending','createdAt':FieldValue.serverTimestamp(),'requestKey':requestKey});
   });

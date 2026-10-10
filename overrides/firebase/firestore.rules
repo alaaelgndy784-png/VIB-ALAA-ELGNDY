@@ -166,12 +166,10 @@ service cloud.firestore {
     }
     function validStaffSale(id) {
       let s = request.resource.data;
-      return s.keys().hasOnly(['id','branchId','stockBranchId','employeeId','employeeName','employeePhone','customerId','customerName','customerPhone',
+      return s.keys().hasOnly(['id','branchId','stockBranchId','employeeId','customerId','customerName','customerPhone',
           'customerPreviousBalance','customerBalanceAfter','items','itemCount','stockIndex','total','paid','due',
           'cashBefore','cashAfter','paymentStatus','status','createdAt','requestKey','productId','productName','quantity','unitPrice'])
         && s.id == id && s.branchId == branch() && s.stockBranchId == 'main' && s.employeeId == request.auth.uid
-        && s.get('employeeName', profile().get('name', '')) == profile().get('name', '')
-        && s.get('employeePhone', profile().get('phone', '')) == profile().get('phone', '')
         && s.status == 'completed' && s.createdAt == request.time
         && s.requestKey is string && s.requestKey.size() <= 6000
         && s.items is list && s.items.size() >= 1 && s.items.size() <= 4
@@ -583,10 +581,9 @@ service cloud.firestore {
       allow get: if owner() || (employee() && (!exists(/databases/$(database)/documents/pendingSales/$(id)) || resource.data.employeeId == request.auth.uid));
       allow list: if owner() || (employee() && resource.data.employeeId == request.auth.uid);
       allow create: if employee()
-        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','employeePhone','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey'])
+        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey'])
         && request.resource.data.id == id && request.resource.data.employeeId == request.auth.uid
-        && request.resource.data.employeeName == profile().name
-        && request.resource.data.get('employeePhone', profile().get('phone', '')) == profile().get('phone', '') && request.resource.data.branchId == branch()
+        && request.resource.data.employeeName == profile().name && request.resource.data.branchId == branch()
         && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time
         && request.resource.data.customerId is string && request.resource.data.customerId.size() > 0
         && request.resource.data.customerName is string && request.resource.data.credit is bool
@@ -597,10 +594,9 @@ service cloud.firestore {
       // A manager may save a sale draft offline. The draft has no accounting
       // effect until the normal server transaction revalidates and posts it.
       allow create: if owner()
-        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','employeePhone','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey','managerOffline','note','allowShortage','allowBelowCost','overrideReason'])
+        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey','managerOffline','note','allowShortage','allowBelowCost','overrideReason'])
         && request.resource.data.id == id && request.resource.data.employeeId == request.auth.uid
-        && request.resource.data.employeeName == profile().name
-        && request.resource.data.get('employeePhone', profile().get('phone', '')) == profile().get('phone', '') && request.resource.data.managerOffline == true
+        && request.resource.data.employeeName == profile().name && request.resource.data.managerOffline == true
         && request.resource.data.branchId is string && request.resource.data.branchId.size() > 0
         && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time
         && request.resource.data.customerId is string

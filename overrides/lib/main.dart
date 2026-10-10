@@ -1245,7 +1245,8 @@ class _SalesState extends State<Sales> {
       maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12,color:Colors.white60)));
     if(savedName.isNotEmpty && savedPhone.isNotEmpty) return label(savedName,savedPhone);
     final employeeId='${sale['employeeId'] ?? sale['actorId'] ?? ''}'.trim();
-    if(!owner || employeeId.isEmpty) {
+    final canReadSellerProfile=owner || employeeId==FirebaseAuth.instance.currentUser?.uid;
+    if(!canReadSellerProfile || employeeId.isEmpty) {
       return savedName.isEmpty && savedPhone.isEmpty ? const SizedBox.shrink() : label(savedName,savedPhone);
     }
     return FutureBuilder<Map<String,dynamic>?>(future:_sellerProfile(employeeId),builder:(context,snapshot){
