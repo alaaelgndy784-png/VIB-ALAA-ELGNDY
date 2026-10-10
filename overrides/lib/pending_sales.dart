@@ -303,7 +303,7 @@ Future<void> submitPendingSale(String id,List<SaleEntry> entries,String customer
     final customer=(await tx.get(db.collection('customers').doc(customerId))).data();
     if(profile?['active']!=true || profile?['role']!='employee' || '${profile?['branchId'] ?? ''}'.isEmpty) throw Exception('حساب الموظف غير مفعل');
     if(customer==null || customer['active']==false) throw Exception('العميل غير موجود أو غير نشط');
-  tx.set(ref,{...payload,'id':id,'employeeId':uid,'employeeName':'${profile?['name'] ?? ''}',
+    tx.set(ref,{...payload,'id':id,'employeeId':uid,'employeeName':'${profile?['name'] ?? ''}',
       'branchId':profile!['branchId'],'customerName':'${customer['name'] ?? ''}',
       'total':parsed.total,'status':'pending','createdAt':FieldValue.serverTimestamp(),'requestKey':requestKey});
   });
