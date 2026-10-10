@@ -1234,6 +1234,28 @@ class Sales extends StatefulWidget {
   State<Sales> createState() => _SalesState();
 }
 class _SalesState extends State<Sales> {
+  final Map<String, Future<Map<String,dynamic>?>> _sellerProfiles = {};
+  Future<Map<String,dynamic>?> _sellerProfile(String id) => _sellerProfiles.putIfAbsent(
+    id, () async => (await db.collection('users').doc(id).get()).data());
+  Widget _sellerLabel(Map<String,dynamic> sale) {
+    final savedName='${sale['employeeName'] ?? sale['actorName'] ?? ''}'.trim();
+    final savedPhone='${sale['employeePhone'] ?? sale['actorPhone'] ?? ''}'.trim();
+    Widget label(String name,String phone) => Padding(padding:const EdgeInsets.only(top:2),child:Text(
+      'الموظف: ${name.isEmpty ? 'غير مسجل' : name}${phone.isEmpty ? '' : ' • $phone'}',
+      maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12,color:Colors.white60)));
+    if(savedName.isNotEmpty && savedPhone.isNotEmpty) return label(savedName,savedPhone);
+    final employeeId='${sale['employeeId'] ?? sale['actorId'] ?? ''}'.trim();
+    if(!owner || employeeId.isEmpty) {
+      return savedName.isEmpty && savedPhone.isEmpty ? const SizedBox.shrink() : label(savedName,savedPhone);
+    }
+    return FutureBuilder<Map<String,dynamic>?>(future:_sellerProfile(employeeId),builder:(context,snapshot){
+      final profile=snapshot.data;
+      final name=savedName.isNotEmpty ? savedName : '${profile?['name'] ?? ''}'.trim();
+      final phone=savedPhone.isNotEmpty ? savedPhone : '${profile?['phone'] ?? ''}'.trim();
+      if(name.isEmpty && phone.isEmpty) return const SizedBox.shrink();
+      return label(name,phone);
+    });
+  }
   @override void initState(){super.initState();if(widget.owner)prepareInvoiceSerials('sales').then((_){if(mounted)setState((){});}).catchError((Object e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر تجهيز أرقام المبيعات: $e')));});}
   DateTime selectedFrom = DateTime.now();
   DateTime selectedTo = DateTime.now();
@@ -1278,7 +1300,10 @@ class _SalesState extends State<Sales> {
               style: TextStyle(color:owner ? Colors.greenAccent : Colors.lightBlueAccent,fontWeight:FontWeight.bold,fontSize:16)),
             Text('رقم الفاتورة: ${invoiceDisplayNumber('sales',d.id,sale)}'),
           ]),
-          subtitle: Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${sale['partialReturnTotal']} ج.م' : ''}'),
+          subtitle: Column(crossAxisAlignment:CrossAxisAlignment.start,mainAxisSize:MainAxisSize.min,children:[
+            Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${sale['partialReturnTotal']} ج.م' : ''}'),
+            _sellerLabel(sale),
+          ]),
           trailing: Text('${sale['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
           onTap: () => invoiceActions(context, 'sales', d.id, sale, canReturn: owner),
         ));

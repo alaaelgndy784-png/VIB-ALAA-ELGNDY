@@ -8,8 +8,8 @@ before(async()=>{env=await initializeTestEnvironment({projectId:'demo-vib',fires
 after(async()=>{await env.cleanup()});
 beforeEach(async()=>{await env.clearFirestore();await env.withSecurityRulesDisabled(async ctx=>{
   const db=ctx.firestore();
-  await setDoc(doc(db,'users/staff'),{role:'employee',active:true,name:'Staff',branchId:'staffbranch'});
-  await setDoc(doc(db,'users/owner'),{role:'owner',active:true,name:'Owner'});
+  await setDoc(doc(db,'users/staff'),{role:'employee',active:true,name:'Staff',phone:'01011111111',branchId:'staffbranch'});
+  await setDoc(doc(db,'users/owner'),{role:'owner',active:true,name:'Owner',phone:'01022222222'});
   await setDoc(doc(db,'users/inactive'),{role:'employee',active:false,branchId:'staffbranch'});
   await setDoc(doc(db,'customers/customer'),{name:'Customer',phone:'010',balance:100,active:true});
   await setDoc(doc(db,'suppliers/supplier'),{name:'Supplier',balance:100,active:true});
@@ -45,13 +45,14 @@ test('employee presence is self-written and owner-readable only',async()=>{
  await assertFails(setDoc(own,{online:true,lastSeen:serverTimestamp(),name:'spoofed'}));
  await assertFails(setDoc(doc(inactive,'presence/inactive'),{online:true,lastSeen:serverTimestamp()}));
 });
-function saleBatch(db,{n=1,paid,customer=true,mutate=()=>{},omit='',saleId='sale',cashBefore=500,createCash=false,unitPrice=12.35}={}){
+function saleBatch(db,{n=1,paid,customer=true,mutate=()=>{},omit='',saleId='sale',cashBefore=500,createCash=false,unitPrice=12.35,legacyEmployeeLabels=false}={}){
   const items=Array.from({length:n},(_,i)=>({productId:'p'+i,productName:'Product'+i,quantity:2,unitPrice,lineTotal:unitPrice*2,purchasePriceAtSale:5}));
   const total=n*unitPrice*2,payment=paid??total,due=total-payment;
-  const s={id:saleId,branchId:'staffbranch',stockBranchId:'main',employeeId:'staff',customerId:customer?'customer':'',
+  const s={id:saleId,branchId:'staffbranch',stockBranchId:'main',employeeId:'staff',employeeName:'Staff',employeePhone:'01011111111',customerId:customer?'customer':'',
     customerName:customer?'Customer':'',customerPhone:customer?'010':'',customerPreviousBalance:customer?100:0,
     customerBalanceAfter:customer?100+due:0,items,itemCount:n,stockIndex:Object.fromEntries(items.map((x,i)=>[x.productId,i])),
     total,paid:payment,due,cashBefore,cashAfter:cashBefore+payment,paymentStatus:due>0?'credit':'cash',status:'completed',createdAt:serverTimestamp(),requestKey:'test'};
+  if(legacyEmployeeLabels){delete s.employeeName;delete s.employeePhone;}
   if(n===1)Object.assign(s,{productId:'p0',productName:'Product0',quantity:2,unitPrice});
   mutate(s);
   const batch=writeBatch(db);batch.set(doc(db,'sales/'+saleId),s);
@@ -80,6 +81,8 @@ for(const n of [1,2,3,4])for(const paid of [0,10,undefined])test(`${n} lines pai
   const db=env.authenticatedContext('staff').firestore();await assertSucceeds(saleBatch(db,{n,paid}));
   const s=(await getDoc(doc(db,'sales/sale'))).data();assert.equal(s.itemCount,n);
 });
+test('previous employee app can still save sales without stored employee labels',async()=>
+  assertSucceeds(saleBatch(env.authenticatedContext('staff').firestore(),{legacyEmployeeLabels:true})));
 test('cash sale without customer',async()=>assertSucceeds(saleBatch(env.authenticatedContext('staff').firestore(),{n:4,customer:false})));
 for(const omit of ['p0','stockMovement','cash','customer','cashMovement','customerMovement'])test('missing '+omit+' rejects atomically',async()=>{
   const db=env.authenticatedContext('staff').firestore();await assertFails(saleBatch(db,{paid:10,omit}));
@@ -88,6 +91,7 @@ for(const omit of ['p0','stockMovement','cash','customer','cashMovement','custom
 for(const [name,mutate] of [
   ['wrong price',s=>{s.items[0].unitPrice=1;s.items[0].lineTotal=2}],
   ['wrong branch',s=>{s.branchId='other'}],['wrong actor',s=>{s.employeeId='owner'}],
+  ['wrong employee name',s=>{s.employeeName='Other'}],['wrong employee phone',s=>{s.employeePhone='01099999999'}],
   ['wrong total',s=>{s.total=1}],['negative paid',s=>{s.paid=-1}],
   ['duplicate item',s=>{s.items[1]={...s.items[0]};s.stockIndex={p0:0}}],
   ['oversell',s=>{s.items[0].quantity=11}],['fake cost',s=>{s.items[0].purchasePriceAtSale=0}],
@@ -238,6 +242,22 @@ test('owner cannot update partial-return summary without a matching return recor
  const db=env.authenticatedContext('owner').firestore();
  await assertFails(setDoc(doc(db,'sales/editable'),{partialReturnQuantities:{'0':1},partialReturnTotal:12.35,
   partialCashRefund:0,partialDebtReduction:12.35,lastPartialReturnId:'missing'},{merge:true}));
+});
+test('owner can atomically record a partial purchase return with its invoice summary',async()=>{
+ await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'purchases/purchase-editable'),{id:'purchase-editable',status:'completed',total:30,paid:10,due:20,cashPosted:true,supplierId:'supplier',createdAt:new Date('2026-01-01')}));
+ const db=env.authenticatedContext('owner').firestore(),b=writeBatch(db),ts=serverTimestamp();
+ b.set(doc(db,'purchaseReturns/partial-purchase'),{sourceInvoiceId:'purchase-editable',returnType:'partial',sourceItemIndex:0,sourceLineKey:'0',
+  items:[{sourceItemIndex:0,productId:'p0',productName:'Product0',quantity:1,unitCost:12.35,lineTotal:12.35}],
+  total:12.35,cashRefund:4.12,debtReduction:8.23,supplierId:'supplier',supplierName:'Supplier',createdAt:ts,actorId:'owner'});
+ b.update(doc(db,'purchases/purchase-editable'),{partialReturnQuantities:{'0':1},partialReturnTotal:12.35,
+  partialCashRefund:4.12,partialDebtReduction:8.23,lastPartialReturnId:'partial-purchase'});
+ await assertSucceeds(b.commit());
+});
+test('owner cannot change partial purchase totals without a matching return record',async()=>{
+ await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'purchases/purchase-editable'),{id:'purchase-editable',status:'completed',total:30,paid:10,due:20,cashPosted:true,supplierId:'supplier'}));
+ const db=env.authenticatedContext('owner').firestore();
+ await assertFails(setDoc(doc(db,'purchases/purchase-editable'),{partialReturnQuantities:{'0':1},partialReturnTotal:12.35,
+  partialCashRefund:4.12,partialDebtReduction:8.23,lastPartialReturnId:'missing'},{merge:true}));
 });
 test('staff receipt links invoice atomically and prevents later edits',async()=>{
  await seedEditableSale();
@@ -459,7 +479,7 @@ test('discount base cannot disguise unauthorized manual price',async()=>assertFa
 test('invalid discount percentage rejected',async()=>assertFails(saleBatch(env.authenticatedContext('staff').firestore(),{mutate:s=>Object.assign(s.items[0],{discountPercent:-1})})));
 
 function pendingDraft({n=5,mutate=()=>{}}={}) {
-  const r={id:'request',employeeId:'staff',employeeName:'Staff',branchId:'staffbranch',customerId:'customer',customerName:'Customer',
+  const r={id:'request',employeeId:'staff',employeeName:'Staff',employeePhone:'01011111111',branchId:'staffbranch',customerId:'customer',customerName:'Customer',
     credit:true,paid:10,total:n*24.7,items:Array.from({length:n},(_,i)=>({productId:'p'+i,productName:'Product'+i,
       quantity:2,unitPrice:12.35,basePrice:12.35,discountPercent:0})),status:'pending',createdAt:serverTimestamp(),requestKey:'draft'};
   mutate(r);return r;
@@ -494,7 +514,7 @@ test('five and fifty item drafts have no financial effect before owner approval'
 });
 test('manager can queue a sale draft for offline sync but employee cannot impersonate the manager queue',async()=>{
   const owner=env.authenticatedContext('owner').firestore(),staff=env.authenticatedContext('staff').firestore();
-  const draft=pendingDraft({n:2,mutate:r=>Object.assign(r,{id:'offline-sale',employeeId:'owner',employeeName:'Owner',branchId:'main',
+  const draft=pendingDraft({n:2,mutate:r=>Object.assign(r,{id:'offline-sale',employeeId:'owner',employeeName:'Owner',employeePhone:'01022222222',branchId:'main',
     managerOffline:true,note:'',allowShortage:false,allowBelowCost:false,overrideReason:''})});
   await assertSucceeds(setDoc(doc(owner,'pendingSales/offline-sale'),draft));
   await assertFails(setDoc(doc(staff,'pendingSales/forged'),{...draft,id:'forged'}));
@@ -502,7 +522,7 @@ test('manager can queue a sale draft for offline sync but employee cannot impers
 });
 test('manager can queue a cash sale without a customer for offline sync',async()=>{
   const db=env.authenticatedContext('owner').firestore();
-  const draft=pendingDraft({n:1,mutate:r=>Object.assign(r,{id:'cash-offline',employeeId:'owner',employeeName:'Owner',branchId:'main',
+  const draft=pendingDraft({n:1,mutate:r=>Object.assign(r,{id:'cash-offline',employeeId:'owner',employeeName:'Owner',employeePhone:'01022222222',branchId:'main',
     customerId:'',customerName:'',credit:false,paid:24.7,managerOffline:true,note:'',allowShortage:false,allowBelowCost:false,overrideReason:''})});
   await assertSucceeds(setDoc(doc(db,'pendingSales/cash-offline'),draft));
 });

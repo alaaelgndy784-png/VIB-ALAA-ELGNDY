@@ -96,6 +96,28 @@ service cloud.firestore {
         && next.get('partialCashRefund', 0) == old.get('partialCashRefund', 0) + r.cashRefund
         && next.get('partialDebtReduction', 0) == old.get('partialDebtReduction', 0) + r.debtReduction;
     }
+    function validPartialPurchaseReturnUpdate(id) {
+      let next = request.resource.data;
+      let old = resource.data;
+      let returnId = next.get('lastPartialReturnId', '');
+      let returnPath = /databases/$(database)/documents/purchaseReturns/$(returnId);
+      let r = getAfter(returnPath).data;
+      let lineKey = r.sourceLineKey;
+      return returnId is string && returnId != '' && !exists(returnPath)
+        && r.sourceInvoiceId == id && r.returnType == 'partial'
+        && r.actorId == request.auth.uid
+        && r.sourceLineKey is string && r.sourceLineKey != ''
+        && r.sourceQuantity is int && r.sourceQuantity > 0
+        && r.total is number && r.total > 0
+        && r.cashRefund is number && r.cashRefund >= 0
+        && r.debtReduction is number && r.debtReduction >= 0
+        && moneyEqual(r.total, r.cashRefund + r.debtReduction)
+        && next.get('partialReturnQuantities', {}).get(lineKey, 0)
+          == old.get('partialReturnQuantities', {}).get(lineKey, 0) + r.sourceQuantity
+        && next.get('partialReturnTotal', 0) == old.get('partialReturnTotal', 0) + r.total
+        && next.get('partialCashRefund', 0) == old.get('partialCashRefund', 0) + r.cashRefund
+        && next.get('partialDebtReduction', 0) == old.get('partialDebtReduction', 0) + r.debtReduction;
+    }
     function saleHasNoReceipt(s) {
       let cid = s.get('customerId', '');
       let customer = cid == '' ? {} : get(/databases/$(database)/documents/customers/$(cid)).data;
@@ -144,10 +166,12 @@ service cloud.firestore {
     }
     function validStaffSale(id) {
       let s = request.resource.data;
-      return s.keys().hasOnly(['id','branchId','stockBranchId','employeeId','customerId','customerName','customerPhone',
+      return s.keys().hasOnly(['id','branchId','stockBranchId','employeeId','employeeName','employeePhone','customerId','customerName','customerPhone',
           'customerPreviousBalance','customerBalanceAfter','items','itemCount','stockIndex','total','paid','due',
           'cashBefore','cashAfter','paymentStatus','status','createdAt','requestKey','productId','productName','quantity','unitPrice'])
         && s.id == id && s.branchId == branch() && s.stockBranchId == 'main' && s.employeeId == request.auth.uid
+        && s.get('employeeName', profile().get('name', '')) == profile().get('name', '')
+        && s.get('employeePhone', profile().get('phone', '')) == profile().get('phone', '')
         && s.status == 'completed' && s.createdAt == request.time
         && s.requestKey is string && s.requestKey.size() <= 6000
         && s.items is list && s.items.size() >= 1 && s.items.size() <= 4
@@ -545,6 +569,10 @@ service cloud.firestore {
       allow read, create: if owner();
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy']);
+      allow update: if owner() && resource.data.status == 'completed'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(
+          ['partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction','lastPartialReturnId'])
+        && validPartialPurchaseReturnUpdate(id);
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cashPaidPosted','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
         && resource.data.status == 'completed' && request.resource.data.revision == resource.data.get('revision', 0) + 1
         && request.resource.data.lastEditedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
@@ -555,9 +583,10 @@ service cloud.firestore {
       allow get: if owner() || (employee() && (!exists(/databases/$(database)/documents/pendingSales/$(id)) || resource.data.employeeId == request.auth.uid));
       allow list: if owner() || (employee() && resource.data.employeeId == request.auth.uid);
       allow create: if employee()
-        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey'])
+        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','employeePhone','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey'])
         && request.resource.data.id == id && request.resource.data.employeeId == request.auth.uid
-        && request.resource.data.employeeName == profile().name && request.resource.data.branchId == branch()
+        && request.resource.data.employeeName == profile().name
+        && request.resource.data.get('employeePhone', profile().get('phone', '')) == profile().get('phone', '') && request.resource.data.branchId == branch()
         && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time
         && request.resource.data.customerId is string && request.resource.data.customerId.size() > 0
         && request.resource.data.customerName is string && request.resource.data.credit is bool
@@ -568,9 +597,10 @@ service cloud.firestore {
       // A manager may save a sale draft offline. The draft has no accounting
       // effect until the normal server transaction revalidates and posts it.
       allow create: if owner()
-        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey','managerOffline','note','allowShortage','allowBelowCost','overrideReason'])
+        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','employeePhone','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey','managerOffline','note','allowShortage','allowBelowCost','overrideReason'])
         && request.resource.data.id == id && request.resource.data.employeeId == request.auth.uid
-        && request.resource.data.employeeName == profile().name && request.resource.data.managerOffline == true
+        && request.resource.data.employeeName == profile().name
+        && request.resource.data.get('employeePhone', profile().get('phone', '')) == profile().get('phone', '') && request.resource.data.managerOffline == true
         && request.resource.data.branchId is string && request.resource.data.branchId.size() > 0
         && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time
         && request.resource.data.customerId is string
