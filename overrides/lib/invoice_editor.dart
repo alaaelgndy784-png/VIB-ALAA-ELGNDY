@@ -187,13 +187,23 @@ class _InvoiceProductSearchListState extends State<InvoiceProductSearchList> {
           onChanged:(value)=>setState(()=>_query=value.trim().toLowerCase())),
         const SizedBox(height:8),
         Expanded(child:rows.isEmpty ? const Center(child:Text('لا توجد أصناف مطابقة')) : ListView.separated(
-          itemCount:rows.length,separatorBuilder:(_,__)=>const Divider(height:1,color:Color(0xFF363239)),
+          itemCount:rows.length,separatorBuilder:(_,__)=>const SizedBox(height:4),
           itemBuilder:(context,index) {
             final product=rows[index];
             return InkWell(key:ValueKey('product-choice-${product.id}'),onTap:()=>widget.onSelect(product.id),
-              child:Padding(padding:const EdgeInsets.symmetric(vertical:14,horizontal:4),child:InvoiceProductOptionRow(
-                saleScreen:widget.saleScreen,name:product.name,unitCost:widget.unitCosts[product.id],quantityStream:widget.stockStreamFor?.call(product.id),
-              )));
+              borderRadius:BorderRadius.circular(10),
+              child:Container(padding:const EdgeInsets.symmetric(vertical:8,horizontal:8),
+                decoration:BoxDecoration(color:const Color(0xFF102A43),borderRadius:BorderRadius.circular(10)),
+                child:Row(textDirection:TextDirection.rtl,children:[
+                  Container(width:28,height:28,alignment:Alignment.center,
+                    decoration:BoxDecoration(color:const Color(0xFF174A7E),borderRadius:BorderRadius.circular(8)),
+                    child:Text('${index+1}'.replaceAllMapped(RegExp(r'\d'),(match)=>String.fromCharCode(0x0660+int.parse(match[0]!))),
+                      style:const TextStyle(color:Color(0xFF90CAF9),fontSize:13,fontWeight:FontWeight.bold))),
+                  const SizedBox(width:8),
+                  Expanded(child:InvoiceProductOptionRow(
+                    saleScreen:widget.saleScreen,name:product.name,unitCost:widget.unitCosts[product.id],quantityStream:widget.stockStreamFor?.call(product.id),
+                  )),
+                ])));
           },
         )),
       ])));
