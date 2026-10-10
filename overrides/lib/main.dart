@@ -663,6 +663,18 @@ class _ProductsState extends State<Products> {
   String query = '';
   bool get owner => widget.owner;
   String get branchId => widget.branchId;
+  Widget _compactProductAction({required String label,required String tooltip,required IconData icon,required VoidCallback onPressed,bool primary=false}) {
+    final style=primary
+      ? FilledButton.styleFrom(padding:const EdgeInsets.symmetric(horizontal:4,vertical:6),minimumSize:const Size(0,72))
+      : OutlinedButton.styleFrom(padding:const EdgeInsets.symmetric(horizontal:4,vertical:6),minimumSize:const Size(0,72));
+    final content=Column(mainAxisSize:MainAxisSize.min,mainAxisAlignment:MainAxisAlignment.center,children:[
+      Icon(icon,size:20),const SizedBox(height:3),
+      Text(label,textAlign:TextAlign.center,maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12,height:1.1)),
+    ]);
+    return Tooltip(message:tooltip,child:SizedBox(height:74,child:primary
+      ?FilledButton(onPressed:onPressed,style:style,child:content)
+      :OutlinedButton(onPressed:onPressed,style:style,child:content)));
+  }
   @override
   Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
     stream: db.collection('products').snapshots(),
@@ -673,8 +685,13 @@ class _ProductsState extends State<Products> {
         ..sort((a,b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
       return Column(children: [
         Padding(padding: const EdgeInsets.all(12), child: TextField(decoration: const InputDecoration(labelText: 'بحث عن منتج — اكتب أي حرف', prefixIcon: Icon(Icons.search)), onChanged: (value) => setState(() => query = value.trim().toLowerCase()))),
-        if (owner) Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, runSpacing: 8, children: [FilledButton.icon(onPressed: () => productDialog(context), icon: const Icon(Icons.add), label: const Text('إضافة منتج')), OutlinedButton.icon(onPressed: () => openProductImport(context), icon: const Icon(Icons.upload_file), label: const Text('إضافة الأصناف من ملف'))])),
-        if (owner) Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: OutlinedButton.icon(onPressed: () => openInventoryPrices(context), icon: const Icon(Icons.price_change), label: const Text('زيادة / تخفيض أسعار الأصناف'))),
+        if (owner) Padding(padding:const EdgeInsets.fromLTRB(12,2,12,8),child:Row(children:[
+          Expanded(child:_compactProductAction(label:'إضافة منتج',tooltip:'إضافة منتج',icon:Icons.add,onPressed:()=>productDialog(context),primary:true)),
+          const SizedBox(width:8),
+          Expanded(child:_compactProductAction(label:'استيراد ملف',tooltip:'إضافة الأصناف من ملف',icon:Icons.upload_file,onPressed:()=>openProductImport(context))),
+          const SizedBox(width:8),
+          Expanded(child:_compactProductAction(label:'تعديل الأسعار',tooltip:'زيادة أو تخفيض أسعار الأصناف',icon:Icons.price_change,onPressed:()=>openInventoryPrices(context))),
+        ])),
         if (!owner) Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () => newSaleDialog(context, false, branchId), icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة')))),
         Expanded(child: docs.isEmpty ? const Center(child: Text('لا توجد منتجات بعد')) : ListView.builder(itemCount: docs.length, itemBuilder: (context, i) {
           final d = docs[i], p = d.data();
