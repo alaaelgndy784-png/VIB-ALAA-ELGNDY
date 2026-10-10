@@ -1254,16 +1254,18 @@ class _SalesState extends State<Sales> {
         .toList()
       ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
     return Column(children: [
-      Padding(padding: const EdgeInsets.fromLTRB(12,12,12,4), child: FilledButton.icon(icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة'), onPressed: () => newSaleDialog(context, owner, branchId))),
-      Padding(padding: const EdgeInsets.fromLTRB(12,4,12,8),child:SizedBox(width:double.infinity,child:OutlinedButton.icon(
-        icon:const Icon(Icons.payments_outlined),label:const Text('سند قبض بدون فاتورة بيع'),
-        onPressed:()=>createReceiptVoucher(context,branchId,owner:owner)))),
-      Padding(padding:const EdgeInsets.symmetric(horizontal:12),child: PendingSalesShortcut(owner:owner)),
-      MovementPeriodControls(key:ValueKey('${selectedFrom.toIso8601String()}-${selectedTo.toIso8601String()}'),from:selectedFrom,to:selectedTo,enabled:true,onConfirm:(from,to)=>setState(() {selectedFrom=from;selectedTo=to;})),
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Wrap(spacing: 8, runSpacing: 8, children: [
-        if (owner) OutlinedButton.icon(icon: const Icon(Icons.summarize_outlined), label: const Text('تقرير حركة المبيعات'),
-          onPressed: () => openVibReport(context, 'تقرير حركة المبيعات', const InvoiceMovementReportPage(type: 'sales'))),
-        if (owner) OutlinedButton.icon(icon: const Icon(Icons.edit_note), label: const Text('تعديل فاتورة مبيعات'), onPressed: () => editSaleByNumber(context)),
+      Padding(padding: const EdgeInsets.fromLTRB(10,8,10,2), child: Row(children: [
+        Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.add_shopping_cart, size: 18), label: const Text('فاتورة جديدة', maxLines: 1, overflow: TextOverflow.ellipsis), onPressed: () => newSaleDialog(context, owner, branchId))),
+        const SizedBox(width: 6),
+        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.payments_outlined, size: 18), label: const Text('سند قبض', maxLines: 1, overflow: TextOverflow.ellipsis), onPressed:()=>createReceiptVoucher(context,branchId,owner:owner))),
+      ])),
+      Padding(padding:const EdgeInsets.symmetric(horizontal:10),child: PendingSalesShortcut(owner:owner, compact:true)),
+      MovementPeriodControls(key:ValueKey('${selectedFrom.toIso8601String()}-${selectedTo.toIso8601String()}'),from:selectedFrom,to:selectedTo,enabled:true,compact:true,onConfirm:(from,to)=>setState(() {selectedFrom=from;selectedTo=to;})),
+      if (owner) Padding(padding: const EdgeInsets.fromLTRB(10,0,10,2), child: Row(children: [
+        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.summarize_outlined, size:18), label: const Text('تقرير المبيعات', maxLines:1, overflow:TextOverflow.ellipsis),
+          onPressed: () => openVibReport(context, 'تقرير حركة المبيعات', const InvoiceMovementReportPage(type: 'sales')))),
+        const SizedBox(width:6),
+        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.edit_note, size:18), label: const Text('تعديل فاتورة', maxLines:1, overflow:TextOverflow.ellipsis), onPressed: () => editSaleByNumber(context))),
       ])),
       Padding(padding: const EdgeInsets.all(8), child: Text('فواتير المبيعات • من ${DateFormat('dd/MM/yyyy').format(selectedFrom)} إلى ${DateFormat('dd/MM/yyyy').format(selectedTo)} • العدد: ${rows.length} • الإجمالي: ${movementReportMoney(rows.fold<int>(0,(sum,row){final value=row.data()['total'];return value is num && value.isFinite ? sum+(value*100).round() : sum;}))}',textAlign:TextAlign.center,style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
       Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد فواتير في هذا التاريخ')) : ListView(children: rows.map((d) {
@@ -1740,12 +1742,18 @@ class _PurchasesState extends State<Purchases>{
   @override void initState(){super.initState();if(owner)prepareInvoiceSerials('purchases').then((_){if(mounted)setState((){});}).catchError((Object e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر تجهيز أرقام المشتريات: $e')));});}
   @override
   Widget build(BuildContext context) => Column(children: [
-    Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, children: [
-      FilledButton.icon(onPressed: () => purchaseDialog(context,owner:owner), icon: const Icon(Icons.add), label: const Text('فاتورة مشتريات جديدة')),
-      if(owner) OutlinedButton.icon(onPressed: () => openVibReport(context, 'تقرير حركة المشتريات', const InvoiceMovementReportPage(type: 'purchases')),
-        icon: const Icon(Icons.summarize_outlined), label: const Text('تقرير حركة المشتريات')),
-      if(owner) OutlinedButton.icon(onPressed: () => findInvoiceForEdit(context, 'purchases'), icon: const Icon(Icons.edit_note), label: const Text('تعديل فاتورة مشتريات')),
-      if(owner) OutlinedButton.icon(onPressed: () => scannedPurchaseDialog(context), icon: const Icon(Icons.camera_alt), label: const Text('تصوير فاتورة مشتريات')),
+    Padding(padding: const EdgeInsets.fromLTRB(10,8,10,4), child: Column(children: [
+      Row(children: [
+        Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)), onPressed: () => purchaseDialog(context,owner:owner), icon: const Icon(Icons.add, size:18), label: const Text('فاتورة جديدة', maxLines:1, overflow:TextOverflow.ellipsis))),
+        if(owner) const SizedBox(width:6),
+        if(owner) Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)), onPressed: () => openVibReport(context, 'تقرير حركة المشتريات', const InvoiceMovementReportPage(type: 'purchases')),
+          icon: const Icon(Icons.summarize_outlined, size:18), label: const Text('تقرير الحركة', maxLines:1, overflow:TextOverflow.ellipsis))),
+      ]),
+      if(owner) Padding(padding:const EdgeInsets.only(top:4),child:Row(children: [
+        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)), onPressed: () => findInvoiceForEdit(context, 'purchases'), icon: const Icon(Icons.edit_note, size:18), label: const Text('تعديل فاتورة', maxLines:1, overflow:TextOverflow.ellipsis))),
+        const SizedBox(width:6),
+        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)), onPressed: () => scannedPurchaseDialog(context), icon: const Icon(Icons.camera_alt, size:18), label: const Text('تصوير فاتورة', maxLines:1, overflow:TextOverflow.ellipsis))),
+      ])),
     ])),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _purchaseStream,
@@ -3334,26 +3342,26 @@ class AccountDirectory extends StatelessWidget {
   Widget build(BuildContext context) {
     final collection = suppliers ? 'suppliers' : 'customers';
     return Column(children: [
-      Padding(padding: const EdgeInsets.all(12), child: Column(children: [
+      Padding(padding: const EdgeInsets.fromLTRB(10,8,10,4), child: Column(children: [
         Text(suppliers ? 'حسابات الموردين' : 'حسابات العملاء',
           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
-        Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(
-          onPressed: () => openVibReport(context,
-            suppliers ? 'تقرير ذمم الموردين' : 'تقرير ذمم العملاء',
-            DebtReportPage(suppliers: suppliers)),
-          icon: const Icon(Icons.summarize_outlined),
-          label: Text(suppliers ? 'تقرير ذمم الموردين — إجمالي الدين' : 'تقرير ذمم العملاء — إجمالي الدين'))),
-        if (suppliers) Padding(padding: const EdgeInsets.only(top: 8), child: OutlinedButton.icon(
-          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) =>
-            Directionality(textDirection: TextDirection.rtl, child: Scaffold(
-              appBar: AppBar(title: const Text('سندات صرف الموردين')),
-              body: const SafeArea(child: SupplierPaymentVouchers()))))),
-          icon: const Icon(Icons.receipt_long), label: const Text('سندات صرف الموردين'))),
-        const SizedBox(height: 8),
-        FilledButton.icon(
-          onPressed: () => createAccountDialog(context, collection, suppliers),
-          icon: const Icon(Icons.person_add),
-          label: Text(suppliers ? 'إضافة مورد' : 'إضافة عميل')),
+        const SizedBox(height:4),
+        Row(children: [
+          Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)),
+            onPressed: () => openVibReport(context, suppliers ? 'تقرير ذمم الموردين' : 'تقرير ذمم العملاء', DebtReportPage(suppliers: suppliers)),
+            icon: const Icon(Icons.summarize_outlined, size:18), label: Text(suppliers ? 'تقرير الموردين' : 'تقرير العملاء', maxLines:1, overflow:TextOverflow.ellipsis))),
+          const SizedBox(width:6),
+          if(suppliers) Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)),
+            onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) =>
+              Directionality(textDirection: TextDirection.rtl, child: Scaffold(
+                appBar: AppBar(title: const Text('سندات صرف الموردين')),
+                body: const SafeArea(child: SupplierPaymentVouchers()))))),
+            icon: const Icon(Icons.receipt_long, size:18), label: const Text('سندات الصرف', maxLines:1, overflow:TextOverflow.ellipsis))),
+          if(!suppliers) Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)),
+            onPressed: () => createAccountDialog(context, collection, suppliers), icon: const Icon(Icons.person_add, size:18), label: const Text('إضافة عميل', maxLines:1, overflow:TextOverflow.ellipsis))),
+        ]),
+        if(suppliers) Padding(padding:const EdgeInsets.only(top:4),child:FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:12)),
+          onPressed: () => createAccountDialog(context, collection, suppliers), icon: const Icon(Icons.person_add, size:18), label: const Text('إضافة مورد'))),
       ])),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: db.collection(collection).snapshots(),

@@ -314,12 +314,15 @@ Query<Map<String,dynamic>> pendingSalesQuery(bool owner) => owner ? db.collectio
 
 class PendingSalesShortcut extends StatelessWidget {
   final bool owner;
-  const PendingSalesShortcut({super.key,required this.owner});
+  final bool compact;
+  const PendingSalesShortcut({super.key,required this.owner,this.compact=false});
   @override Widget build(BuildContext context)=>StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
     stream:pendingSalesQuery(owner).snapshots(),builder:(context,snapshot) {
       final count=snapshot.data?.docs.where((d)=>pendingSaleIsVisible(d.data()) && d.data()['status']=='pending').length;
-      return SizedBox(width:double.infinity,child:OutlinedButton.icon(icon:const Icon(Icons.pending_actions),
-        label:Text('${owner ? 'اعتماد فواتير الموظفين' : 'فواتير الموظف — متابعة الاعتماد'}${count==null ? '' : ' ($count معلقة)'}'),
+      return SizedBox(width:double.infinity,child:OutlinedButton.icon(
+        style:compact ? OutlinedButton.styleFrom(visualDensity:VisualDensity.compact,minimumSize:const Size.fromHeight(38),padding:const EdgeInsets.symmetric(horizontal:8)) : null,
+        icon:Icon(Icons.pending_actions,size:compact?18:null),
+        label:Text('${owner ? 'اعتماد فواتير الموظفين' : 'فواتير الموظف — متابعة الاعتماد'}${count==null ? '' : ' ($count معلقة)'}',maxLines:1,overflow:TextOverflow.ellipsis),
         onPressed:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>Directionality(textDirection:TextDirection.rtl,
           child:Scaffold(appBar:AppBar(title:Text(owner?'اعتماد فواتير الموظفين':'فواتير الموظف')),body:PendingSalesPage(owner:owner)))))));
     });

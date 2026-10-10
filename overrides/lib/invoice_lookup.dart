@@ -3,9 +3,10 @@ part of 'main.dart';
 class MovementPeriodControls extends StatefulWidget {
   final DateTime from, to;
   final bool enabled;
+  final bool compact;
   final void Function(DateTime, DateTime) onConfirm;
   const MovementPeriodControls({super.key, required this.from, required this.to,
-    required this.enabled, required this.onConfirm});
+    required this.enabled, required this.onConfirm, this.compact = false});
   @override State<MovementPeriodControls> createState() => _MovementPeriodControlsState();
 }
 class _MovementPeriodControlsState extends State<MovementPeriodControls> {
@@ -65,7 +66,7 @@ class _MovementPeriodControlsState extends State<MovementPeriodControls> {
     endText.dispose();
     super.dispose();
   }
-  @override Widget build(BuildContext context) => Padding(padding: const EdgeInsets.all(12),
+  @override Widget build(BuildContext context) => Padding(padding: EdgeInsets.all(widget.compact ? 8 : 12),
     child: Column(children: [
       Row(children: [
         Expanded(child: TextField(key: const ValueKey('period-from-input'), controller: startText,
@@ -80,8 +81,30 @@ class _MovementPeriodControlsState extends State<MovementPeriodControls> {
           decoration: const InputDecoration(labelText: 'إلى تاريخ', hintText: 'يوم/شهر/سنة',
             border: OutlineInputBorder(), isDense: true))),
       ]),
-      const SizedBox(height: 8),
-      Wrap(spacing: 8, runSpacing: 8, children: [
+      SizedBox(height: widget.compact ? 4 : 8),
+      if (widget.compact) Row(children: [
+        Expanded(child: OutlinedButton.icon(onPressed: widget.enabled ? () => pick(true) : null,
+          style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
+          icon: const Icon(Icons.calendar_month, size: 18), label: const Text('البداية', maxLines: 1, overflow: TextOverflow.ellipsis))),
+        const SizedBox(width: 4),
+        Expanded(child: OutlinedButton.icon(onPressed: widget.enabled ? () => pick(false) : null,
+          style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
+          icon: const Icon(Icons.calendar_month, size: 18), label: const Text('النهاية', maxLines: 1, overflow: TextOverflow.ellipsis))),
+        const SizedBox(width: 4),
+        Expanded(child: FilledButton.icon(key: const ValueKey('period-apply-button'), onPressed: widget.enabled && startInputValid && endInputValid && !end.isBefore(start)
+            ? () => widget.onConfirm(start, end) : null,
+          style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
+          icon: const Icon(Icons.check, size: 18), label: const Text('تطبيق', maxLines: 1, overflow: TextOverflow.ellipsis))),
+        IconButton(tooltip: 'اليوم', visualDensity: VisualDensity.compact, onPressed: widget.enabled ? () {
+          final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
+          final today = DateTime(now.year, now.month, now.day);
+          setState(() {
+            start = end = today;
+            startText.text = endText.text = _format(today);
+            startInputValid = endInputValid = true;
+          });
+        } : null, icon: const Icon(Icons.today, size: 20)),
+      ]) else Wrap(spacing: 8, runSpacing: 8, children: [
         OutlinedButton.icon(onPressed: widget.enabled ? () => pick(true) : null,
           icon: const Icon(Icons.calendar_month), label: const Text('اختيار البداية')),
         OutlinedButton.icon(onPressed: widget.enabled ? () => pick(false) : null,
@@ -103,7 +126,7 @@ class _MovementPeriodControlsState extends State<MovementPeriodControls> {
         const Text('اكتب التاريخ بصيغة يوم/شهر/سنة، مثل 05/10/2026.', style: TextStyle(color: Colors.redAccent)),
       if (startInputValid && endInputValid && end.isBefore(start))
         const Text('تاريخ النهاية يجب أن يكون بعد البداية أو في نفس اليوم.', style: TextStyle(color: Colors.redAccent)),
-      const Text('اكتب التاريخين أو اخترهما، ثم اضغط تطبيق الفترة لعرض الحركة شاملًا يوم النهاية.'),
+      if (!widget.compact) const Text('اكتب التاريخين أو اخترهما، ثم اضغط تطبيق الفترة لعرض الحركة شاملًا يوم النهاية.'),
     ]));
 }
 
