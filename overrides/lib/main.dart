@@ -18,6 +18,10 @@ import 'package:intl/intl.dart' show DateFormat;
 import 'package:local_auth/local_auth.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
+import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart' as esc;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:image/image.dart' as img;
 import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:file_picker/file_picker.dart';
@@ -3673,9 +3677,12 @@ class _AppSettingsState extends State<AppSettings> {
   final footer = TextEditingController(text: 'خالص مع الشكر');
   String logoBase64 = '';
   String paper = 'a4';
+  String thermalPrinterLabel = 'غير محددة';
   bool loading = true, saving = false;
   @override void initState() { super.initState(); load(); }
   Future<void> load() async {
+    final localPrefs = await SharedPreferences.getInstance();
+    thermalPrinterLabel = localPrefs.getString('vib.thermal.printer.name') ?? 'غير محددة';
     final d = (await db.collection('settings').doc('main').get()).data();
     if (d != null) {
       company.text = '${d['companyName'] ?? company.text}'; phone.text = '${d['phone'] ?? ''}';
@@ -3730,8 +3737,17 @@ class _AppSettingsState extends State<AppSettings> {
     DropdownButtonFormField<String>(value: paper, decoration: const InputDecoration(labelText: 'مقاس ورق الفاتورة'), items: const [DropdownMenuItem(value: 'a4', child: Text('A4 عادي')), DropdownMenuItem(value: '58', child: Text('إيصال حراري 58 مم')), DropdownMenuItem(value: '80', child: Text('إيصال حراري 80 مم'))], onChanged: (v) => setState(() => paper = v ?? 'a4')),
     const SizedBox(height: 12), const Text('احفظ بيانات الشركة ليظهر اللوجو والتليفونات والنص في طباعة المدير والموظف.'),
     const SizedBox(height: 20), FilledButton.icon(onPressed: saving ? null : save, icon: const Icon(Icons.save), label: const Text('حفظ الإعدادات')),
-    const SizedBox(height: 12), OutlinedButton.icon(onPressed: () => printTestPage(context, paper), icon: const Icon(Icons.print), label: const Text('اختيار الطابعة وطباعة صفحة تجربة')),
-    const Text('طابعة البلوتوث تظهر في شاشة الطباعة إذا كانت متصلة بالموبايل ولها خدمة طباعة متوافقة.'),
+    const SizedBox(height: 12), OutlinedButton.icon(onPressed: saving ? null : () async {
+      if (paper == '80') {
+        final selected = await _chooseBluetoothThermalPrinter(context);
+        if (selected == null || !mounted) return;
+        setState(() => thermalPrinterLabel = selected.name);
+        await printTestPage(context, paper, bluetoothMac: selected.mac);
+      } else {
+        await printTestPage(context, paper);
+      }
+    }, icon: const Icon(Icons.print), label: Text(paper == '80' ? 'اختيار طابعة البلوتوث وطباعة تجربة' : 'اختيار الطابعة وطباعة صفحة تجربة')),
+    Text(paper == '80' ? 'الطابعة المحفوظة: $thermalPrinterLabel. اقرن XP-P323B بالموبايل من إعدادات البلوتوث أولًا.' : 'لطباعة 80 مم مباشرة، اختار إيصال حراري 80 مم واحفظ الطابعة من زر التجربة.'),
     const SizedBox(height: 14),
     Card(child: ListTile(
       leading: const Icon(Icons.fingerprint, color: gold),
@@ -4089,16 +4105,106 @@ PdfPageFormat invoicePageFormat(String paper) => switch (paper) {
   _ => PdfPageFormat.a4,
 };
 
-Future<void> printTestPage(BuildContext context, String paper) async {
+const _thermalPrinterMacKey = 'vib.thermal.printer.mac';
+const _thermalPrinterNameKey = 'vib.thermal.printer.name';
+
+Future<({String mac, String name})?> _chooseBluetoothThermalPrinter(BuildContext context) async {
+  try {
+    if (!await PrintBluetoothThermal.bluetoothEnabled) {
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('شغّل البلوتوث واقرن طابعة XP-P323B بالموبايل أولًا.')));
+      return null;
+    }
+    final printers = await PrintBluetoothThermal.pairedBluetooths;
+    if (!context.mounted) return null;
+    if (printers.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('مافيش طابعة مقترنة. افتح إعدادات البلوتوث واقرن XP-P323B، ثم جرّب تاني.')));
+      return null;
+    }
+    final selectedMac = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('اختار طابعة البلوتوث'),
+        content: SizedBox(width: double.maxFinite, child: ListView(shrinkWrap: true, children: [
+          for (final printer in printers)
+            ListTile(
+              leading: const Icon(Icons.print),
+              title: Text(printer.name),
+              subtitle: Text(printer.macAdress),
+              onTap: () => Navigator.pop(dialogContext, printer.macAdress),
+            ),
+        ])),
+        actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء'))],
+      ),
+    );
+    if (selectedMac == null) return null;
+    final selected = printers.firstWhere((printer) => printer.macAdress == selectedMac);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_thermalPrinterMacKey, selected.macAdress);
+    await prefs.setString(_thermalPrinterNameKey, selected.name);
+    return (mac: selected.macAdress, name: selected.name);
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر العثور على طابعة البلوتوث: $e')));
+    return null;
+  }
+}
+
+Future<void> _printPdfOnBluetoothThermal(
+  BuildContext context,
+  Uint8List pdfBytes, {
+  String? printerMac,
+}) async {
+  if (!await PrintBluetoothThermal.bluetoothEnabled) throw StateError('شغّل البلوتوث على الموبايل.');
+  var mac = printerMac;
+  var name = '';
+  final printers = await PrintBluetoothThermal.pairedBluetooths;
+  if (mac == null || !printers.any((printer) => printer.macAdress == mac)) {
+    final selected = await _chooseBluetoothThermalPrinter(context);
+    if (selected == null) return;
+    mac = selected.mac;
+    name = selected.name;
+  } else {
+    name = printers.firstWhere((printer) => printer.macAdress == mac).name;
+  }
+  if (!await PrintBluetoothThermal.connect(macPrinterAddress: mac)) {
+    throw StateError('تعذر الاتصال بـ$name. تأكد أن الطابعة مشحونة ومقترنة.');
+  }
+  try {
+    final profile = await esc.CapabilityProfile.load();
+    final generator = esc.Generator(esc.PaperSize.mm80, profile);
+    var pageCount = 0;
+    await for (final page in Printing.raster(pdfBytes, dpi: 203)) {
+      final bitmap = img.copyResize(page.asImage(), width: 576);
+      final commands = <int>[
+        ...generator.reset(),
+        ...generator.imageRaster(bitmap, align: esc.PosAlign.center),
+        ...generator.feed(3),
+      ];
+      if (!await PrintBluetoothThermal.writeBytes(commands)) {
+        throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');
+      }
+      pageCount++;
+    }
+    if (pageCount == 0) throw StateError('ملف الفاتورة مافهوش صفحات للطباعة.');
+  } finally {
+    await PrintBluetoothThermal.disconnect;
+  }
+}
+
+Future<void> printTestPage(BuildContext context, String paper, {String? bluetoothMac}) async {
   try {
     final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
     final pdf = pw.Document();
     pdf.addPage(pw.Page(pageFormat: invoicePageFormat(paper), build: (_) => pw.Center(child: pw.Text('VIB للتجارة والتوزيع\nتجربة الطباعة\n${paper == 'a4' ? 'A4' : '$paper مم'}', textAlign: pw.TextAlign.center,
       style: pw.TextStyle(font: font, fontSize: paper == 'a4' ? 22 : 11)))));
-    await Printing.layoutPdf(name: 'VIB-PRINT-TEST.pdf', format: invoicePageFormat(paper), dynamicLayout: false, onLayout: (_) => pdf.save());
+    final bytes = await pdf.save();
+    if (paper == '80') {
+      await _printPdfOnBluetoothThermal(context, bytes, printerMac: bluetoothMac);
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إرسال صفحة التجربة لطابعة 80 مم.')));
+    } else {
+      await Printing.layoutPdf(name: 'VIB-PRINT-TEST.pdf', format: invoicePageFormat(paper), dynamicLayout: false, onLayout: (_) async => bytes);
+    }
   } catch (e) {
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('تعذر فتح الطباعة: $e')));
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e')));
   }
 }
 
@@ -4621,7 +4727,12 @@ Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<
 Future<void> printInvoice(BuildContext context, String type, String id, Map<String, dynamic> data, {String? paperChoice}) async {
   try {
     final bytes = await createInvoicePdf(type, id, data, paperChoice: paperChoice);
-    await Printing.layoutPdf(name: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf', format: invoicePageFormat(paperChoice ?? 'a4'), dynamicLayout: false, onLayout: (_) async => bytes);
+    if (paperChoice == '80') {
+      final prefs = await SharedPreferences.getInstance();
+      await _printPdfOnBluetoothThermal(context, bytes, printerMac: prefs.getString(_thermalPrinterMacKey));
+    } else {
+      await Printing.layoutPdf(name: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf', format: invoicePageFormat(paperChoice ?? 'a4'), dynamicLayout: false, onLayout: (_) async => bytes);
+    }
     await db.collection(type).doc(id).set({'printedAt': FieldValue.serverTimestamp(), 'printedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
   } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e'))); }
 }

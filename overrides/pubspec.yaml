@@ -16,6 +16,10 @@ dependencies:
   local_auth: ^2.3.0
   pdf: ^3.11.3
   printing: ^5.14.2
+  print_bluetooth_thermal: 1.2.1
+  esc_pos_utils_plus: ^2.0.4
+  image: ^4.5.4
+  shared_preferences: ^2.5.3
   url_launcher: ^6.3.2
   image_picker: ^1.2.3
   tesseract_ocr: ^0.5.0
