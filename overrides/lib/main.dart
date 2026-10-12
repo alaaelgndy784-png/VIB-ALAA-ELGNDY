@@ -4506,7 +4506,7 @@ class InvoiceSavedDialog extends StatelessWidget {
         Text('رقم الفاتورة: $invoiceId', textAlign: TextAlign.center),
         const SizedBox(height: 16),
         FilledButton.icon(onPressed: () => Navigator.pop(context, 'print'),
-          icon: const Icon(Icons.print), label: const Text('طباعة الفاتورة — A4 أو 80 مللي')),
+          icon: const Icon(Icons.print), label: const Text('طباعة مباشرة — 80 مم')),
         const SizedBox(height: 10),
         OutlinedButton.icon(onPressed: () => Navigator.pop(context, 'share'),
           icon: const Icon(Icons.share), label: const Text('إرسال الفاتورة PDF على واتساب')),
@@ -4525,7 +4525,7 @@ Future<void> showInvoiceSavedActions(BuildContext context, String type, String i
     final action = await showDialog<String>(context: context, barrierDismissible: false,
       builder: (_) => Directionality(textDirection: TextDirection.rtl, child: InvoiceSavedDialog(invoiceId: invoiceDisplayNumber(type,id,data))));
     if (!context.mounted) return;
-    if (action == 'print') await selectInvoicePaper(context, type, id, data);
+    if (action == 'print') await printInvoice(context, type, id, data, paperChoice: '80');
     if (action == 'share') await shareInvoicePdfForWhatsApp(context,type,id,data);
   } catch (_) {
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
