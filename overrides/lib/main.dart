@@ -4095,7 +4095,7 @@ Future<void> printTestPage(BuildContext context, String paper) async {
     final pdf = pw.Document();
     pdf.addPage(pw.Page(pageFormat: invoicePageFormat(paper), build: (_) => pw.Center(child: pw.Text('VIB للتجارة والتوزيع\nتجربة الطباعة\n${paper == 'a4' ? 'A4' : '$paper مم'}', textAlign: pw.TextAlign.center,
       style: pw.TextStyle(font: font, fontSize: paper == 'a4' ? 22 : 11)))));
-    await Printing.layoutPdf(name: 'VIB-PRINT-TEST.pdf', onLayout: (_) => pdf.save());
+    await Printing.layoutPdf(name: 'VIB-PRINT-TEST.pdf', format: invoicePageFormat(paper), dynamicLayout: false, onLayout: (_) => pdf.save());
   } catch (e) {
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('تعذر فتح الطباعة: $e')));
@@ -4617,7 +4617,7 @@ Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<
 Future<void> printInvoice(BuildContext context, String type, String id, Map<String, dynamic> data, {String? paperChoice}) async {
   try {
     final bytes = await createInvoicePdf(type, id, data, paperChoice: paperChoice);
-    await Printing.layoutPdf(name: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf', onLayout: (_) async => bytes);
+    await Printing.layoutPdf(name: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf', format: invoicePageFormat(paperChoice ?? 'a4'), dynamicLayout: false, onLayout: (_) async => bytes);
     await db.collection(type).doc(id).set({'printedAt': FieldValue.serverTimestamp(), 'printedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
   } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e'))); }
 }
