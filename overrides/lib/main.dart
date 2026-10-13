@@ -5890,7 +5890,7 @@ class StaffChatInbox extends StatelessWidget {
                 if(unread)const Positioned(top:-7,right:-8,child:Icon(Icons.notifications_active,size:16,color:Colors.lightBlueAccent)),
               ]),
               title: Text(name), subtitle: Text('${thread?['lastText'] ?? 'ابدأ محادثة مع الموظف'}', maxLines: 2, overflow: TextOverflow.ellipsis),
-              trailing: Wrap(mainAxisSize:MainAxisSize.min,children:[
+              trailing: Row(mainAxisSize:MainAxisSize.min,children:[
                 IconButton(tooltip:'اتصال بالموظف',icon:const Icon(Icons.call,color:vibBlue),onPressed:()=>callStaffEmployee(context,phone)),
                 const Icon(Icons.chevron_left),
               ]),
