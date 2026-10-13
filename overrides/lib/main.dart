@@ -691,7 +691,7 @@ class _ProductsState extends State<Products> {
   }
   @override
   Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-    stream: db.collection('products').snapshots(),
+    stream: db.collection('products').snapshots(includeMetadataChanges: true),
     builder: (context, snap) {
       if (snap.hasError) return const Center(child: Text('تعذر تحميل المنتجات'));
       if (!snap.hasData) return const Center(child: CircularProgressIndicator());
@@ -707,22 +707,28 @@ class _ProductsState extends State<Products> {
           Expanded(child:_compactProductAction(label:'تعديل الأسعار',tooltip:'زيادة أو تخفيض أسعار الأصناف',icon:Icons.price_change,onPressed:()=>openInventoryPrices(context))),
         ])),
         if (!owner) Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () => newSaleDialog(context, false, branchId), icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة')))),
-        Expanded(child: docs.isEmpty ? const Center(child: Text('لا توجد منتجات بعد')) : ListView.builder(itemCount: docs.length, itemBuilder: (context, i) {
-          final d = docs[i], p = d.data();
-          return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-            stream: db.collection('stock').doc('main_${d.id}').snapshots(),
-            builder: (context, stock) {
-              final quantity = stock.hasError || !stock.hasData ? null : (stock.data?.data()?['quantity'] as num?)?.toInt() ?? 0;
-              return InventoryProductCard(employee:!owner,number: i + 1, name: '${p['name'] ?? ''}', quantity: quantity,
-                quantityMessage: stock.hasError ? 'تعذر التحميل' : 'جارٍ التحميل', unitPrice: p['price'] as num?,
-                onTap: () => productDetails(context, d.id,employee:!owner), actions: owner ? [
-                  IconButton(tooltip: 'تعديل', icon: const Icon(Icons.edit), onPressed: () => productDialog(context, id: d.id, data: p)),
-                  IconButton(tooltip: 'المخزون الرئيسي', icon: const Icon(Icons.warehouse), onPressed: () => mainStockDialog(context, d.id, '${p['name']}')),
-                  IconButton(tooltip: 'حذف المنتج', icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: () => archiveProduct(context, d.id, '${p['name'] ?? ''}')),
-                ] : const []);
-            },
-          );
-        })),
+        Expanded(child: docs.isEmpty ? const Center(child: Text('لا توجد منتجات بعد'))
+          : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: db.collection('stock').snapshots(includeMetadataChanges: true),
+              builder: (context, stock) {
+                final quantities = <String, int>{};
+                for (final row in stock.data?.docs ?? []) {
+                  if (row.id.startsWith('main_')) {
+                    quantities[row.id.substring(5)] = (row.data()['quantity'] as num?)?.toInt() ?? 0;
+                  }
+                }
+                return ListView.builder(itemCount: docs.length, itemBuilder: (context, i) {
+                  final d = docs[i], p = d.data();
+                  final quantity = stock.hasError ? null : stock.hasData ? (quantities[d.id] ?? 0) : null;
+                  return InventoryProductCard(employee:!owner,number: i + 1, name: '${p['name'] ?? ''}', quantity: quantity,
+                    quantityMessage: stock.hasError ? 'تعذر التحميل' : 'جارٍ التحميل', unitPrice: p['price'] as num?,
+                    onTap: () => productDetails(context, d.id,employee:!owner), actions: owner ? [
+                      IconButton(tooltip: 'تعديل', icon: const Icon(Icons.edit), onPressed: () => productDialog(context, id: d.id, data: p)),
+                      IconButton(tooltip: 'المخزون الرئيسي', icon: const Icon(Icons.warehouse), onPressed: () => mainStockDialog(context, d.id, '${p['name']}')),
+                      IconButton(tooltip: 'حذف المنتج', icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: () => archiveProduct(context, d.id, '${p['name'] ?? ''}')),
+                    ] : const []);
+                });
+              })),
       ]);
     },
   );
