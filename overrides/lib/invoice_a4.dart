@@ -485,24 +485,21 @@ Future<Uint8List> createStyledA4InvoicePdf({
   ];
   if (thermal) {
     pdf.addPage(
-      pw.Page(
+      pw.MultiPage(
         pageFormat: PdfPageFormat(
           (narrow ? 58 : 80) * PdfPageFormat.mm,
-          double.infinity,
+          180 * PdfPageFormat.mm,
         ),
         margin: const pw.EdgeInsets.all(4 * PdfPageFormat.mm),
+        maxPages: 20,
         theme: pw.ThemeData.withFont(base: font, bold: font),
         textDirection: pw.TextDirection.rtl,
-        build: (_) => pw.Column(
-          mainAxisSize: pw.MainAxisSize.min,
-          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-          children: [
-            ...content,
-            pw.SizedBox(height: 8),
-            pw.Divider(color: gold),
-            centered(footer, size: 8),
-          ],
-        ),
+        build: (_) => [
+          ...content,
+          pw.SizedBox(height: 8),
+          pw.Divider(color: gold),
+          centered(footer, size: 8),
+        ],
       ),
     );
   } else {

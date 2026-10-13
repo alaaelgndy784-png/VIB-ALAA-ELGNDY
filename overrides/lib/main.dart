@@ -4206,22 +4206,30 @@ Future<void> _printPdfOnBluetoothThermal(
     final generator = esc.Generator(esc.PaperSize.mm80, profile);
     var pageCount = 0;
     await for (final page in Printing.raster(pdfBytes, dpi: 203)) {
+      if (pageCount >= 20) {
+        throw StateError('الفاتورة أطول من الحد الآمن للطباعة الحرارية.');
+      }
       final resized = img.copyResize(page.asImage(), width: 576);
       final bitmap = img.Image(width: resized.width, height: resized.height, numChannels: 3);
       img.fill(bitmap, color: img.ColorRgb8(255, 255, 255));
       img.compositeImage(bitmap, resized);
       // Thermal printers render sharper text when raster edges are strictly black or white.
+      var lastInkRow = -1;
       for (var y = 0; y < bitmap.height; y++) {
         for (var x = 0; x < bitmap.width; x++) {
           final pixel = bitmap.getPixel(x, y);
           final luminance = (pixel.r * 299 + pixel.g * 587 + pixel.b * 114) / 1000;
           final channel = luminance < 210 ? 0 : 255;
           bitmap.setPixelRgb(x, y, channel, channel, channel);
+          if (channel == 0) lastInkRow = y;
         }
       }
+      // Drop the page's empty white tail so the printer stops after the receipt content.
+      final cropHeight = (lastInkRow < 0 ? 1 : lastInkRow + 33).clamp(1, bitmap.height);
+      final printBitmap = img.copyCrop(bitmap, x: 0, y: 0, width: bitmap.width, height: cropHeight);
       final commands = <int>[
         ...generator.reset(),
-        ...generator.imageRaster(bitmap, align: esc.PosAlign.center),
+        ...generator.imageRaster(printBitmap, align: esc.PosAlign.center),
         ...generator.feed(4),
       ];
       if (!await PrintBluetoothThermal.writeBytes(commands)) {
@@ -4239,7 +4247,7 @@ Future<void> printTestPage(BuildContext context, String paper, {String? bluetoot
   try {
     final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
     final pdf = pw.Document();
-    pdf.addPage(pw.Page(pageFormat: invoicePageFormat(paper), build: (_) => pw.Center(child: pw.Text('VIB للتجارة والتوزيع\nتجربة الطباعة\n${paper == 'a4' ? 'A4' : '$paper مم'}', textAlign: pw.TextAlign.center,
+    pdf.addPage(pw.Page(pageFormat: invoicePageFormat(paper), build: (_) => pw.Align(alignment: pw.Alignment.topCenter, child: pw.Text('VIB للتجارة والتوزيع\nتجربة الطباعة\n${paper == 'a4' ? 'A4' : '$paper مم'}', textAlign: pw.TextAlign.center,
       style: pw.TextStyle(font: font, fontSize: paper == 'a4' ? 22 : 11)))));
     final bytes = await pdf.save();
     if (paper == '80') {
