@@ -3393,7 +3393,7 @@ class AccountDirectory extends StatelessWidget {
               leading: CircleAvatar(backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue)),
               title: Text('${account['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
               trailing: Row(mainAxisSize:MainAxisSize.min,children:[
-                Text(balance.toStringAsFixed(0),style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold)),
+                Text(balance.toStringAsFixed(2),style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold)),
                 IconButton(tooltip:'كشف الحساب',icon:const Icon(Icons.summarize_outlined,color:vibBlue),
                   onPressed: () => openVibReport(context, 'كشف حساب ${account['name'] ?? ''}',
                     AccountStatementPage(collection: collection, id: d.id))),
@@ -5698,15 +5698,13 @@ class InvoiceCustomerChoiceRow extends StatelessWidget {
     child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
       child: Row(textDirection: TextDirection.rtl, children: [
-        SizedBox(width: 32, child: Text('$number.', textAlign: TextAlign.right,
-          textDirection: TextDirection.ltr, style: const TextStyle(color: gold, fontWeight: FontWeight.bold))),
-        CircleAvatar(radius:16,backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue,size:19)),
+        CircleAvatar(backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue)),
         const SizedBox(width: 8),
         Expanded(child: Text(name, textDirection: TextDirection.rtl,
           textAlign:TextAlign.right,style:TextStyle(color:staffApp ? Colors.lightBlueAccent : null,fontWeight:FontWeight.w600))),
         const SizedBox(width: 8),
         Text('${balance.toStringAsFixed(2)} ج.م', textDirection: TextDirection.rtl,
-          style:TextStyle(color:staffApp ? Colors.redAccent : Colors.greenAccent,fontWeight:FontWeight.bold)),
+          style:TextStyle(color:staffApp ? Colors.redAccent : vibNeon,fontWeight:FontWeight.bold)),
       ]),
     ),
   );
@@ -5787,7 +5785,7 @@ class _StaffCustomersState extends State<StaffCustomers> {
         return ListTile(leading:CircleAvatar(backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue)),
           title: Text('${data['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
           trailing: Wrap(crossAxisAlignment:WrapCrossAlignment.center,children:[
-            if(widget.canViewBalance)Text('${balance.toStringAsFixed(2)} ج.م',style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)),
+            if(widget.canViewBalance)Text('${balance.toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold)),
             if(widget.canViewStatement)IconButton(tooltip:'كشف حساب من تاريخ إلى تاريخ',icon:const Icon(Icons.summarize_outlined),
               onPressed:()=>openVibReport(context,'كشف حساب العميل ${data['name'] ?? ''}',
                 AccountStatementPage(collection:'customers',id:rows[index].id))),
