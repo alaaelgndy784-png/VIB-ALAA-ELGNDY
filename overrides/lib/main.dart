@@ -4225,7 +4225,6 @@ Future<void> _printPdfOnBluetoothThermal(
           if (channel == 0) darkPixelsInRow++;
         }
         if (darkPixelsInRow >= 3) lastInkRow = y;
-        }
       }
       // Drop the page's empty white tail so the printer stops after the receipt content.
       final cropHeight = (lastInkRow < 0 ? 1 : lastInkRow + 33).clamp(1, bitmap.height).toInt();
