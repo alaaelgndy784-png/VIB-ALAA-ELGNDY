@@ -3038,7 +3038,9 @@ Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport 
   if (thermal) {
     pw.Widget line(String value, {bool bold = false}) => pw.Text(value, textAlign: pw.TextAlign.right,
       style: pw.TextStyle(fontSize: bold ? 10 : 8, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal));
-    pdf.addPage(pw.Page(pageFormat: PdfPageFormat.roll80, margin: const pw.EdgeInsets.all(4 * PdfPageFormat.mm),
+    final rollHeight = (150 + report.customers.length * 14).clamp(150, 4000).toDouble();
+    pdf.addPage(pw.Page(pageFormat: PdfPageFormat(80 * PdfPageFormat.mm, rollHeight * PdfPageFormat.mm,
+        marginAll: 4 * PdfPageFormat.mm),
       theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
       build: (_) => pw.Column(mainAxisSize: pw.MainAxisSize.min, crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
         line('VIB للتجارة والتوزيع', bold: true), line('حركة سداد $party', bold: true),
@@ -3047,11 +3049,8 @@ Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport 
         line('عدد $party: ${report.customers.length} • عدد $voucher: ${report.receiptCount}'), pw.Divider(),
         for (var i = 0; i < report.customers.length; i++) ...[
           line('${i + 1}. ${report.customers[i].name}', bold: true),
-          line('إجمالي السداد: ${receiptReportMoney(report.customers[i].amountCents)}', bold: true),
-          for (final row in report.customers[i].receipts) ...[
-            line('${receiptReportStamp(row,to)} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
-            line('سند: ${row['id']}'), line('المحصّل: ${row['actorName'] ?? ''}'),
-          ], pw.Divider(),
+          line('إجمالي السداد: ${receiptReportMoney(report.customers[i].amountCents)} • عدد السندات: ${report.customers[i].receipts.length}'),
+          pw.Divider(),
         ],
         line(to==null ? 'إجمالي الحركة اليوم' : 'إجمالي الحركة للفترة', bold: true), line(receiptReportMoney(report.totalCents), bold: true),
       ])));
