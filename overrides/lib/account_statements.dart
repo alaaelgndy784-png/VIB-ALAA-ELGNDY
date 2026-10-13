@@ -120,7 +120,9 @@ Future<Uint8List> createAccountStatementPdf(AccountPeriodReport r,pw.Font font,{
       extraWrappedLines('${movementName('${row['kind']}')} ${row['referenceLabel']??''}')+
       extraWrappedLines('${row['reason']??''}')+
       extraWrappedLines('زيادة: ${receiptReportMoney((row['deltaCents'] as int)>0?row['deltaCents'] as int:0)}  تخفيض: ${receiptReportMoney((row['deltaCents'] as int)<0?-(row['deltaCents'] as int):0)}'));
-    final height=(90+r.rows.length*20+extraLines*5).clamp(90,5000).toDouble();
+    final estimatedHeight=100+r.rows.length*24+extraLines*6;
+    if(estimatedHeight>5000)throw StateError('الكشف طويل على إيصال 80 مم؛ اختر فترة أقصر للطباعة الحرارية');
+    final height=estimatedHeight.toDouble();
     pw.Widget line(String value,{bool strong=false})=>pw.Padding(
       padding:const pw.EdgeInsets.symmetric(vertical:1.5),
       child:pw.Text(value,textAlign:pw.TextAlign.right,style:pw.TextStyle(
