@@ -15,8 +15,8 @@ void main() {
         contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
         title: const Text('اختيار عميل مسجل'),
         content: SizedBox(width: 500, height: invoiceCustomerChoicesHeight(context), child: ListView(children: [
-          InvoiceCustomerChoiceRow(number: 1, name: 'الحاج أحمد محمود بورسعيد', balance: 82502.7, onTap: () => selected = true),
-          InvoiceCustomerChoiceRow(number: 2, name: 'الحاج أحمد الجمل', balance: 9, onTap: () {}),
+          InvoiceCustomerChoiceRow( name: 'الحاج أحمد محمود بورسعيد', balance: 82502.7, onTap: () => selected = true),
+          InvoiceCustomerChoiceRow( name: 'الحاج أحمد الجمل', balance: 9, onTap: () {}),
         ])),
         actions: [TextButton(onPressed: () {}, child: const Text('إلغاء'))],
       ))),
