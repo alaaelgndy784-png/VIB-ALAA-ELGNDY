@@ -159,7 +159,7 @@ class Gate extends StatelessWidget {
     builder: (context, auth) {
       if (!auth.hasData) return const LoginPage();
       return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
-        stream: db.collection('users').doc(auth.data!.uid).snapshots(),
+        stream: db.collection('users').doc(auth.data!.uid).snapshots(includeMetadataChanges: true),
         builder: (context, user) {
           if (user.hasError) return const Center(child: Text('تعذر تحميل الحساب'));
           if (!user.hasData) return const Center(child: CircularProgressIndicator());
@@ -201,10 +201,19 @@ class Gate extends StatelessWidget {
             key:ValueKey('${auth.data!.uid}:${data['role']}'), uid: auth.data!.uid,
             role: data['role'] as String, branchId: (data['branchId'] ?? '') as String,
             name: (data['name'] ?? '') as String);
-          return data['role'] == 'owner' ? FutureBuilder<void>(future:initializeRequestedInvoiceSeries(),builder:(context,ready){
-            if(ready.hasError)return Scaffold(body:Center(child:Column(mainAxisSize:MainAxisSize.min,children:[Text('تعذر تجهيز تسلسل الفواتير: ${ready.error}'),FilledButton(onPressed:()=>FirebaseAuth.instance.signOut(),child:const Text('خروج وإعادة المحاولة'))])));
-            if(ready.connectionState!=ConnectionState.done)return const Scaffold(body:Center(child:CircularProgressIndicator()));
-            return OwnerSecurity(child:home);}) : home;
+          if (data['role'] == 'owner') {
+            // Use the cached profile to open immediately offline. Prepare legacy invoice
+            // numbering only after Firestore confirms it is online, without blocking UI.
+            if (!user.data!.metadata.isFromCache) {
+              unawaited(initializeRequestedInvoiceSeries().catchError((Object error) {
+                if (!isTemporaryFirestoreOffline(error)) {
+                  debugPrint('تعذر تجهيز تسلسل الفواتير في الخلفية: $error');
+                }
+              }));
+            }
+            return OwnerSecurity(child: home);
+          }
+          return home;
         },
       );
     },
@@ -3614,10 +3623,13 @@ class CashBox extends StatelessWidget {
           final date = m['createdAt'] is Timestamp
             ? DateFormat('dd/MM/yyyy HH:mm').format((m['createdAt'] as Timestamp).toDate())
             : 'جارٍ الحفظ';
-          return ListTile(title: Text('${m['reason'] ?? ''}'),
+          final delta = (m['delta'] as num?)?.toDouble() ?? 0;
+          final movementColor = delta > 0 ? Colors.greenAccent : delta < 0 ? vibRed : gold;
+          return ListTile(title: Text('${m['reason'] ?? ''}',
+              style: TextStyle(color: movementColor, fontWeight: FontWeight.w600)),
             subtitle: Text('$date • بواسطة ${m['actorId'] ?? ''}'),
-            trailing: Text('${(m['delta'] as num?)?.toDouble() ?? 0} ج.م',
-              style: const TextStyle(color: gold)));
+            trailing: Text('$delta ج.م',
+              style: TextStyle(color: movementColor, fontWeight: FontWeight.bold)));
         });
       },
     )),
