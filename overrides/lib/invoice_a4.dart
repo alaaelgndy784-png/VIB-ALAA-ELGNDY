@@ -492,9 +492,10 @@ Future<Uint8List> createStyledA4InvoicePdf({
   if (thermal && estimatedItemLines > 300) {
     throw StateError('الفاتورة أطول من الحد الآمن للطباعة الحرارية.');
   }
-  // Keep the thermal receipt compact while leaving room for the header and summary.
-  // A single finite page prevents extra blank output from the printer service.
-  final thermalPageHeightMm = 115.0 + estimatedItemLines * 7.0;
+  // Reserve enough length for the complete header, item table, four-row summary, and footer.
+  // Add one rendered row-height for each wrapped item-name line so thermal printers
+  // do not clip the table or totals at the end of the finite PDF page.
+  final thermalPageHeightMm = 205.0 + estimatedItemLines * 8.0;
   if (thermal) {
     pdf.addPage(
       pw.Page(
