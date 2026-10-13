@@ -4216,12 +4216,15 @@ Future<void> _printPdfOnBluetoothThermal(
       // Thermal printers render sharper text when raster edges are strictly black or white.
       var lastInkRow = -1;
       for (var y = 0; y < bitmap.height; y++) {
+        var darkPixelsInRow = 0;
         for (var x = 0; x < bitmap.width; x++) {
           final pixel = bitmap.getPixel(x, y);
           final luminance = (pixel.r * 299 + pixel.g * 587 + pixel.b * 114) / 1000;
           final channel = luminance < 210 ? 0 : 255;
           bitmap.setPixelRgb(x, y, channel, channel, channel);
-          if (channel == 0) lastInkRow = y;
+          if (channel == 0) darkPixelsInRow++;
+        }
+        if (darkPixelsInRow >= 3) lastInkRow = y;
         }
       }
       // Drop the page's empty white tail so the printer stops after the receipt content.
