@@ -3393,7 +3393,7 @@ class AccountDirectory extends StatelessWidget {
               leading: CircleAvatar(backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue)),
               title: Text('${account['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
               trailing: Row(mainAxisSize:MainAxisSize.min,children:[
-                Text(balance.toStringAsFixed(2),style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold)),
+                Text('${accountBalanceLabel(balance,supplier:suppliers)}: ${balance.toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold)),
                 IconButton(tooltip:'كشف الحساب',icon:const Icon(Icons.summarize_outlined,color:vibBlue),
                   onPressed: () => openVibReport(context, 'كشف حساب ${account['name'] ?? ''}',
                     AccountStatementPage(collection: collection, id: d.id))),
