@@ -531,7 +531,7 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> with WidgetsBindingObserver {
-  int page = 4;
+  int page = 0;
   Timer? _presenceTimer;
   bool _presenceWriteInFlight = false;
   @override void initState() { super.initState(); if(widget.role == 'owner') {ChequeReminders.instance.watch(widget.uid);ManagerOfflineSaleSync.instance.start();ManagerOfflineVoucherSync.instance.start();} else { WidgetsBinding.instance.addObserver(this); _writePresence(true); _presenceTimer=Timer.periodic(const Duration(seconds:20),(_)=>_writePresence(true)); } ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
@@ -581,7 +581,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         if(widget.canPurchase) IconButton(tooltip:'المشتريات',icon:const Icon(Icons.post_add),onPressed:()=>openPage('مشتريات الموظف',const Purchases(owner:false))),
         IconButton(tooltip: 'خروج', onPressed: _signOut, icon: const Icon(Icons.logout)),
       ]),
-      body: page == 4
+      body: page == 0
           ? StaffDashboard(
               uid: widget.uid,
               branchId: widget.branchId,
@@ -590,11 +590,11 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
               canAddCustomer: widget.canAddCustomer,
               openPage: openPage,
             )
-          : page == 0
-              ? Products(owner: false, uid: widget.uid, branchId: widget.branchId)
           : page == 1
+              ? Products(owner: false, uid: widget.uid, branchId: widget.branchId)
+          : page == 2
               ? Sales(owner: false, branchId: widget.branchId)
-              : page == 2
+              : page == 3
                   ? StaffCustomers(canViewBalance:widget.canViewCustomerBalance,canViewStatement:widget.canViewCustomerStatement,canAddCustomer:widget.canAddCustomer)
                   : ReceiptVouchers(owner: false, branchId: widget.branchId),
       bottomNavigationBar: NavigationBar(
