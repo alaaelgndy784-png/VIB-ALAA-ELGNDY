@@ -531,7 +531,7 @@ class Home extends StatefulWidget {
 }
 
 class _HomeState extends State<Home> with WidgetsBindingObserver {
-  int page = 0;
+  int page = 4;
   Timer? _presenceTimer;
   bool _presenceWriteInFlight = false;
   @override void initState() { super.initState(); if(widget.role == 'owner') {ChequeReminders.instance.watch(widget.uid);ManagerOfflineSaleSync.instance.start();ManagerOfflineVoucherSync.instance.start();} else { WidgetsBinding.instance.addObserver(this); _writePresence(true); _presenceTimer=Timer.periodic(const Duration(seconds:20),(_)=>_writePresence(true)); } ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
@@ -581,8 +581,17 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         if(widget.canPurchase) IconButton(tooltip:'المشتريات',icon:const Icon(Icons.post_add),onPressed:()=>openPage('مشتريات الموظف',const Purchases(owner:false))),
         IconButton(tooltip: 'خروج', onPressed: _signOut, icon: const Icon(Icons.logout)),
       ]),
-      body: page == 0
-          ? Products(owner: false, uid: widget.uid, branchId: widget.branchId)
+      body: page == 4
+          ? StaffDashboard(
+              uid: widget.uid,
+              branchId: widget.branchId,
+              canViewBalance: widget.canViewCustomerBalance,
+              canViewStatement: widget.canViewCustomerStatement,
+              canAddCustomer: widget.canAddCustomer,
+              openPage: openPage,
+            )
+          : page == 0
+              ? Products(owner: false, uid: widget.uid, branchId: widget.branchId)
           : page == 1
               ? Sales(owner: false, branchId: widget.branchId)
               : page == 2
@@ -592,6 +601,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         selectedIndex: page,
         onDestinationSelected: (i) => setState(() => page = i),
         destinations: const [
+          NavigationDestination(icon: Icon(Icons.home_outlined), selectedIcon: Icon(Icons.home), label: 'الرئيسية'),
           NavigationDestination(icon: Icon(Icons.inventory_2_outlined), label: 'المنتجات'),
           NavigationDestination(icon: Icon(Icons.receipt_long_outlined), label: 'المبيعات'),
           NavigationDestination(icon: Icon(Icons.people_outline), label: 'العملاء'),
@@ -602,12 +612,82 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   }
 }
 
+class DashboardActionTile extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color accent;
+  final VoidCallback onTap;
+
+  const DashboardActionTile({super.key, required this.title, required this.icon,
+    required this.accent, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: const Color(0xFF101A2A),
+    borderRadius: BorderRadius.circular(18),
+    child: InkWell(
+      borderRadius: BorderRadius.circular(18),
+      onTap: onTap,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 116),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 14),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: accent.withValues(alpha: .65), width: 1.2),
+        ),
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Container(width: 52, height: 52,
+            decoration: BoxDecoration(color: accent.withValues(alpha: .15), borderRadius: BorderRadius.circular(15)),
+            child: Icon(icon, color: accent, size: 30)),
+          const SizedBox(height: 9),
+          Text(title, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w700)),
+        ]),
+      ),
+    ),
+  );
+}
+
+class StaffDashboard extends StatelessWidget {
+  final String uid, branchId;
+  final bool canViewBalance, canViewStatement, canAddCustomer;
+  final void Function(String title, Widget child) openPage;
+
+  const StaffDashboard({super.key, required this.uid, required this.branchId,
+    required this.canViewBalance, required this.canViewStatement,
+    required this.canAddCustomer, required this.openPage});
+
+  @override
+  Widget build(BuildContext context) => GridView.count(
+    padding: const EdgeInsets.all(16),
+    crossAxisCount: 2,
+    mainAxisSpacing: 12,
+    crossAxisSpacing: 12,
+    childAspectRatio: 1.16,
+    children: [
+      DashboardActionTile(title: 'فاتورة بيع', icon: Icons.point_of_sale, accent: const Color(0xFFFF9B42),
+        onTap: () => openPage('المبيعات', Sales(owner: false, branchId: branchId))),
+      DashboardActionTile(title: 'سند قبض', icon: Icons.receipt_long, accent: const Color(0xFF45D483),
+        onTap: () => openPage('سندات القبض', ReceiptVouchers(owner: false, branchId: branchId))),
+      DashboardActionTile(title: 'المنتجات', icon: Icons.inventory_2_outlined, accent: const Color(0xFFFFD44D),
+        onTap: () => openPage('المنتجات', Products(owner: false, uid: uid, branchId: branchId))),
+      DashboardActionTile(title: 'العملاء', icon: Icons.groups_outlined, accent: const Color(0xFF55B8FF),
+        onTap: () => openPage('العملاء', StaffCustomers(canViewBalance: canViewBalance,
+          canViewStatement: canViewStatement, canAddCustomer: canAddCustomer))),
+      DashboardActionTile(title: 'حركة المنتجات', icon: Icons.sync_alt, accent: const Color(0xFF51F2B0),
+        onTap: () => openPage('حركة المنتجات', const ItemMovementReport())),
+      DashboardActionTile(title: 'المحادثة', icon: Icons.chat_bubble_outline, accent: const Color(0xFFC29BFF),
+        onTap: () => openStaffChat(context, owner: false)),
+    ],
+  );
+}
+
 class OwnerDashboard extends StatelessWidget {
   final String uid, branchId;
   final void Function(String title, Widget child) openPage;
   const OwnerDashboard({super.key, required this.uid, required this.branchId, required this.openPage});
 
-  Widget tile(String title, IconData icon, VoidCallback onTap, double height) => Material(
+  Widget tile(String title, IconData icon, VoidCallback onTap, double height, {Color accent = gold}) => Material(
     color: managerSurface,
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20), side: const BorderSide(color: managerBorder)),
     clipBehavior: Clip.antiAlias,
@@ -616,10 +696,10 @@ class OwnerDashboard extends StatelessWidget {
       children: [
         Container(width: 66, height: 66, decoration: BoxDecoration(
           gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight,
-            colors: [Color(0xFF3B321C), Color(0xFF080808)]),
-          borderRadius: BorderRadius.circular(16), border: Border.all(color: gold),
+            colors: [Color(0xFF17283E), Color(0xFF0B1524)]),
+          borderRadius: BorderRadius.circular(16), border: Border.all(color: accent),
           boxShadow: const [BoxShadow(color: Colors.black, offset: Offset(3, 4), blurRadius: 5)]),
-          child: Icon(icon, color: gold, size: 34)),
+          child: Icon(icon, color: accent, size: 34)),
         const SizedBox(height: 12),
         Padding(padding: const EdgeInsets.symmetric(horizontal: 6), child: Text(title, textAlign: TextAlign.center,
           maxLines: 2, style: const TextStyle(color: gold, fontWeight: FontWeight.w700, fontSize: 18))),
@@ -633,27 +713,39 @@ class OwnerDashboard extends StatelessWidget {
     const gap = 12.0;
     return ListView(padding: const EdgeInsets.fromLTRB(16, 12, 16, 20), children: [
       Row(children: [
-        Expanded(child: tile('المنتجات', Icons.inventory_2_outlined, () => openPage('المنتجات', Products(owner: true, uid: uid, branchId: branchId)), height)),
+        Expanded(child: tile('المبيعات', Icons.shopping_cart_outlined, () => openPage('المبيعات', const Sales(owner: true, branchId: 'main')), height, accent: const Color(0xFFFF9B42))),
         const SizedBox(width: gap),
-        Expanded(child: tile('المبيعات', Icons.shopping_cart_outlined, () => openPage('المبيعات', const Sales(owner: true, branchId: 'main')), height)),
+        Expanded(child: tile('المشتريات', Icons.post_add_outlined, () => openPage('المشتريات', const Purchases()), height, accent: const Color(0xFFFF9B42))),
       ]),
       const SizedBox(height: gap),
       Row(children: [
-        Expanded(child: tile('العملاء', Icons.groups_outlined, () => openPage('العملاء', const Accounts()), height)),
+        Expanded(child: tile('الموردين', Icons.local_shipping_outlined, () => openPage('الموردين', const Accounts(startWithSuppliers: true)), height, accent: const Color(0xFFFFD44D))),
         const SizedBox(width: gap),
-        Expanded(child: tile('المشتريات', Icons.post_add_outlined, () => openPage('المشتريات', const Purchases()), height)),
+        Expanded(child: tile('العملاء', Icons.groups_outlined, () => openPage('العملاء', const Accounts()), height, accent: const Color(0xFF55B8FF))),
       ]),
       const SizedBox(height: gap),
       Row(children: [
-        Expanded(child: tile('سندات القبض', Icons.payments_outlined, () => openPage('سندات القبض', ReceiptVouchers(owner: true, branchId: branchId)), height)),
+        Expanded(child: tile('المحادثة', Icons.chat_bubble_outline, () => openStaffChat(context, owner: true), height, accent: const Color(0xFFC29BFF))),
         const SizedBox(width: gap),
-        Expanded(child: tile('الموردين', Icons.local_shipping_outlined, () => openPage('الموردين', const Accounts(startWithSuppliers: true)), height)),
+        Expanded(child: tile('حركة العملاء', Icons.sync_alt, () => openPage('حركة العملاء', const CustomerPaymentReport(owner: true)), height, accent: const Color(0xFF51F2B0))),
+      ]),
+      const SizedBox(height: gap),
+      Row(children: [
+        Expanded(child: tile('المنتجات', Icons.inventory_2_outlined, () => openPage('المنتجات', Products(owner: true, uid: uid, branchId: branchId)), height, accent: const Color(0xFFFFD44D))),
+        const SizedBox(width: gap),
+        Expanded(child: tile('سندات القبض', Icons.payments_outlined, () => openPage('سندات القبض', ReceiptVouchers(owner: true, branchId: branchId)), height, accent: const Color(0xFF45D483))),
       ]),
       const SizedBox(height: gap),
       Row(children:[
         Expanded(child:tile('سندات صرف الموردين', Icons.receipt_long, () => openPage('سندات صرف الموردين', const SupplierPaymentVouchers()), 132)),
         const SizedBox(width:gap),
         Expanded(child:tile('مواعيد الشيكات',Icons.event_note,() => openPage('مواعيد الشيكات',ChequeAgenda(uid:uid)),132)),
+      ]),
+      const SizedBox(height: 12),
+      Row(children:[
+        Expanded(child:tile('حركة المنتجات',Icons.sync_alt,() => openPage('حركة المنتجات',const ItemMovementReport()),132,accent:const Color(0xFF51F2B0))),
+        const SizedBox(width:gap),
+        const Expanded(child:SizedBox()),
       ]),
       const SizedBox(height: 12),
       const PendingSalesShortcut(owner:true),
@@ -3367,6 +3459,40 @@ class Accounts extends StatelessWidget {
   );
 }
 
+class AccountDirectoryRow extends StatelessWidget {
+  final String name, balanceText;
+  final VoidCallback onTap, onStatement;
+
+  const AccountDirectoryRow({super.key, required this.name, required this.balanceText,
+    required this.onTap, required this.onStatement});
+
+  @override
+  Widget build(BuildContext context) => Material(
+    color: Theme.of(context).colorScheme.surface,
+    child: InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsetsDirectional.fromSTEB(12, 8, 12, 8),
+        child: Row(children: [
+          CircleAvatar(backgroundColor: vibBlue.withValues(alpha: .14),
+            child: const Icon(Icons.person_outline, color: vibBlue)),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+            Text(name, key: const ValueKey('account-directory-name'), maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.lightBlueAccent, fontWeight: FontWeight.bold, fontSize: 15)),
+            const SizedBox(height: 3),
+            Text(balanceText, maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold, fontSize: 13)),
+          ])),
+          IconButton(tooltip: 'كشف الحساب', icon: const Icon(Icons.summarize_outlined, color: vibBlue),
+            onPressed: onStatement),
+        ]),
+      ),
+    ),
+  );
+}
+
 class AccountDirectory extends StatelessWidget {
   final bool suppliers;
   const AccountDirectory({super.key, required this.suppliers});
@@ -3415,15 +3541,11 @@ class AccountDirectory extends StatelessWidget {
           return ListView.builder(itemCount: docs.length, itemBuilder: (context, index) {
             final d = docs[index], account = d.data();
             final balance=(account['balance'] as num?) ?? 0;
-            return ListTile(
-              leading: CircleAvatar(backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue)),
-              title: Text('${account['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
-              trailing: Row(mainAxisSize:MainAxisSize.min,children:[
-                Text('${accountBalanceLabel(balance,supplier:suppliers)}: ${balance.toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold)),
-                IconButton(tooltip:'كشف الحساب',icon:const Icon(Icons.summarize_outlined,color:vibBlue),
-                  onPressed: () => openVibReport(context, 'كشف حساب ${account['name'] ?? ''}',
-                    AccountStatementPage(collection: collection, id: d.id))),
-              ]),
+            return AccountDirectoryRow(
+              name: '${account['name'] ?? ''}',
+              balanceText: '${accountBalanceLabel(balance,supplier:suppliers)}: ${balance.toStringAsFixed(2)} ج.م',
+              onStatement: () => openVibReport(context, 'كشف حساب ${account['name'] ?? ''}',
+                AccountStatementPage(collection: collection, id: d.id)),
               onTap: () => showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Column(
                 mainAxisSize: MainAxisSize.min, children: [
                   ListTile(leading: const Icon(Icons.summarize),
