@@ -321,8 +321,8 @@ class PendingSalesShortcut extends StatelessWidget {
       final count=snapshot.data?.docs.where((d)=>pendingSaleIsVisible(d.data()) && d.data()['status']=='pending').length;
       return SizedBox(width:double.infinity,child:OutlinedButton.icon(
         style:compact ? OutlinedButton.styleFrom(visualDensity:VisualDensity.compact,minimumSize:const Size.fromHeight(38),padding:const EdgeInsets.symmetric(horizontal:8)) : null,
-        icon:Icon(Icons.pending_actions,size:compact?18:null),
-        label:Text('${owner ? 'اعتماد فواتير الموظفين' : 'فواتير الموظف — متابعة الاعتماد'}${count==null ? '' : ' ($count معلقة)'}',maxLines:1,overflow:TextOverflow.ellipsis),
+        icon:Icon(Icons.pending_actions,color:owner?vibBlue:vibNeon,size:compact?18:null),
+        label:Text('${owner ? 'اعتماد فواتير الموظفين' : 'فواتير الموظف — متابعة الاعتماد'}${count==null ? '' : ' ($count معلقة)'}',maxLines:1,overflow:TextOverflow.ellipsis,style:TextStyle(color:owner?vibBlue:vibNeon)),
         onPressed:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>Directionality(textDirection:TextDirection.rtl,
           child:Scaffold(appBar:AppBar(title:Text(owner?'اعتماد فواتير الموظفين':'فواتير الموظف')),body:PendingSalesPage(owner:owner)))))));
     });
@@ -346,7 +346,7 @@ class PendingSalesPage extends StatelessWidget {
         if(snapshot.data!.metadata.isFromCache)const Text('بيانات محفوظة على الجهاز؛ الحالة تتأكد عند الاتصال'),
         Expanded(child:rows.isEmpty?const Center(child:Text('لا توجد طلبات')):ListView(children:[for(final row in rows)
           Card(child:ListTile(leading:Icon(row.data()['status']=='approved'?Icons.check_circle:row.data()['status']=='rejected'?Icons.cancel:Icons.hourglass_top,color:gold),
-            title:Text('${row.data()['customerName'] ?? ''} • ${row.data()['total'] ?? 0} ج.م'),
+            title:Text('${row.data()['customerName'] ?? ''} • ${row.data()['total'] ?? 0} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold)),
             subtitle:Text('${owner ? '${row.data()['employeeName'] ?? ''} • ' : ''}${row.data()['managerOffline']==true?'فاتورة مدير تنتظر المزامنة':'${pendingSaleStatus(row.data()['status'])}'} • ${formatDate(row.data()['createdAt'])}'),
             trailing:owner && row.data()['status']=='rejected' ? IconButton(tooltip:'مسح الطلب من التطبيقين',icon:const Icon(Icons.delete_outline,color:Colors.redAccent),onPressed:()=>removeRejectedPendingSale(context,row.reference)) : null,
             onTap:()=>reviewPendingSale(context,row.reference,owner)))])),

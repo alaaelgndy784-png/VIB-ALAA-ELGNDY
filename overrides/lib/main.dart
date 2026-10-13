@@ -3575,7 +3575,7 @@ class CashBox extends StatelessWidget {
             ? DateFormat('dd/MM/yyyy HH:mm').format((m['createdAt'] as Timestamp).toDate())
             : 'جارٍ الحفظ';
           final delta = (m['delta'] as num?)?.toDouble() ?? 0;
-          final movementColor = delta > 0 ? Colors.greenAccent : delta < 0 ? vibRed : gold;
+          final movementColor = delta > 0 ? vibNeon : delta < 0 ? vibRed : gold;
           return ListTile(title: Text('${m['reason'] ?? ''}',
               style: TextStyle(color: movementColor, fontWeight: FontWeight.w600)),
             subtitle: Text('$date • بواسطة ${m['actorId'] ?? ''}'),
@@ -5646,7 +5646,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                                       leading: CircleAvatar(
                                         radius: 18,
                                         backgroundColor: positive ? const Color(0xFF123C25) : const Color(0xFF441B1B),
-                                        child: Icon(positive ? Icons.south : Icons.north, size: 18, color: positive ? Colors.greenAccent : Colors.redAccent),
+                                        child: Icon(positive ? Icons.south : Icons.north, size: 18, color: positive ? vibNeon : Colors.redAccent),
                                       ),
                                       title: Text(action, style: const TextStyle(fontWeight: FontWeight.bold)),
                                       subtitle: Text([
@@ -5659,7 +5659,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                                         mainAxisAlignment: MainAxisAlignment.center,
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
-                                          Text('${positive ? '+' : ''}$qty', style: TextStyle(color: positive ? Colors.greenAccent : Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+                                          Text('${positive ? '+' : ''}$qty', style: TextStyle(color: positive ? vibNeon : Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 16)),
                                           Text('الرصيد ${x['balanceAfter'] ?? '-'}', style: const TextStyle(fontSize: 11)),
                                         ],
                                       ),
