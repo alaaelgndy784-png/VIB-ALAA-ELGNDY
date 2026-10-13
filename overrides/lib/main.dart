@@ -4206,11 +4206,15 @@ Future<void> _printPdfOnBluetoothThermal(
     final generator = esc.Generator(esc.PaperSize.mm80, profile);
     var pageCount = 0;
     await for (final page in Printing.raster(pdfBytes, dpi: 203)) {
-      final bitmap = img.copyResize(page.asImage(), width: 576);
+      final resized = img.copyResize(page.asImage(), width: 576);
+      final bitmap = img.Image(width: resized.width, height: resized.height, numChannels: 3);
+      img.fill(bitmap, color: img.ColorRgb8(255, 255, 255));
+      img.compositeImage(bitmap, resized);
       final commands = <int>[
         ...generator.reset(),
         ...generator.imageRaster(bitmap, align: esc.PosAlign.center),
         ...generator.feed(3),
+        ...generator.cut(),
       ];
       if (!await PrintBluetoothThermal.writeBytes(commands)) {
         throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');

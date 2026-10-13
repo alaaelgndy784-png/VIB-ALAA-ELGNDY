@@ -131,7 +131,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
           pw.Positioned.fill(
             child: pw.SvgImage(
               svg:
-                  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 52" preserveAspectRatio="none"><polygon points="$shape" fill="${entry.highlight ? '#080808' : '#fffbf0'}" stroke="#d4af37" stroke-width="1"/></svg>',
+                  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 52" preserveAspectRatio="none"><polygon points="$shape" fill="${thermal ? '#fffbf0' : entry.highlight ? '#080808' : '#fffbf0'}" stroke="#d4af37" stroke-width="1"/></svg>',
               fit: pw.BoxFit.fill,
             ),
           ),
@@ -149,7 +149,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
                   entry.label,
                   size: thermal ? 7 : 9,
                   bold: true,
-                  color: entry.highlight ? gold : black,
+                  color: thermal ? black : entry.highlight ? gold : black,
                 ),
                 pw.SizedBox(height: 4),
                 centered(
@@ -157,7 +157,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
                   size: thermal ? 11 : 15,
                   bold: true,
                   numeric: entry.value != 'غير مسجل',
-                  color: entry.highlight ? gold : black,
+                  color: thermal ? black : entry.highlight ? gold : black,
                 ),
               ],
             ),
@@ -235,7 +235,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
             'VIB',
             size: thermal ? 34 : 45,
             bold: true,
-            color: gold,
+            color: thermal ? black : gold,
             numeric: true,
           ),
         ),
@@ -250,7 +250,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
         'ALAA ELGNDY',
         size: thermal ? 8 : 10,
         bold: true,
-        color: gold,
+        color: thermal ? black : gold,
         numeric: true,
       ),
     ],
@@ -262,12 +262,12 @@ Future<Uint8List> createStyledA4InvoicePdf({
         centered(
           'البطاقة الضريبية:',
           size: thermal ? 7 : 8,
-          color: PdfColors.white,
+          color: thermal ? black : PdfColors.white,
         ),
         centered(
           taxNumber,
           size: thermal ? 8 : 9,
-          color: PdfColors.white,
+          color: thermal ? black : PdfColors.white,
           numeric: true,
         ),
       ],
@@ -276,12 +276,12 @@ Future<Uint8List> createStyledA4InvoicePdf({
         centered(
           'السجل التجاري:',
           size: thermal ? 7 : 8,
-          color: PdfColors.white,
+          color: thermal ? black : PdfColors.white,
         ),
         centered(
           commercialRegister,
           size: thermal ? 8 : 9,
-          color: PdfColors.white,
+          color: thermal ? black : PdfColors.white,
           numeric: true,
         ),
       ],
@@ -295,7 +295,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
           child: centered(
             phone,
             size: thermal ? 8 : 9,
-            color: PdfColors.white,
+            color: thermal ? black : PdfColors.white,
             numeric: true,
           ),
         ),
@@ -303,9 +303,9 @@ Future<Uint8List> createStyledA4InvoicePdf({
   );
   pw.Widget masthead() => pw.Container(
     padding: pw.EdgeInsets.all(thermal ? 7 : 12),
-    decoration: const pw.BoxDecoration(
-      color: black,
-      border: pw.Border(bottom: pw.BorderSide(color: gold, width: 3)),
+    decoration: pw.BoxDecoration(
+      color: thermal ? PdfColors.white : black,
+      border: pw.Border(bottom: pw.BorderSide(color: thermal ? black : gold, width: 3)),
     ),
     child: pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.stretch,
@@ -389,7 +389,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
     children: [
       pw.TableRow(
         repeat: true,
-        decoration: const pw.BoxDecoration(color: black),
+        decoration: pw.BoxDecoration(color: thermal ? PdfColors.white : black),
         children: ['الإجمالي', 'السعر', 'العدد', 'الصنف', 'م']
             .map(
               (v) => pw.Padding(
@@ -401,7 +401,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
                   v,
                   size: thermal ? 7 : 10,
                   bold: true,
-                  color: gold,
+                  color: thermal ? black : gold,
                 ),
               ),
             )
@@ -448,15 +448,15 @@ Future<Uint8List> createStyledA4InvoicePdf({
       child: pw.Container(
         padding: const pw.EdgeInsets.symmetric(horizontal: 22, vertical: 6),
         decoration: pw.BoxDecoration(
-          color: black,
-          border: pw.Border.all(color: gold),
+          color: thermal ? PdfColors.white : black,
+          border: pw.Border.all(color: thermal ? black : gold),
           borderRadius: pw.BorderRadius.circular(5),
         ),
         child: centered(
           title,
           size: thermal ? 14 : 19,
           bold: true,
-          color: gold,
+          color: thermal ? black : gold,
         ),
       ),
     ),
