@@ -4224,7 +4224,8 @@ Future<void> _printPdfOnBluetoothThermal(
           bitmap.setPixelRgb(x, y, channel, channel, channel);
           if (channel == 0) darkPixelsInRow++;
         }
-        if (darkPixelsInRow >= 3) lastInkRow = y;
+        // Ignore isolated thermal noise below the receipt; real text rows contain more ink.
+        if (darkPixelsInRow >= 8) lastInkRow = y;
       }
       // Drop the page's empty white tail so the printer stops after the receipt content.
       final cropHeight = (lastInkRow < 0 ? 1 : lastInkRow + 33).clamp(1, bitmap.height).toInt();
