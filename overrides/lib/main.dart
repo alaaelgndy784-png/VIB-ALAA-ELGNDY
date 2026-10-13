@@ -4210,11 +4210,19 @@ Future<void> _printPdfOnBluetoothThermal(
       final bitmap = img.Image(width: resized.width, height: resized.height, numChannels: 3);
       img.fill(bitmap, color: img.ColorRgb8(255, 255, 255));
       img.compositeImage(bitmap, resized);
+      // Thermal printers render sharper text when raster edges are strictly black or white.
+      for (var y = 0; y < bitmap.height; y++) {
+        for (var x = 0; x < bitmap.width; x++) {
+          final pixel = bitmap.getPixel(x, y);
+          final luminance = (pixel.r * 299 + pixel.g * 587 + pixel.b * 114) / 1000;
+          final channel = luminance < 210 ? 0 : 255;
+          bitmap.setPixelRgb(x, y, channel, channel, channel);
+        }
+      }
       final commands = <int>[
         ...generator.reset(),
         ...generator.imageRaster(bitmap, align: esc.PosAlign.center),
-        ...generator.feed(3),
-        ...generator.cut(),
+        ...generator.feed(4),
       ];
       if (!await PrintBluetoothThermal.writeBytes(commands)) {
         throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');

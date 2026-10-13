@@ -37,8 +37,8 @@ Future<Uint8List> createStyledA4InvoicePdf({
     value,
     textAlign: align,
     style: pw.TextStyle(
-      fontSize: thermal ? (narrow ? size * .85 : size) : size,
-      fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+      fontSize: thermal ? (narrow ? size * .85 : size * 1.2) : size,
+      fontWeight: (bold || (thermal && size >= 8)) ? pw.FontWeight.bold : pw.FontWeight.normal,
       color: color,
     ),
   );
