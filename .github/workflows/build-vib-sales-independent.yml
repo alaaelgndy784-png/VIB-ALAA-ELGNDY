@@ -86,22 +86,45 @@ jobs:
           APP: ${{ matrix.app }}
         working-directory: VIB-SALES-INDEPENDENT
         run: |
-          printf '%s\\n' 'android.newDsl=false' 'android.builtInKotlin=false' >> android/gradle.properties
-          sed -i "s/^name: $APP$/name: vib_sales/" pubspec.yaml
+          APP_ID='com.alaa.vibsales.staffscan'
+          LABEL='VIB Staff'
           if [ "$APP" = manager ]; then
-            LABEL='VIB Manager'
             APP_ID='com.alaa.vibsales.managerscan'
-            perl -0pi -e "s/'role':\\s*'pending',\\s*'active':\\s*false/'role': 'owner', 'active': true/g" lib/main.dart
-          else
-            LABEL='VIB Staff'
-            APP_ID='com.alaa.vibsales.staffscan'
+            LABEL='VIB Manager'
           fi
-          sed -i "s/android:label=\\\"$APP\\\"/android:label=\\\"$LABEL\\\"/" android/app/src/main/AndroidManifest.xml
-          sed -i "s/applicationId = \\\"com.alaa.vibsales.$APP\\\"/applicationId = \\\"$APP_ID\\\"/" android/app/build.gradle.kts
-          grep -q "applicationId = \\\"$APP_ID\\\"" android/app/build.gradle.kts
-          sed -i 's/import io.flutter.embedding.android.FlutterActivity/import io.flutter.embedding.android.FlutterFragmentActivity/' "android/app/src/main/kotlin/com/alaa/vibsales/$APP/MainActivity.kt"
-          sed -i 's/FlutterActivity()/FlutterFragmentActivity()/' "android/app/src/main/kotlin/com/alaa/vibsales/$APP/MainActivity.kt"
-          sed -i '/<manifest/a\\    <uses-permission android:name="android.permission.USE_BIOMETRIC" />\\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\\n    <uses-permission android:name="android.permission.INTERNET" />\\n    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />' android/app/src/main/AndroidManifest.xml
+          printf '%s\n' 'android.newDsl=false' 'android.builtInKotlin=false' >> android/gradle.properties
+          sed -i 's/^name: .*/name: vib_sales/' pubspec.yaml
+          python3 - "$APP" "$LABEL" "$APP_ID" <<'PY'
+          from pathlib import Path
+          import re, sys
+          app, label, app_id = sys.argv[1:]
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text()
+          text = re.sub(r'android:label="[^"]+"', f'android:label="{label}"', text, count=1)
+          permissions = '''    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />'''
+          root = re.search(r'<manifest\\b[^>]*>', text)
+          if root is None: raise SystemExit('Android manifest root missing')
+          text = text[:root.end()] + '\\n' + permissions + text[root.end():]
+          manifest.write_text(text)
+          gradle = Path('android/app/build.gradle.kts')
+          text = gradle.read_text()
+          text = re.sub(r'applicationId = "[^"]+"', f'applicationId = "{app_id}"', text, count=1)
+          gradle.write_text(text)
+          activity = Path(f'android/app/src/main/kotlin/com/alaa/vibsales/{app}/MainActivity.kt')
+          text = activity.read_text().replace('FlutterActivity', 'FlutterFragmentActivity')
+          activity.write_text(text)
+          source = Path('lib/main.dart')
+          text = source.read_text()
+          if app == 'manager':
+              text = re.sub(r"'role':\\s*'pending',\\s*'active':\\s*false", "'role': 'owner', 'active': true", text)
+          source.write_text(text)
+          PY
           if [ -d "assets/icons/$APP" ]; then cp -r "assets/icons/$APP"/mipmap-* android/app/src/main/res/; fi
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do cp "../overrides/assets/$APP-icon.png" "android/app/src/main/res/mipmap-$density/ic_launcher.png"; done
           cp firebase/google-services.json android/app/google-services.json
@@ -224,26 +247,5 @@ jobs:
           target_commitish: ${{ github.sha }}
           body: "آخر نسخة مباشرة من تطبيق VIB Staff."
           files: staff-files/VIB-SALES-STAFF.apk
-          overwrite_files: true
-          make_latest: false
-  publish-direct-apks:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download manager and staff APKs
-        uses: actions/download-artifact@v4
-        with:
-          pattern: VIB-SALES-*-APK
-          path: release-files
-          merge-multiple: true
-
-      - name: Publish direct APK downloads
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: vib-sales-manager-staff-latest
-          name: VIB Sales Manager and Staff
-          target_commitish: ${{ github.sha }}
-          body: "آخر نسخة مباشرة لتطبيقي المدير والموظف."
-          files: release-files/VIB-SALES-*.apk
           overwrite_files: true
           make_latest: false
