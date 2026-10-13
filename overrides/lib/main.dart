@@ -2932,6 +2932,7 @@ class CustomerPaymentReport extends StatefulWidget {
 class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
   late DateTime day, endDay;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> receipts;
+  late final Stream<QuerySnapshot<Map<String, dynamic>>> cancellations;
 
   @override
   void initState() {
@@ -2943,6 +2944,9 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
         : db.collection('receipts');
     if (!widget.owner) q = q.where('actorId', isEqualTo: FirebaseAuth.instance.currentUser!.uid);
     receipts = q.snapshots(includeMetadataChanges: true);
+    cancellations = widget.owner
+        ? db.collection('voucherCancellations').snapshots(includeMetadataChanges: true)
+        : const Stream<QuerySnapshot<Map<String, dynamic>>>.empty();
   }
 
   @override
@@ -2957,19 +2961,32 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
         onConfirm: (a, b) => setState(() { day = a; endDay = b; }),
       ),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: cancellations,
+        builder: (context, cancelSnapshot) {
+          if (widget.owner && cancelSnapshot.hasError) {
+            return const Center(child: Text('تعذر تحميل حالات إلغاء السداد'));
+          }
+          if (widget.owner && !cancelSnapshot.hasData) return const Center(child: CircularProgressIndicator());
+          final cancelledIds = widget.owner
+              ? cancelSnapshot.data!.docs
+                  .where((d) => d.data()['type'] == (widget.suppliers ? 'supplierPayment' : 'receipt'))
+                  .map((d) => '${d.data()['originalId'] ?? ''}').toSet()
+              : <String>{};
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: receipts,
             builder: (context, snapshot) {
               if (snapshot.hasError) return const Center(child: Text('تعذر تحميل تقرير السداد؛ راجع الاتصال والصلاحيات'));
               if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
               final rows = snapshot.data!.docs.where((d) => visibleAfterReset(d.data()) &&
-                  (!widget.suppliers || d.data()['kind']=='payment'))
+                  !cancelledIds.contains(d.id) && (!widget.suppliers || d.data()['kind']=='payment'))
                 .map((d) {
                   final source=d.data();
                   if(!widget.suppliers)return <String,dynamic>{...source,'id':d.id};
                   return supplierPaymentReportRow(d.id,source);
                 }).toList();
               final report = summarizeReceiptPeriod(rows, day, endDay);
-              final pending = snapshot.data!.metadata.hasPendingWrites, cached = snapshot.data!.metadata.isFromCache;
+              final pending = snapshot.data!.metadata.hasPendingWrites || (widget.owner && cancelSnapshot.data!.metadata.hasPendingWrites);
+              final cached = snapshot.data!.metadata.isFromCache || (widget.owner && cancelSnapshot.data!.metadata.isFromCache);
               return Column(children: [
                 Padding(padding: const EdgeInsets.all(10), child: Text(
                   'حركة سداد ${widget.suppliers?'الموردين':'العملاء'} — إجمالي كل ${widget.suppliers?'الموردين':'العملاء'}\nمن ${DateFormat('dd/MM/yyyy').format(day)} إلى ${DateFormat('dd/MM/yyyy').format(endDay)}',
@@ -3002,7 +3019,9 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                     )))).toList())),
               ]);
             },
-          )),
+          );
+        },
+      )),
     ]),
   );
 }
@@ -3087,7 +3106,15 @@ Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, Rece
     if(!owner)query=query.where('actorId',isEqualTo:FirebaseAuth.instance.currentUser!.uid);
     final snapshot=await query.get(const GetOptions(source:Source.server));
     if(snapshot.metadata.isFromCache || snapshot.metadata.hasPendingWrites) throw StateError('انتظر تأكيد السداد من السيرفر');
-    final rows=snapshot.docs.where((d)=>visibleAfterReset(d.data())&&(!suppliers||d.data()['kind']=='payment')).map((d){
+    Set<String> cancelledIds = {};
+    if(owner) {
+      final cancelled = await db.collection('voucherCancellations')
+        .where('type',isEqualTo:suppliers?'supplierPayment':'receipt')
+        .get(const GetOptions(source:Source.server));
+      if(cancelled.metadata.isFromCache || cancelled.metadata.hasPendingWrites) throw StateError('انتظر تأكيد حالات الإلغاء من السيرفر');
+      cancelledIds = cancelled.docs.map((d)=>'${d.data()['originalId'] ?? ''}').toSet();
+    }
+    final rows=snapshot.docs.where((d)=>visibleAfterReset(d.data())&&!cancelledIds.contains(d.id)&&(!suppliers||d.data()['kind']=='payment')).map((d){
       final source=d.data();
       if(!suppliers)return <String,dynamic>{...source,'id':d.id};
       return supplierPaymentReportRow(d.id,source);
