@@ -2897,6 +2897,16 @@ String receiptDisplayNumber(Map<String,dynamic> row) {
 
 Timestamp? receiptEffectiveTimestamp(Map<String,dynamic> row)=>(row['receiptDate'] ?? row['createdAt']) as Timestamp?;
 
+Map<String,dynamic> supplierPaymentReportRow(String id,Map<String,dynamic> source)=>{
+  ...source,
+  'id':id,
+  'customerId':source['accountId']??'',
+  'customerName':source['accountName']??'مورد غير مسمى',
+  'receiptDate':source['createdAt'],
+  'receiptNumber':id,
+  'paymentMethod':'صرف للمورد',
+};
+
 double? parseReceiptAmount(String value) {
   final normalized = _ocrNumber(value.trim()).replaceAll(',', '.');
   final amount = double.tryParse(normalized);
@@ -2907,7 +2917,8 @@ String receiptReportMoney(int cents) => '${(cents / 100).toStringAsFixed(2)} ج.
 
 class CustomerPaymentReport extends StatefulWidget {
   final bool owner;
-  const CustomerPaymentReport({super.key, required this.owner});
+  final bool suppliers;
+  const CustomerPaymentReport({super.key, required this.owner,this.suppliers=false});
   @override
   State<CustomerPaymentReport> createState() => _CustomerPaymentReportState();
 }
@@ -2915,100 +2926,23 @@ class CustomerPaymentReport extends StatefulWidget {
 class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
   late DateTime day, endDay;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> receipts;
-  late final Stream<QuerySnapshot<Map<String, dynamic>>> customers;
-  String? selectedCustomerId;
-  String? selectedCustomerName;
 
   @override
   void initState() {
     super.initState();
     final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
     day = endDay = DateTime(now.year, now.month, now.day);
-    Query<Map<String, dynamic>> q = db.collection('receipts');
+    Query<Map<String, dynamic>> q = widget.suppliers
+        ? db.collection('accountMovements').where('accountType',isEqualTo:'suppliers')
+        : db.collection('receipts');
     if (!widget.owner) q = q.where('actorId', isEqualTo: FirebaseAuth.instance.currentUser!.uid);
     receipts = q.snapshots(includeMetadataChanges: true);
-    customers = db.collection('customers').snapshots();
-  }
-
-  Future<void> searchCustomer(List<QueryDocumentSnapshot<Map<String, dynamic>>> list) async {
-    var query = '';
-    final selected = await showDialog<QueryDocumentSnapshot<Map<String, dynamic>>>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(builder: (context, setDialogState) {
-        final needle = invoiceSearchText(query);
-        final matches = list.where((customer) {
-          final data = customer.data();
-          return invoiceSearchText('${data['name'] ?? ''} ${data['phone'] ?? ''}').contains(needle);
-        }).toList();
-        return AlertDialog(
-          title: const Text('بحث عن عميل'),
-          content: SizedBox(width: 480, height: 440, child: Column(children: [
-            TextField(
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'اكتب اسم العميل أو رقم الهاتف',
-                prefixIcon: Icon(Icons.search),
-              ),
-              onChanged: (value) => setDialogState(() => query = value),
-            ),
-            const SizedBox(height: 8),
-            Expanded(child: matches.isEmpty
-              ? const Center(child: Text('لا يوجد عميل مطابق'))
-              : ListView.builder(
-                  itemCount: matches.length,
-                  itemBuilder: (context, index) {
-                    final customer = matches[index], data = customer.data();
-                    return ListTile(
-                      leading: const Icon(Icons.person_outline),
-                      title: Text('${data['name'] ?? 'عميل'}'),
-                      subtitle: Text('${data['phone'] ?? 'بدون رقم هاتف'}'),
-                      onTap: () => Navigator.pop(dialogContext, customer),
-                    );
-                  })),
-          ])),
-          actions: [TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء'))],
-        );
-      }),
-    );
-    if (selected != null && mounted) {
-      setState(() {
-        selectedCustomerId = selected.id;
-        selectedCustomerName = '${selected.data()['name'] ?? 'عميل'}';
-      });
-    }
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text('حركة سداد عميل محدد')),
+    appBar: AppBar(title: Text(widget.suppliers?'حركة سداد الموردين':'حركة سداد العملاء')),
     body: Column(children: [
-      StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: customers,
-        builder: (context, snap) {
-          if (snap.hasError) return const Padding(padding: EdgeInsets.all(12), child: Text('تعذر تحميل قائمة العملاء'));
-          if (!snap.hasData) return const LinearProgressIndicator();
-          final list = snap.data!.docs.where((d) => d.data()['active'] != false).toList()
-            ..sort((a, b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
-          final selectedStillExists = list.any((d) => d.id == selectedCustomerId);
-          if (!selectedStillExists && selectedCustomerId != null) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) setState(() { selectedCustomerId = null; selectedCustomerName = null; });
-            });
-          }
-          return Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: Row(children: [
-            Expanded(child: OutlinedButton.icon(
-              onPressed: list.isEmpty ? null : () => searchCustomer(list),
-              icon: const Icon(Icons.search),
-              label: Text(selectedStillExists ? 'العميل: $selectedCustomerName' : 'بحث واختيار عميل'),
-            )),
-            if (selectedStillExists) IconButton(
-              tooltip: 'إلغاء اختيار العميل',
-              onPressed: () => setState(() { selectedCustomerId = null; selectedCustomerName = null; }),
-              icon: const Icon(Icons.close),
-            ),
-          ]));
-        },
-      ),
       Padding(padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
         child: Align(alignment: Alignment.centerRight,
           child: Text('فترة التقرير — اختر من تاريخ إلى تاريخ', style: Theme.of(context).textTheme.titleSmall))),
@@ -3016,47 +2950,49 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
         from: day, to: endDay, enabled: true,
         onConfirm: (a, b) => setState(() { day = a; endDay = b; }),
       ),
-      Expanded(child: selectedCustomerId == null
-        ? const Center(child: Text('اضغط «بحث واختيار عميل» لعرض سندات سداده فقط'))
-        : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: receipts,
             builder: (context, snapshot) {
               if (snapshot.hasError) return const Center(child: Text('تعذر تحميل تقرير السداد؛ راجع الاتصال والصلاحيات'));
               if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-              final rows = receiptRowsForCustomer(
-                snapshot.data!.docs.where((d) => visibleAfterReset(d.data()))
-                  .map((d) => <String, dynamic>{...d.data(), 'id': d.id}).toList(),
-                selectedCustomerId!,
-              );
+              final rows = snapshot.data!.docs.where((d) => visibleAfterReset(d.data()) &&
+                  (!widget.suppliers || d.data()['kind']=='payment'))
+                .map((d) {
+                  final source=d.data();
+                  if(!widget.suppliers)return <String,dynamic>{...source,'id':d.id};
+                  return supplierPaymentReportRow(d.id,source);
+                }).toList();
               final report = summarizeReceiptPeriod(rows, day, endDay);
               final pending = snapshot.data!.metadata.hasPendingWrites, cached = snapshot.data!.metadata.isFromCache;
               return Column(children: [
                 Padding(padding: const EdgeInsets.all(10), child: Text(
-                  'حركة سداد: ${selectedCustomerName ?? 'العميل'}\nمن ${DateFormat('dd/MM/yyyy').format(day)} إلى ${DateFormat('dd/MM/yyyy').format(endDay)}',
+                  'حركة سداد ${widget.suppliers?'الموردين':'العملاء'} — إجمالي كل ${widget.suppliers?'الموردين':'العملاء'}\nمن ${DateFormat('dd/MM/yyyy').format(day)} إلى ${DateFormat('dd/MM/yyyy').format(endDay)}',
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: gold, fontWeight: FontWeight.bold),
                 )),
                 Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(children: [
-                  Text('إجمالي ما سدده العميل: ${receiptReportMoney(report.totalCents)}',
-                    style: const TextStyle(color: gold, fontSize: 19, fontWeight: FontWeight.bold)),
-                  Text('عدد سندات القبض: ${report.receiptCount}'),
+                  Text('${widget.suppliers?'إجمالي ما تم صرفه للموردين':'إجمالي ما سدده العملاء'}: ${receiptReportMoney(report.totalCents)}',
+                    style: const TextStyle(color: vibNeon, fontSize: 19, fontWeight: FontWeight.bold)),
+                  Text('عدد ${widget.suppliers?'الموردين':'العملاء'}: ${report.customers.length} • عدد ${widget.suppliers?'سندات الصرف':'سندات القبض'}: ${report.receiptCount}'),
                   if (cached || pending) const Text('انتظر تأكيد مزامنة البيانات قبل الطباعة'),
                 ]))),
                 Row(children: [
                   Expanded(child: OutlinedButton.icon(
                     onPressed: report.receiptCount == 0 || cached || pending ? null :
-                      () => printCustomerPaymentReport(context, day, report, owner: widget.owner, to: endDay),
+                      () => printCustomerPaymentReport(context, day, report, owner: widget.owner, to: endDay,suppliers:widget.suppliers),
                     icon: const Icon(Icons.picture_as_pdf), label: const Text('طباعة A4'))),
                   Expanded(child: OutlinedButton.icon(
                     onPressed: report.receiptCount == 0 || cached || pending ? null :
-                      () => printCustomerPaymentReport(context, day, report, owner: widget.owner, thermal: true, to: endDay),
+                      () => printCustomerPaymentReport(context, day, report, owner: widget.owner, thermal: true, to: endDay,suppliers:widget.suppliers),
                     icon: const Icon(Icons.receipt_long), label: const Text('طباعة 80 مم'))),
                 ]),
                 Expanded(child: report.receiptCount == 0
-                  ? const Center(child: Text('لا توجد سندات قبض لهذا العميل في الفترة المختارة'))
+                  ? const Center(child: Text('لا توجد حركات سداد في الفترة المختارة'))
                   : ListView(children: report.customers.expand((customer) => customer.receipts.map((row) => Card(child: ListTile(
-                      title: Text('${receiptReportStamp(row, endDay)} • ${receiptReportMoney(((row['amount'] as num) * 100).round())}'),
-                      subtitle: Text('رقم السند: ${receiptDisplayNumber(row)}\nالمحصّل: ${row['actorName'] ?? ''}\nطريقة الدفع: ${row['paymentMethod'] ?? 'غير محددة'}\n${row['note'] ?? ''}'),
+                      leading:CircleAvatar(backgroundColor:vibNeon.withValues(alpha:.12),child:Icon(widget.suppliers?Icons.outbound:Icons.south_west,color:vibNeon)),
+                      title: Text('${customer.name} • ${receiptReportStamp(row, endDay)}',style:const TextStyle(fontWeight:FontWeight.bold)),
+                      trailing:Text(receiptReportMoney(((row['amount'] as num) * 100).round()),style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold)),
+                      subtitle: Text('رقم السند: ${receiptDisplayNumber(row)} • المسؤول: ${row['actorName'] ?? ''}\n${row['note'] ?? ''}'),
                     )))).toList())),
               ]);
             },
@@ -3070,19 +3006,20 @@ String receiptReportStamp(Map<String,dynamic> row,DateTime? to) {
   return to==null ? DateFormat('HH:mm').format(at.toLocal()) : DateFormat('dd/MM/yyyy HH:mm').format(tz.TZDateTime.from(at,tz.getLocation('Africa/Cairo')));
 }
 
-Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport report, pw.Font font, {required bool owner, bool thermal = false,DateTime? to}) async {
+Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport report, pw.Font font, {required bool owner, bool thermal = false,DateTime? to,bool suppliers=false}) async {
   final pdf = pw.Document();
   final period=to==null ? 'اليوم: ${DateFormat('yyyy/MM/dd').format(day)}' : 'من ${DateFormat('dd/MM/yyyy').format(day)} إلى ${DateFormat('dd/MM/yyyy').format(to)} (شامل اليوم الأخير)';
+  final party=suppliers?'الموردين':'العملاء', voucher=suppliers?'سندات الصرف':'سندات القبض';
   if (thermal) {
     pw.Widget line(String value, {bool bold = false}) => pw.Text(value, textAlign: pw.TextAlign.right,
       style: pw.TextStyle(fontSize: bold ? 10 : 8, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal));
     pdf.addPage(pw.Page(pageFormat: PdfPageFormat.roll80, margin: const pw.EdgeInsets.all(4 * PdfPageFormat.mm),
       theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
       build: (_) => pw.Column(mainAxisSize: pw.MainAxisSize.min, crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-        line('VIB للتجارة والتوزيع', bold: true), line('حركة سداد العملاء', bold: true),
+        line('VIB للتجارة والتوزيع', bold: true), line('حركة سداد $party', bold: true),
         line(period),
-        line(owner ? 'تحصيلات المدير وجميع الموظفين' : 'تحصيلاتي فقط'),
-        line('عدد التجار: ${report.customers.length} • السندات: ${report.receiptCount}'), pw.Divider(),
+        line(owner ? (suppliers?'مدفوعات المدير وجميع الموظفين':'تحصيلات المدير وجميع الموظفين') : 'حركاتي فقط'),
+        line('عدد $party: ${report.customers.length} • عدد $voucher: ${report.receiptCount}'), pw.Divider(),
         for (var i = 0; i < report.customers.length; i++) ...[
           line('${i + 1}. ${report.customers[i].name}', bold: true),
           line('إجمالي السداد: ${receiptReportMoney(report.customers[i].amountCents)}', bold: true),
@@ -3091,7 +3028,7 @@ Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport 
             line('سند: ${row['id']}'), line('المحصّل: ${row['actorName'] ?? ''}'),
           ], pw.Divider(),
         ],
-        line(to==null ? 'إجمالي تحصيل اليوم' : 'إجمالي تحصيل الفترة', bold: true), line(receiptReportMoney(report.totalCents), bold: true),
+        line(to==null ? 'إجمالي الحركة اليوم' : 'إجمالي الحركة للفترة', bold: true), line(receiptReportMoney(report.totalCents), bold: true),
       ])));
     return pdf.save();
   }
@@ -3105,28 +3042,28 @@ Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport 
     footer: (context) => pw.Text('${context.pageNumber} / ${context.pagesCount}', textAlign: pw.TextAlign.center),
     build: (_) => [
       pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 22, color: navy)),
-      pw.SizedBox(height: 12), pw.Text('تقرير حركة سداد العملاء', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 18)),
+      pw.SizedBox(height: 12), pw.Text('تقرير حركة سداد $party', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 18)),
       pw.Text(period),
-      pw.Text(owner ? 'سندات القبض من جميع الموظفين والمدير' : 'سندات القبض التي سجلتها فقط'),
-      pw.Text('عدد التجار: ${report.customers.length} • عدد السندات: ${report.receiptCount}'),
+      pw.Text(owner ? '$voucher من جميع الموظفين والمدير' : '$voucher التي سجلتها فقط'),
+      pw.Text('عدد $party: ${report.customers.length} • عدد السندات: ${report.receiptCount}'),
       pw.SizedBox(height: 12),
       pw.Table(border: pw.TableBorder.all(color: accent, width: .5), columnWidths: {
         0: const pw.FlexColumnWidth(2), 1: const pw.FlexColumnWidth(1), 2: const pw.FlexColumnWidth(4), 3: const pw.FlexColumnWidth(.5)},
         children: [
           pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
-            children: ['إجمالي السداد', 'عدد السندات', 'اسم التاجر / العميل', 'م'].map((v) => cell(v, header: true)).toList()),
+            children: ['إجمالي الحركة', 'عدد السندات', 'اسم $party', 'م'].map((v) => cell(v, header: true)).toList()),
           for (var i = 0; i < report.customers.length; i++) pw.TableRow(children: [
             cell(receiptReportMoney(report.customers[i].amountCents)), cell('${report.customers[i].receipts.length}'),
             cell(report.customers[i].name), cell('${i + 1}')]),
         ]),
-      pw.SizedBox(height: 10), pw.Text('إجمالي المبالغ المحصّلة للفترة: ${receiptReportMoney(report.totalCents)}',
+      pw.SizedBox(height: 10), pw.Text('إجمالي الحركة للفترة: ${receiptReportMoney(report.totalCents)}',
         style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
       pw.SizedBox(height: 16), pw.Text('تفاصيل حركة السداد'), pw.SizedBox(height: 6),
       pw.Table(border: pw.TableBorder.all(color: accent, width: .5), columnWidths: {
         0: const pw.FlexColumnWidth(1.5), 1: const pw.FlexColumnWidth(2), 2: const pw.FlexColumnWidth(2.5),
         3: const pw.FlexColumnWidth(3), 4: const pw.FlexColumnWidth(2)}, children: [
           pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
-            children: ['المبلغ', 'المحصّل', 'رقم السند', 'العميل', to==null ? 'الوقت' : 'التاريخ / الوقت'].map((v) => cell(v, header: true)).toList()),
+            children: ['المبلغ', 'المسؤول', 'رقم السند', 'الطرف', to==null ? 'الوقت' : 'التاريخ / الوقت'].map((v) => cell(v, header: true)).toList()),
           for (final row in movements) pw.TableRow(children: [
             cell(receiptReportMoney(((row['amount'] as num) * 100).round())), cell('${row['actorName'] ?? ''}'),
             cell('${row['id']}'), cell('${row['customerName'] ?? ''}'),
@@ -3136,17 +3073,24 @@ Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport 
   return pdf.save();
 }
 
-Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, ReceiptDayReport report, {required bool owner, bool thermal = false,DateTime? to}) async {
+Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, ReceiptDayReport report, {required bool owner, bool thermal = false,DateTime? to,bool suppliers=false}) async {
   try {
-    final query=owner ? db.collection('receipts') : db.collection('receipts').where('actorId',isEqualTo:FirebaseAuth.instance.currentUser!.uid);
+    Query<Map<String,dynamic>> query=suppliers
+      ? db.collection('accountMovements').where('accountType',isEqualTo:'suppliers')
+      : db.collection('receipts');
+    if(!owner)query=query.where('actorId',isEqualTo:FirebaseAuth.instance.currentUser!.uid);
     final snapshot=await query.get(const GetOptions(source:Source.server));
     if(snapshot.metadata.isFromCache || snapshot.metadata.hasPendingWrites) throw StateError('انتظر تأكيد السداد من السيرفر');
-    final rows=snapshot.docs.where((d)=>visibleAfterReset(d.data())).map((d)=>{...d.data(),'id':d.id}).toList();
+    final rows=snapshot.docs.where((d)=>visibleAfterReset(d.data())&&(!suppliers||d.data()['kind']=='payment')).map((d){
+      final source=d.data();
+      if(!suppliers)return <String,dynamic>{...source,'id':d.id};
+      return supplierPaymentReportRow(d.id,source);
+    }).toList();
     final confirmed=to==null ? summarizeReceiptDay(rows,day) : summarizeReceiptPeriod(rows,day,to);
-    if(confirmed.receiptCount==0) throw StateError('لا توجد سندات قبض في الفترة المحددة');
+    if(confirmed.receiptCount==0) throw StateError('لا توجد حركات سداد في الفترة المحددة');
     final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-    final bytes = await createCustomerPaymentReportPdf(day, confirmed, font, owner: owner, thermal: thermal,to:to);
-    await Printing.layoutPdf(name: 'VIB-CUSTOMER-PAYMENTS-${DateFormat('yyyy-MM-dd').format(day)}-${DateFormat('yyyy-MM-dd').format(to ?? day)}-${thermal ? '80MM' : 'A4'}.pdf', onLayout: (_) async => bytes);
+    final bytes = await createCustomerPaymentReportPdf(day, confirmed, font, owner: owner, thermal: thermal,to:to,suppliers:suppliers);
+    await Printing.layoutPdf(name: 'VIB-${suppliers?'SUPPLIER-PAYMENTS':'CUSTOMER-PAYMENTS'}-${DateFormat('yyyy-MM-dd').format(day)}-${DateFormat('yyyy-MM-dd').format(to ?? day)}-${thermal ? '80MM' : 'A4'}.pdf', onLayout: (_) async => bytes);
   } catch (e) {
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر طباعة تقرير السداد: $e')));
   }
@@ -3417,6 +3361,12 @@ class AccountDirectory extends StatelessWidget {
           if(!suppliers) Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)),
             onPressed: () => createAccountDialog(context, collection, suppliers), icon: const Icon(Icons.person_add, size:18), label: const Text('إضافة عميل', maxLines:1, overflow:TextOverflow.ellipsis))),
         ]),
+        Padding(padding:const EdgeInsets.only(top:4),child:SizedBox(width:double.infinity,child:OutlinedButton.icon(
+          onPressed:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>Directionality(textDirection:TextDirection.rtl,
+            child:CustomerPaymentReport(owner:true,suppliers:suppliers)))),
+          icon:const Icon(Icons.query_stats,color:vibNeon),
+          label:Text(suppliers?'تقرير إجمالي حركة سداد الموردين':'تقرير إجمالي حركة سداد العملاء',style:const TextStyle(color:vibNeon)),
+        ))),
         if(suppliers) Padding(padding:const EdgeInsets.only(top:4),child:FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:12)),
           onPressed: () => createAccountDialog(context, collection, suppliers), icon: const Icon(Icons.person_add, size:18), label: const Text('إضافة مورد'))),
       ])),
@@ -3434,17 +3384,14 @@ class AccountDirectory extends StatelessWidget {
             final d = docs[index], account = d.data();
             final balance=(account['balance'] as num?) ?? 0;
             return ListTile(
+              leading: CircleAvatar(backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue)),
               title: Text('${account['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
-              subtitle: Column(crossAxisAlignment:CrossAxisAlignment.start,mainAxisSize:MainAxisSize.min,children:[
-                Text('الهاتف: ${account['phone'] ?? 'غير مسجل'}',style:const TextStyle(color:Colors.redAccent)),
-                Text('${accountBalanceLabel(balance,supplier:suppliers)}: ${balance.toStringAsFixed(2)} ج.م',style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)),
+              trailing: Row(mainAxisSize:MainAxisSize.min,children:[
+                Text(balance.toStringAsFixed(0),style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold)),
+                IconButton(tooltip:'كشف الحساب',icon:const Icon(Icons.summarize_outlined,color:vibBlue),
+                  onPressed: () => openVibReport(context, 'كشف حساب ${account['name'] ?? ''}',
+                    AccountStatementPage(collection: collection, id: d.id))),
               ]),
-              trailing: TextButton.icon(
-                style: TextButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
-                icon: const Icon(Icons.summarize_outlined, size: 16),
-                label: const Text('كشف الحساب'),
-                onPressed: () => openVibReport(context, 'كشف حساب ${account['name'] ?? ''}',
-                  AccountStatementPage(collection: collection, id: d.id))),
               onTap: () => showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Column(
                 mainAxisSize: MainAxisSize.min, children: [
                   ListTile(leading: const Icon(Icons.summarize),
@@ -3488,6 +3435,10 @@ Future<void> accountDialog(BuildContext context, String collection, String id, M
 class SupplierPaymentVouchers extends StatelessWidget {
   const SupplierPaymentVouchers({super.key});
   @override Widget build(BuildContext context) => Column(children: [
+    Padding(padding:const EdgeInsets.fromLTRB(12,12,12,0),child:SizedBox(width:double.infinity,child:OutlinedButton.icon(
+      onPressed:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>Directionality(textDirection:TextDirection.rtl,
+        child:const CustomerPaymentReport(owner:true,suppliers:true)))),
+      icon:const Icon(Icons.query_stats,color:vibNeon),label:const Text('تقرير إجمالي حركة سداد الموردين',style:TextStyle(color:vibNeon))))),
     Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(onPressed: () => createSupplierPaymentVoucher(context), icon: const Icon(Icons.add), label: const Text('إنشاء سند صرف لمورد'))),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'suppliers').snapshots(includeMetadataChanges: true), builder: (context, snapshot) {
       if (snapshot.hasError) return Center(child: Text('تعذر تحميل سندات الصرف: ${snapshot.error}'));
@@ -3499,7 +3450,7 @@ class SupplierPaymentVouchers extends StatelessWidget {
         final row = rows[i], data = row.data();
         final confirmed = !row.metadata.hasPendingWrites && !snapshot.data!.metadata.isFromCache;
         return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text('${data['accountName'] ?? ''} • ${data['amount']} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+          Text('${data['accountName'] ?? ''} • ${data['amount']} ج.م', style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold)),
           Text('رقم السند: ${row.id}\n${formatDate(data['createdAt'])}\nالباقي للمورد: ${data['balanceAfter']} ج.م'),
           if (!confirmed) const Text('بانتظار تأكيد البيانات من الخادم'),
           Wrap(spacing: 8, children: [for (final thermal in [false,true]) OutlinedButton.icon(onPressed: confirmed ? () => printSupplierPaymentVoucher(context, row.id, data, thermal: thermal) : null, icon: const Icon(Icons.print), label: Text(thermal ? 'طباعة 80 مللي' : 'طباعة A4')),
@@ -5743,7 +5694,8 @@ class InvoiceCustomerChoiceRow extends StatelessWidget {
       child: Row(textDirection: TextDirection.rtl, children: [
         SizedBox(width: 32, child: Text('$number.', textAlign: TextAlign.right,
           textDirection: TextDirection.ltr, style: const TextStyle(color: gold, fontWeight: FontWeight.bold))),
-        const SizedBox(width: 4),
+        CircleAvatar(radius:16,backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue,size:19)),
+        const SizedBox(width: 8),
         Expanded(child: Text(name, textDirection: TextDirection.rtl,
           textAlign:TextAlign.right,style:TextStyle(color:staffApp ? Colors.lightBlueAccent : null,fontWeight:FontWeight.w600))),
         const SizedBox(width: 8),
@@ -5826,10 +5778,10 @@ class _StaffCustomersState extends State<StaffCustomers> {
       return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
         final data = rows[index].data();
         final balance=(data['balance'] as num?) ?? 0;
-        return ListTile(title: Text('${data['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
-          subtitle: Text('الهاتف: ${data['phone'] ?? 'غير مسجل'}',style:const TextStyle(color:Colors.redAccent)),
+        return ListTile(leading:CircleAvatar(backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue)),
+          title: Text('${data['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
           trailing: Wrap(crossAxisAlignment:WrapCrossAlignment.center,children:[
-            if(widget.canViewBalance)Text('المتبقي: ${balance.toStringAsFixed(2)} ج.م',style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)),
+            if(widget.canViewBalance)Text('${balance.toStringAsFixed(2)} ج.م',style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)),
             if(widget.canViewStatement)IconButton(tooltip:'كشف حساب من تاريخ إلى تاريخ',icon:const Icon(Icons.summarize_outlined),
               onPressed:()=>openVibReport(context,'كشف حساب العميل ${data['name'] ?? ''}',
                 AccountStatementPage(collection:'customers',id:rows[index].id))),
@@ -5901,13 +5853,17 @@ class StaffChatInbox extends StatelessWidget {
             final sent = thread?['lastMessageAt'] as Timestamp?, seen = thread?['ownerReadAt'] as Timestamp?;
             final unread = thread?['lastSenderRole'] == 'employee' && sent != null && (seen == null || sent.compareTo(seen) > 0);
             final name = '${employee.data()['name'] ?? employee.data()['phone'] ?? employee.id}';
+            final phone='${employee.data()['phone']??''}'.trim();
             return Card(child: ListTile(
               leading: Stack(clipBehavior:Clip.none,children:[
-                const Icon(Icons.person_outline,color:gold),
+                CircleAvatar(backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue)),
                 if(unread)const Positioned(top:-7,right:-8,child:Icon(Icons.notifications_active,size:16,color:Colors.lightBlueAccent)),
               ]),
               title: Text(name), subtitle: Text('${thread?['lastText'] ?? 'ابدأ محادثة مع الموظف'}', maxLines: 2, overflow: TextOverflow.ellipsis),
-              trailing: const Icon(Icons.chevron_left),
+              trailing: Wrap(mainAxisSize:MainAxisSize.min,children:[
+                IconButton(tooltip:'اتصال بالموظف',icon:const Icon(Icons.call,color:vibBlue),onPressed:()=>callStaffEmployee(context,phone)),
+                const Icon(Icons.chevron_left),
+              ]),
               onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(textDirection: TextDirection.rtl,
                 child: StaffChatPage(employeeId: employee.id, owner: true, title: name)))),
             ));
@@ -5916,6 +5872,22 @@ class StaffChatInbox extends StatelessWidget {
       },
     ),
   );
+}
+
+Future<void> callStaffEmployee(BuildContext context,String phone) async {
+  final cleaned=phone.replaceAll(RegExp(r'[^0-9+]'),'');
+  if(cleaned.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('رقم الهاتف غير مسجل لهذا الموظف')));
+    return;
+  }
+  final uri=Uri(scheme:'tel',path:cleaned);
+  try {
+    if(!await launchUrl(uri,mode:LaunchMode.externalApplication) && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تعذر فتح تطبيق الاتصال')));
+    }
+  } catch(e) {
+    if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر بدء الاتصال: $e')));
+  }
 }
 
 String chatProblem(Object? error) {

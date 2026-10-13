@@ -71,27 +71,39 @@ jobs:
           cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf VIB-SALES-INDEPENDENT/assets/fonts/DejaVuSans.ttf
 
       - name: Create independent Android platform
+        env:
+          APP: ${{ matrix.app }}
         working-directory: VIB-SALES-INDEPENDENT
         run: |
-          flutter create --platforms=android --org com.alaa.vibsales --project-name manager .
+          flutter create --platforms=android --org com.alaa.vibsales --project-name "$APP" .
+          python3 vib_overrides/apply_store_movement.py lib/main.dart
+          python3 vib_overrides/apply_manager_thermal_printing.py lib/main.dart
+          if [ "$APP" = manager ]; then python3 vib_overrides/apply_manager_offline_presentation.py lib/main.dart; fi
           python3 vib_overrides/prepare_cheque_notifications.py
 
-      - name: Prepare manager app
+      - name: Prepare ${{ matrix.app }} app
+        env:
+          APP: ${{ matrix.app }}
         working-directory: VIB-SALES-INDEPENDENT
         run: |
-          printf '%s\n' 'android.newDsl=false' 'android.builtInKotlin=false' >> android/gradle.properties
-          sed -i 's/^name: manager$/name: vib_sales/' pubspec.yaml
-          sed -i 's/android:label="manager"/android:label="VIB Manager"/' android/app/src/main/AndroidManifest.xml
-          sed -i 's/applicationId = "com.alaa.vibsales.manager"/applicationId = "com.alaa.vibsales.managerscan"/' android/app/build.gradle.kts
-          grep -q 'applicationId = "com.alaa.vibsales.managerscan"' android/app/build.gradle.kts
-          sed -i 's/import io.flutter.embedding.android.FlutterActivity/import io.flutter.embedding.android.FlutterFragmentActivity/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
-          sed -i 's/FlutterActivity()/FlutterFragmentActivity()/' android/app/src/main/kotlin/com/alaa/vibsales/manager/MainActivity.kt
-          sed -i '/<manifest/a\    <uses-permission android:name="android.permission.USE_BIOMETRIC" />\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />' android/app/src/main/AndroidManifest.xml
-          perl -0pi -e "s/'role':\s*'pending',\s*'active':\s*false/'role': 'owner', 'active': true/g" lib/main.dart
-          cp -r assets/icons/manager/mipmap-* android/app/src/main/res/
-          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            cp ../overrides/assets/manager-icon.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"
-          done
+          printf '%s\\n' 'android.newDsl=false' 'android.builtInKotlin=false' >> android/gradle.properties
+          sed -i "s/^name: $APP$/name: vib_sales/" pubspec.yaml
+          if [ "$APP" = manager ]; then
+            LABEL='VIB Manager'
+            APP_ID='com.alaa.vibsales.managerscan'
+            perl -0pi -e "s/'role':\\s*'pending',\\s*'active':\\s*false/'role': 'owner', 'active': true/g" lib/main.dart
+          else
+            LABEL='VIB Staff'
+            APP_ID='com.alaa.vibsales.staffscan'
+          fi
+          sed -i "s/android:label=\\\"$APP\\\"/android:label=\\\"$LABEL\\\"/" android/app/src/main/AndroidManifest.xml
+          sed -i "s/applicationId = \\\"com.alaa.vibsales.$APP\\\"/applicationId = \\\"$APP_ID\\\"/" android/app/build.gradle.kts
+          grep -q "applicationId = \\\"$APP_ID\\\"" android/app/build.gradle.kts
+          sed -i 's/import io.flutter.embedding.android.FlutterActivity/import io.flutter.embedding.android.FlutterFragmentActivity/' "android/app/src/main/kotlin/com/alaa/vibsales/$APP/MainActivity.kt"
+          sed -i 's/FlutterActivity()/FlutterFragmentActivity()/' "android/app/src/main/kotlin/com/alaa/vibsales/$APP/MainActivity.kt"
+          sed -i '/<manifest/a\\    <uses-permission android:name="android.permission.USE_BIOMETRIC" />\\n    <uses-permission android:name="android.permission.RECORD_AUDIO" />\\n    <uses-permission android:name="android.permission.INTERNET" />\\n    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />\\n    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />' android/app/src/main/AndroidManifest.xml
+          if [ -d "assets/icons/$APP" ]; then cp -r "assets/icons/$APP"/mipmap-* android/app/src/main/res/; fi
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do cp "../overrides/assets/$APP-icon.png" "android/app/src/main/res/mipmap-$density/ic_launcher.png"; done
           cp firebase/google-services.json android/app/google-services.json
           flutter pub get
 
@@ -110,33 +122,14 @@ jobs:
             VIB-SALES-INDEPENDENT/dist/*.png
           if-no-files-found: error
 
-      - name: Build manager APK
-        if: matrix.app == 'manager'
+      - name: Build ${{ matrix.app }} APK
         working-directory: VIB-SALES-INDEPENDENT
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4032 --build-name=0.2.12
+          flutter build apk --release --split-per-abi --build-number=4036 --build-name=0.2.16
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk
-
-      - name: Build staff APK separately
-        if: matrix.app == 'staff'
-        working-directory: VIB-SALES-INDEPENDENT
-        run: |
-          sed -i 's/android:label="VIB Manager"/android:label="VIB Staff"/' android/app/src/main/AndroidManifest.xml
-          sed -i 's/applicationId = "com.alaa.vibsales.managerscan"/applicationId = "com.alaa.vibsales.staffscan"/' android/app/build.gradle.kts
-          grep -q 'applicationId = "com.alaa.vibsales.staffscan"' android/app/build.gradle.kts
-          perl -0pi -e "s/'role':\s*'owner',\s*'active':\s*true/'role': 'pending', 'active': false/g" lib/main.dart
-          cp -r assets/icons/staff/mipmap-* android/app/src/main/res/
-          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-            cp ../overrides/assets/staff-icon.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"
-          done
-          flutter clean
-          flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4032 --build-name=0.2.12
-          mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk
+          if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
       - name: Export Android signing fingerprints
         working-directory: VIB-SALES-INDEPENDENT
@@ -195,8 +188,44 @@ jobs:
           path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-STAFF.apk
           if-no-files-found: error
 
+  publish-direct-apks:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download manager APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager-files
 
+      - name: Download staff APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-STAFF-APK
+          path: staff-files
 
+      - name: Publish manager APK download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-sales-manager-latest
+          name: VIB Sales Manager
+          target_commitish: ${{ github.sha }}
+          body: "آخر نسخة مباشرة من تطبيق VIB Manager."
+          files: manager-files/VIB-SALES-MANAGER.apk
+          overwrite_files: true
+          make_latest: false
+
+      - name: Publish staff APK download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-sales-staff-latest
+          name: VIB Sales Staff
+          target_commitish: ${{ github.sha }}
+          body: "آخر نسخة مباشرة من تطبيق VIB Staff."
+          files: staff-files/VIB-SALES-STAFF.apk
+          overwrite_files: true
+          make_latest: false
   publish-direct-apks:
     needs: build
     runs-on: ubuntu-latest

@@ -397,6 +397,21 @@ void main() {
       File('dist/VIB-REPORT-${supplier ? 'SUPPLIERS' : 'CUSTOMERS'}-DEBTS.pdf').writeAsBytesSync(bytes);
     }
   });
+  test('supplier payment movements normalize into the selected inclusive range', () {
+    final from=DateTime(2026,10,1), to=DateTime(2026,10,3);
+    final start=movementReportBoundary(from), end=movementReportBoundary(to,next:true);
+    final rows=[
+      supplierPaymentReportRow('p1',{'accountId':'s1','accountName':'مورد أول','amount':120.5,'createdAt':Timestamp.fromDate(start)}),
+      supplierPaymentReportRow('p2',{'accountId':'s1','accountName':'مورد أول','amount':30,'createdAt':Timestamp.fromDate(end.subtract(const Duration(milliseconds:1)))}),
+      supplierPaymentReportRow('p3',{'accountId':'s2','accountName':'مورد ثان','amount':5,'createdAt':Timestamp.fromDate(end)}),
+    ];
+    final report=summarizeReceiptPeriod(rows,from,to);
+    expect(report.totalCents,15050);
+    expect(report.receiptCount,2);
+    expect(report.customers.length,1);
+    expect(report.customers.single.id,'s1');
+  });
+
 }
 
 
