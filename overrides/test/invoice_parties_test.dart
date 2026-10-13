@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/main.dart';
 
 void main() {
-  testWidgets('customer choices show right-hand numbering, adjacent name and green debt on a small phone', (tester) async {
+  testWidgets('customer choices show avatar, name and green debt on one row without numbering', (tester) async {
     tester.view.physicalSize = const Size(360, 640); tester.view.devicePixelRatio = 1;
     addTearDown(() { tester.view.resetPhysicalSize(); tester.view.resetDevicePixelRatio(); });
     var selected = false;
@@ -22,12 +22,13 @@ void main() {
       ))),
     )));
     expect(tester.takeException(), isNull);
-    final number = tester.getRect(find.text('1.'));
     final name = tester.getRect(find.text('الحاج أحمد محمود بورسعيد'));
     final debt = tester.getRect(find.text('82502.70 ج.م'));
-    expect(number.left, greaterThan(name.right));
+    expect(find.text('1.'), findsNothing);
+    final avatar = tester.getRect(find.byType(CircleAvatar).first);
+    expect(avatar.left, greaterThan(name.right));
     expect(name.left, greaterThan(debt.right));
-    expect(number.center.dy, closeTo(name.center.dy, 1));
+    expect(avatar.center.dy, closeTo(name.center.dy, 1));
     expect(debt.center.dy, closeTo(name.center.dy, 1));
     expect(tester.widget<Text>(find.text('82502.70 ج.م')).style!.color, Colors.greenAccent);
     await tester.tap(find.text('الحاج أحمد محمود بورسعيد')); await tester.pump();
