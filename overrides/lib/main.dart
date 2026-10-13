@@ -4112,15 +4112,20 @@ const _thermalPrinterNameKey = 'vib.thermal.printer.name';
 Future<bool> _ensureThermalBluetoothPermission(BuildContext context) async {
   if (!Platform.isAndroid) return true;
   try {
-    var status = await Permission.bluetoothConnect.status;
-    if (!status.isGranted) {
-      status = await Permission.bluetoothConnect.request();
+    var connectStatus = await Permission.bluetoothConnect.status;
+    if (!connectStatus.isGranted) {
+      connectStatus = await Permission.bluetoothConnect.request();
     }
-    if (status.isGranted) return true;
+    var scanStatus = await Permission.bluetoothScan.status;
+    if (!scanStatus.isGranted) {
+      scanStatus = await Permission.bluetoothScan.request();
+    }
+    if (connectStatus.isGranted && scanStatus.isGranted) return true;
+    final deniedStatus = connectStatus.isPermanentlyDenied ? connectStatus : scanStatus;
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: const Text('اسمح للتطبيق بالوصول إلى الأجهزة القريبة حتى يتصل بطابعة البلوتوث.'),
-        action: status.isPermanentlyDenied
+        content: const Text('اسمح للتطبيق بإذن «الأجهزة القريبة» للاتصال بالطابعة.'),
+        action: deniedStatus.isPermanentlyDenied
             ? SnackBarAction(label: 'الإعدادات', onPressed: () { openAppSettings(); })
             : null,
       ));
