@@ -12,6 +12,23 @@ import '../lib/inventory_rows.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(() async { initializeChequeTimeZones(); final loader=FontLoader('VIBQA')..addFont(rootBundle.load('assets/fonts/DejaVuSans.ttf'));await loader.load(); });
+  testWidgets('customer and supplier directory rows keep the name readable beside statement action', (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(const MaterialApp(
+      home: Directionality(textDirection: TextDirection.rtl, child: Scaffold(
+        body: AccountDirectoryRow(name: 'شركة النور للتجارة والتوزيع', balanceText: 'الرصيد: 12500.00 ج.م',
+          onTap: _noopAccountRow, onStatement: _noopAccountRow),
+      )),
+    ));
+    final nameFinder = find.byKey(const ValueKey('account-directory-name'));
+    expect(tester.widget<Text>(nameFinder).maxLines, 1);
+    expect(tester.getSize(nameFinder).width, greaterThan(120));
+    expect(tester.takeException(), isNull);
+  });
+
   test('profit presets cover one, two, three, seven days, month and year; custom end includes its selected minute',(){
     final now=DateTime(2026,10,9,12,34,27);
     expect(profitPresetRange('day',now).start,DateTime(2026,10,9));
@@ -413,6 +430,8 @@ void main() {
   });
 
 }
+
+void _noopAccountRow() {}
 
 
 
