@@ -266,3 +266,4 @@ class _StoreMovementReportPageState extends State<StoreMovementReportPage> {
       ]);
     })),
   ]);
+}
