@@ -19,6 +19,7 @@ import 'package:local_auth/local_auth.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:esc_pos_utils_plus/esc_pos_utils_plus.dart' as esc;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:image/image.dart' as img;
@@ -4108,8 +4109,34 @@ PdfPageFormat invoicePageFormat(String paper) => switch (paper) {
 const _thermalPrinterMacKey = 'vib.thermal.printer.mac';
 const _thermalPrinterNameKey = 'vib.thermal.printer.name';
 
+Future<bool> _ensureThermalBluetoothPermission(BuildContext context) async {
+  if (!Platform.isAndroid) return true;
+  try {
+    var status = await Permission.bluetoothConnect.status;
+    if (!status.isGranted) {
+      status = await Permission.bluetoothConnect.request();
+    }
+    if (status.isGranted) return true;
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: const Text('اسمح للتطبيق بالوصول إلى الأجهزة القريبة حتى يتصل بطابعة البلوتوث.'),
+        action: status.isPermanentlyDenied
+            ? SnackBarAction(label: 'الإعدادات', onPressed: () { openAppSettings(); })
+            : null,
+      ));
+    }
+    return false;
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر طلب إذن البلوتوث: $e')));
+    }
+    return false;
+  }
+}
+
 Future<({String mac, String name})?> _chooseBluetoothThermalPrinter(BuildContext context) async {
   try {
+    if (!await _ensureThermalBluetoothPermission(context)) return null;
     if (!await PrintBluetoothThermal.bluetoothEnabled) {
       if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('شغّل البلوتوث واقرن طابعة XP-P323B بالموبايل أولًا.')));
       return null;
@@ -4153,6 +4180,7 @@ Future<void> _printPdfOnBluetoothThermal(
   Uint8List pdfBytes, {
   String? printerMac,
 }) async {
+  if (!await _ensureThermalBluetoothPermission(context)) return;
   if (!await PrintBluetoothThermal.bluetoothEnabled) throw StateError('شغّل البلوتوث على الموبايل.');
   var mac = printerMac;
   var name = '';
