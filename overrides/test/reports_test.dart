@@ -192,6 +192,10 @@ void main() {
         'createdAt':Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,i%3+1))),
         'balanceBefore':100+i*10,'balanceAfter':110+i*10}),{'name':supplier?'المورد الاختبار':'العميل الاختبار','balance':220},from,to,supplier:supplier);
       File('dist/VIB-STATEMENT-${supplier?'SUPPLIER':'CUSTOMER'}.pdf').writeAsBytesSync(await createAccountStatementPdf(r,font));
+      final thermal=await createAccountStatementPdf(r,font,thermal:true);
+      expect(thermal.length,greaterThan(1000));
+      expect(String.fromCharCodes(thermal.take(5)),'%PDF-');
+      File('dist/VIB-STATEMENT-${supplier?'SUPPLIER':'CUSTOMER'}-80MM.pdf').writeAsBytesSync(thermal);
     }
     final rows=List.generate(8,(i)=><String,dynamic>{'id':'m$i','kind':i.isEven?'purchase':'sale','quantity':i.isEven?10:-3,'balanceAfter':20+i,'branchId':'main','createdAt':Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,i%3+1)))});
     File('dist/VIB-PRODUCT-TRACE.pdf').writeAsBytesSync(await createProductTracePdf('محول مسطرة فيردي',rows,{for(var i=0;i<8;i++)'m$i':'${i.isEven?'المورد':'العميل'}: اسم الاختبار\nفاتورة: 000${100+i}\nالمستخدم: موظف التحصيل'},summarizeProductPeriod(rows,27,null),font));

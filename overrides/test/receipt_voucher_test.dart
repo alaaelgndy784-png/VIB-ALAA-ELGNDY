@@ -40,12 +40,17 @@ void main() {
   });
 
   test('standalone receipt PDF contains the customer, amount and receipt reference',() async {
-    final pdf=await createReceiptVoucherPdf('RC-2026-001',{
+    final data={
       'customerName':'عميل الاختبار','customerPhone':'01000000000','amount':125.5,
       'balanceBefore':500,'balanceAfter':374.5,'actorName':'موظف','note':'سداد مستقل',
       'receiptDate':Timestamp.fromDate(DateTime(2026,10,7,12)),'paymentMethod':'تحويل إنستا باي',
-    },font);
-    expect(pdf.length,greaterThan(1000));
-    expect(String.fromCharCodes(pdf.take(5)),'%PDF-');
+    };
+    Directory('dist').createSync(recursive:true);
+    for(final thermal in [false,true]) {
+      final pdf=await createReceiptVoucherPdf('RC-2026-001',data,font,thermal:thermal);
+      expect(pdf.length,greaterThan(1000));
+      expect(String.fromCharCodes(pdf.take(5)),'%PDF-');
+      if(thermal)File('dist/VIB-RECEIPT-TEST-80MM.pdf').writeAsBytesSync(pdf);
+    }
   });
 }

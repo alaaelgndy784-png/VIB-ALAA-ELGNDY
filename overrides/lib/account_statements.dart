@@ -68,13 +68,18 @@ class _AccountStatementPageState extends State<AccountStatementPage> {
       report.increase,report.decrease,report.rows,fromCache:snapshot.metadata.isFromCache||account.metadata.isFromCache,
       pendingWrites:snapshot.metadata.hasPendingWrites||account.metadata.hasPendingWrites);
   }
-  Future<void> printReport(AccountPeriodReport data) async {
+  Future<void> printReport(AccountPeriodReport data,{bool thermal=false}) async {
     try {
       final confirmed=await loadReport();
       if(confirmed.fromCache||confirmed.pendingWrites)throw StateError('يتطلب حفظ كشف الحساب تأكيد مزامنة البيانات أولًا');
       final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-      final bytes=await createAccountStatementPdf(confirmed,font);
-      await Printing.layoutPdf(name:'VIB-ACCOUNT-${widget.id}.pdf',onLayout:(_)async=>bytes);
+      final bytes=await createAccountStatementPdf(confirmed,font,thermal:thermal);
+      if(thermal) {
+        final prefs=await SharedPreferences.getInstance();
+        await _printPdfOnBluetoothThermal(context,bytes,printerMac:prefs.getString(_thermalPrinterMacKey));
+      } else {
+        await Printing.layoutPdf(name:'VIB-ACCOUNT-${widget.id}.pdf',onLayout:(_)async=>bytes);
+      }
     } catch(e) {if(mounted)await showInvoiceSaveProblem(context,'تعذر طباعة كشف الحساب: $e');}
   }
   @override Widget build(BuildContext context)=>Column(children:[
@@ -92,7 +97,10 @@ class _AccountStatementPageState extends State<AccountStatementPage> {
           Text('زيادة الدين: ${receiptReportMoney(r.increase)} • تخفيض الدين: ${receiptReportMoney(r.decrease)}'),
           Text('رصيد آخر المدة: ${receiptReportMoney(r.closing)}',style:const TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold)),
           Text('الرصيد الحالي: ${receiptReportMoney(r.current)}'),
-          OutlinedButton.icon(onPressed:r.fromCache||r.pendingWrites?null:()=>printReport(r),icon:const Icon(Icons.picture_as_pdf),label:const Text('طباعة / حفظ كشف الحساب PDF')),
+          Wrap(spacing:8,runSpacing:6,alignment:WrapAlignment.center,children:[
+            OutlinedButton.icon(onPressed:r.fromCache||r.pendingWrites?null:()=>printReport(r),icon:const Icon(Icons.picture_as_pdf),label:const Text('طباعة / حفظ PDF')),
+            OutlinedButton.icon(onPressed:r.fromCache||r.pendingWrites?null:()=>printReport(r,thermal:true),icon:const Icon(Icons.print),label:const Text('طباعة 80 مم')),
+          ]),
         ]))),
         Expanded(child:r.rows.isEmpty?const Center(child:Text('لا توجد حركات خلال الفترة؛ رصيد أول وآخر المدة ظاهر بالأعلى')):
           ListView.builder(itemCount:r.rows.length,itemBuilder:(context,i){final row=r.rows[i];final delta=row['deltaCents'] as int;
@@ -103,8 +111,46 @@ class _AccountStatementPageState extends State<AccountStatementPage> {
     })),
   ]);
 }
-Future<Uint8List> createAccountStatementPdf(AccountPeriodReport r,pw.Font font) async {
+Future<Uint8List> createAccountStatementPdf(AccountPeriodReport r,pw.Font font,{bool thermal=false}) async {
   final pdf=pw.Document();
+  if(thermal) {
+    if(r.rows.length>200)throw StateError('الكشف يحتوي على أكثر من 200 حركة؛ اختر فترة أقصر للطباعة الحرارية');
+    int extraWrappedLines(String value)=>value.isEmpty?0:((value.runes.length+34)~/35)-1;
+    final extraLines=r.rows.fold<int>(0,(sum,row)=>sum+
+      extraWrappedLines('${movementName('${row['kind']}')} ${row['referenceLabel']??''}')+
+      extraWrappedLines('${row['reason']??''}')+
+      extraWrappedLines('زيادة: ${receiptReportMoney((row['deltaCents'] as int)>0?row['deltaCents'] as int:0)}  تخفيض: ${receiptReportMoney((row['deltaCents'] as int)<0?-(row['deltaCents'] as int):0)}'));
+    final height=(90+r.rows.length*20+extraLines*5).clamp(90,5000).toDouble();
+    pw.Widget line(String value,{bool strong=false})=>pw.Padding(
+      padding:const pw.EdgeInsets.symmetric(vertical:1.5),
+      child:pw.Text(value,textAlign:pw.TextAlign.right,style:pw.TextStyle(
+        fontSize:strong?9:7.5,fontWeight:strong?pw.FontWeight.bold:pw.FontWeight.normal)));
+    pdf.addPage(pw.Page(pageFormat:PdfPageFormat(80*PdfPageFormat.mm,height*PdfPageFormat.mm,marginAll:4*PdfPageFormat.mm),
+      theme:pw.ThemeData.withFont(base:font,bold:font),textDirection:pw.TextDirection.rtl,
+      build:(_)=>pw.Column(mainAxisSize:pw.MainAxisSize.min,crossAxisAlignment:pw.CrossAxisAlignment.stretch,children:[
+        pw.Text('VIB للتجارة والتوزيع',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:11,fontWeight:pw.FontWeight.bold)),
+        pw.Text('كشف حساب ${r.supplier?'مورد':'عميل'}',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:12,fontWeight:pw.FontWeight.bold)),
+        pw.Text(r.name,textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:9,fontWeight:pw.FontWeight.bold)),
+        pw.Divider(thickness:1),
+        line('الفترة: ${DateFormat('dd/MM/yyyy').format(r.from)} إلى ${DateFormat('dd/MM/yyyy').format(r.to)}'),
+        line('رصيد أول المدة: ${receiptReportMoney(r.opening)}',strong:true),
+        line('زيادة الدين: ${receiptReportMoney(r.increase)}'),
+        line('تخفيض الدين: ${receiptReportMoney(r.decrease)}'),
+        line('رصيد آخر المدة: ${receiptReportMoney(r.closing)}',strong:true),
+        line('الرصيد الحالي: ${receiptReportMoney(r.current)}',strong:true),
+        pw.Divider(),
+        if(r.rows.isEmpty)line('لا توجد حركات في الفترة المختارة'),
+        for(var i=0;i<r.rows.length;i++)...[
+          line('${i+1}. ${receiptReportStamp(r.rows[i],r.to)}',strong:true),
+          line('${movementName('${r.rows[i]['kind']}')} • ${r.rows[i]['referenceLabel']??''}'),
+          if('${r.rows[i]['reason']??''}'.trim().isNotEmpty)line('البيان: ${r.rows[i]['reason']}'),
+          line('زيادة: ${receiptReportMoney((r.rows[i]['deltaCents'] as int)>0?r.rows[i]['deltaCents'] as int:0)}  تخفيض: ${receiptReportMoney((r.rows[i]['deltaCents'] as int)<0?-(r.rows[i]['deltaCents'] as int):0)}'),
+          line('الرصيد بعد الحركة: ${receiptReportMoney(r.rows[i]['periodBalance'] as int)}',strong:true),
+          pw.Divider(thickness:.5),
+        ],
+      ])));
+    return pdf.save();
+  }
   pw.Widget cell(String text,{bool head=false})=>pw.Padding(padding:const pw.EdgeInsets.all(5),child:pw.Text(text,textAlign:pw.TextAlign.right,style:pw.TextStyle(fontSize:9,color:head?PdfColors.white:PdfColors.black)));
   pdf.addPage(pw.MultiPage(pageFormat:PdfPageFormat.a4,maxPages:1000,theme:pw.ThemeData.withFont(base:font,bold:font),textDirection:pw.TextDirection.rtl,
     footer:(c)=>pw.Text('${c.pageNumber} / ${c.pagesCount}',textAlign:pw.TextAlign.center),build:(_)=>[
