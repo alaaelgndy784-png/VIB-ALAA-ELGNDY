@@ -81,9 +81,9 @@ jobs:
           if [ "$APP" = manager ]; then python3 vib_overrides/apply_manager_offline_presentation.py lib/main.dart; fi
           python3 vib_overrides/prepare_cheque_notifications.py
 
-      - name: Prepare ${{ matrix.app }} app
+      - name: Prepare \${{ matrix.app }} app
         env:
-          APP: ${{ matrix.app }}
+          APP: \${{ matrix.app }}
         working-directory: VIB-SALES-INDEPENDENT
         run: |
           APP_ID='com.alaa.vibsales.staffscan'
@@ -108,9 +108,9 @@ jobs:
               <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
               <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
               <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />'''
-          root = re.search(r'<manifest\\b[^>]*>', text)
+          root = re.search(r'<manifest\b[^>]*>', text)
           if root is None: raise SystemExit('Android manifest root missing')
-          text = text[:root.end()] + '\\n' + permissions + text[root.end():]
+          text = text[:root.end()] + '\n' + permissions + text[root.end():]
           manifest.write_text(text)
           gradle = Path('android/app/build.gradle.kts')
           text = gradle.read_text()
@@ -122,7 +122,7 @@ jobs:
           source = Path('lib/main.dart')
           text = source.read_text()
           if app == 'manager':
-              text = re.sub(r"'role':\\s*'pending',\\s*'active':\\s*false", "'role': 'owner', 'active': true", text)
+              text = re.sub(r"'role':\s*'pending',\s*'active':\s*false", "'role': 'owner', 'active': true", text)
           source.write_text(text)
           PY
           if [ -d "assets/icons/$APP" ]; then cp -r "assets/icons/$APP"/mipmap-* android/app/src/main/res/; fi
