@@ -5711,11 +5711,10 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
 
 
 class InvoiceCustomerChoiceRow extends StatelessWidget {
-  final int number;
   final String name;
   final num balance;
   final VoidCallback onTap;
-  const InvoiceCustomerChoiceRow({super.key, required this.number, required this.name,
+  const InvoiceCustomerChoiceRow({super.key, required this.name,
     required this.balance, required this.onTap});
 
   @override
@@ -5724,13 +5723,13 @@ class InvoiceCustomerChoiceRow extends StatelessWidget {
     child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
       child: Row(textDirection: TextDirection.rtl, children: [
-        CircleAvatar(backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue)),
+        CircleAvatar(radius:16,backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue,size:19)),
         const SizedBox(width: 8),
         Expanded(child: Text(name, textDirection: TextDirection.rtl,
           textAlign:TextAlign.right,style:TextStyle(color:staffApp ? Colors.lightBlueAccent : null,fontWeight:FontWeight.w600))),
         const SizedBox(width: 8),
         Text('${balance.toStringAsFixed(2)} ج.م', textDirection: TextDirection.rtl,
-          style:TextStyle(color:staffApp ? Colors.redAccent : vibNeon,fontWeight:FontWeight.bold)),
+          style:TextStyle(color:staffApp ? Colors.redAccent : Colors.greenAccent,fontWeight:FontWeight.bold)),
       ]),
     ),
   );
@@ -5761,7 +5760,7 @@ Future<String?> selectRegisteredCustomer(BuildContext context) async {
             if (rows.isEmpty) return const Center(child: Text('لا يوجد عملاء مطابقون'));
             return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
               final row = rows[index];
-              return InvoiceCustomerChoiceRow(number: index + 1,
+              return InvoiceCustomerChoiceRow(
                 name: '${row.data()['name'] ?? ''}', balance: (row.data()['balance'] as num?) ?? 0,
                 onTap: () => Navigator.pop(dialog, row.id));
             });
