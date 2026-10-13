@@ -4230,8 +4230,7 @@ Future<void> _printPdfOnBluetoothThermal(
       final commands = <int>[
         ...generator.reset(),
         ...generator.imageRaster(printBitmap, align: esc.PosAlign.center),
-        ...generator.feed(4),
-        ...generator.cut(),
+        ...generator.feed(3),
       ];
       if (!await PrintBluetoothThermal.writeBytes(commands)) {
         throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');

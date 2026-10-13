@@ -483,12 +483,23 @@ Future<Uint8List> createStyledA4InvoicePdf({
     pw.SizedBox(height: 9),
     summary(),
   ];
+  final charsPerItemLine = narrow ? 15 : 22;
+  final estimatedItemLines = items.fold<int>(0, (count, item) {
+    final name = '${item['productName'] ?? ''}';
+    final wrappedLines = name.isEmpty ? 1 : (name.length + charsPerItemLine - 1) ~/ charsPerItemLine;
+    return count + wrappedLines + (numValue(item['discountPercent']) > 0 ? 1 : 0);
+  });
+  if (thermal && estimatedItemLines > 300) {
+    throw StateError('الفاتورة أطول من الحد الآمن للطباعة الحرارية.');
+  }
+  // Use a finite receipt page; an infinite raster height makes the printer continue feeding paper.
+  final thermalPageHeightMm = 220.0 + estimatedItemLines * 12.0;
   if (thermal) {
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat(
           (narrow ? 58 : 80) * PdfPageFormat.mm,
-          double.infinity,
+          thermalPageHeightMm * PdfPageFormat.mm,
         ),
         margin: const pw.EdgeInsets.all(4 * PdfPageFormat.mm),
         theme: pw.ThemeData.withFont(base: font, bold: font),
