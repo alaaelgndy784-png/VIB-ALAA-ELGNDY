@@ -4233,7 +4233,7 @@ Future<void> _printPdfOnBluetoothThermal(
     for (var y = 0; y < rowInk.length; y++) {
       rollingInk += rowInk[y];
       if (y >= 7) rollingInk -= rowInk[y - 7];
-      if (y >= 6 && rollingInk >= 36) lastInkRow = y;
+      if (y >= 6 && rollingInk >= 90) lastInkRow = y;
     }
     final cropHeight = (lastInkRow < 0 ? 1 : lastInkRow + 40)
         .clamp(1, bitmap.height)
@@ -4246,10 +4246,10 @@ Future<void> _printPdfOnBluetoothThermal(
       height: cropHeight,
     );
 
-    // ESC* image mode is more broadly accepted than the older GS v 0 raster mode.
+    // Send one cropped GS v 0 bitmap command to avoid multiple line feeds.
     final commands = <int>[
       ...generator.reset(),
-      ...generator.image(printBitmap, align: esc.PosAlign.center),
+      ...generator.imageRaster(printBitmap, align: esc.PosAlign.center),
       ...generator.feed(2),
     ];
     if (!await PrintBluetoothThermal.writeBytes(commands)) {
