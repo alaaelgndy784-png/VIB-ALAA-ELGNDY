@@ -4202,45 +4202,61 @@ Future<void> _printPdfOnBluetoothThermal(
     throw StateError('تعذر الاتصال بـ$name. تأكد أن الطابعة مشحونة ومقترنة.');
   }
   try {
+    final pages = await Printing.raster(pdfBytes, dpi: 203).toList();
+    if (pages.length != 1) {
+      throw StateError('تم إيقاف الطباعة لأن ملف الإيصال يحتوي على أكثر من صفحة.');
+    }
     final profile = await esc.CapabilityProfile.load();
     final generator = esc.Generator(esc.PaperSize.mm80, profile);
-    var pageCount = 0;
-    await for (final page in Printing.raster(pdfBytes, dpi: 203)) {
-      if (pageCount >= 20) {
-        throw StateError('الفاتورة أطول من الحد الآمن للطباعة الحرارية.');
+    final resized = img.copyResize(pages.single.asImage(), width: 576);
+    final bitmap = img.Image(width: resized.width, height: resized.height, numChannels: 3);
+    img.fill(bitmap, color: img.ColorRgb8(255, 255, 255));
+    img.compositeImage(bitmap, resized);
+
+    // Threshold the raster and remember ink density per row.
+    final rowInk = List<int>.filled(bitmap.height, 0);
+    for (var y = 0; y < bitmap.height; y++) {
+      var darkPixels = 0;
+      for (var x = 0; x < bitmap.width; x++) {
+        final pixel = bitmap.getPixel(x, y);
+        final luminance = (pixel.r * 299 + pixel.g * 587 + pixel.b * 114) / 1000;
+        final channel = luminance < 210 ? 0 : 255;
+        bitmap.setPixelRgb(x, y, channel, channel, channel);
+        if (channel == 0) darkPixels++;
       }
-      final resized = img.copyResize(page.asImage(), width: 576);
-      final bitmap = img.Image(width: resized.width, height: resized.height, numChannels: 3);
-      img.fill(bitmap, color: img.ColorRgb8(255, 255, 255));
-      img.compositeImage(bitmap, resized);
-      // Thermal printers render sharper text when raster edges are strictly black or white.
-      var lastInkRow = -1;
-      for (var y = 0; y < bitmap.height; y++) {
-        var darkPixelsInRow = 0;
-        for (var x = 0; x < bitmap.width; x++) {
-          final pixel = bitmap.getPixel(x, y);
-          final luminance = (pixel.r * 299 + pixel.g * 587 + pixel.b * 114) / 1000;
-          final channel = luminance < 210 ? 0 : 255;
-          bitmap.setPixelRgb(x, y, channel, channel, channel);
-          if (channel == 0) darkPixelsInRow++;
-        }
-        // Ignore isolated thermal noise below the receipt; real text rows contain more ink.
-        if (darkPixelsInRow >= 8) lastInkRow = y;
-      }
-      // Drop the page's empty white tail so the printer stops after the receipt content.
-      final cropHeight = (lastInkRow < 0 ? 1 : lastInkRow + 33).clamp(1, bitmap.height).toInt();
-      final printBitmap = img.copyCrop(bitmap, x: 0, y: 0, width: bitmap.width, height: cropHeight);
-      final commands = <int>[
-        ...generator.reset(),
-        ...generator.imageRaster(printBitmap, align: esc.PosAlign.center),
-        ...generator.feed(3),
-      ];
-      if (!await PrintBluetoothThermal.writeBytes(commands)) {
-        throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');
-      }
-      pageCount++;
+      rowInk[y] = darkPixels;
     }
-    if (pageCount == 0) throw StateError('ملف الفاتورة مافهوش صفحات للطباعة.');
+
+    // Crop after the last real text/line cluster; isolated sensor specks don't extend the receipt.
+    var lastInkRow = -1;
+    var rollingInk = 0;
+    for (var y = 0; y < rowInk.length; y++) {
+      rollingInk += rowInk[y];
+      if (y >= 7) rollingInk -= rowInk[y - 7];
+      if (y >= 6 && rollingInk >= 36) lastInkRow = y;
+    }
+    final cropHeight = (lastInkRow < 0 ? 1 : lastInkRow + 40)
+        .clamp(1, bitmap.height)
+        .toInt();
+    final printBitmap = img.copyCrop(
+      bitmap,
+      x: 0,
+      y: 0,
+      width: bitmap.width,
+      height: cropHeight,
+    );
+
+    // ESC* image mode is more broadly accepted than the older GS v 0 raster mode.
+    final commands = <int>[
+      ...generator.reset(),
+      ...generator.image(printBitmap, align: esc.PosAlign.center),
+      ...generator.feed(2),
+    ];
+    if (!await PrintBluetoothThermal.writeBytes(commands)) {
+      throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');
+    }
+    // Keep Bluetooth connected while the printer drains its receive buffer.
+    await Future.delayed(const Duration(seconds: 3));
   } finally {
     await PrintBluetoothThermal.disconnect;
   }
