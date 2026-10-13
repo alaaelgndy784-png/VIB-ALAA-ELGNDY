@@ -61,6 +61,7 @@ jobs:
           cp overrides/android/prepare_cheque_notifications.py VIB-SALES-INDEPENDENT/vib_overrides/
           cp overrides/android/apply_store_movement.py VIB-SALES-INDEPENDENT/vib_overrides/
           cp overrides/android/apply_manager_thermal_printing.py VIB-SALES-INDEPENDENT/vib_overrides/
+          cp overrides/android/apply_manager_offline_presentation.py VIB-SALES-INDEPENDENT/vib_overrides/
           cp overrides/pubspec.yaml VIB-SALES-INDEPENDENT/pubspec.yaml
           cp overrides/assets/vip-logo.png VIB-SALES-INDEPENDENT/assets/vip-logo.png
           mkdir -p VIB-SALES-INDEPENDENT/test
@@ -78,6 +79,7 @@ jobs:
           flutter create --platforms=android --org com.alaa.vibsales --project-name manager .
           python3 vib_overrides/apply_store_movement.py lib/main.dart
           python3 vib_overrides/apply_manager_thermal_printing.py lib/main.dart
+          python3 vib_overrides/apply_manager_offline_presentation.py lib/main.dart
           python3 vib_overrides/prepare_cheque_notifications.py
 
       - name: Prepare manager app
@@ -120,7 +122,7 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4034 --build-name=0.2.14
+          flutter build apk --release --split-per-abi --build-number=4035 --build-name=0.2.15
           mkdir -p dist
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk
 

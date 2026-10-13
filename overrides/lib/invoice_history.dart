@@ -20,7 +20,7 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
     final now = DateTime.now();
     selectRange(DateTime(now.year, now.month, now.day - 1), DateTime(now.year, now.month, now.day), includeYesterday: true);
     _scheduleDayRollover();
-    prepareInvoiceSerials(widget.type).then((_){if(mounted)setState(()=>numbering=false);}).catchError((Object e){if(mounted)setState((){numbering=false;numberError='تعذر تجهيز أرقام الفواتير: $e';});});
+    prepareInvoiceSerials(widget.type).then((_){if(mounted)setState(()=>numbering=false);}).catchError((Object _){if(mounted)setState((){numbering=false;numberError='تعذر تحديث الأرقام؛ ستظهر الفواتير المحفوظة على الجهاز';});});
   }
 
   @override void dispose() {
@@ -121,12 +121,14 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
     if(numberError.isNotEmpty)Text(numberError,style:const TextStyle(color:Colors.redAccent)),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: invoices, builder: (context, snapshot) {
       if(numbering)return const Center(child:CircularProgressIndicator());
-      if (snapshot.hasError) return const Center(child: Text('تعذر تحميل الفواتير؛ راجع اتصال الإنترنت وحاول مرة أخرى'));
+      if (snapshot.hasError && !snapshot.hasData) return const Center(child: Text('لا توجد فواتير محفوظة على الجهاز. اتصل بالإنترنت لتحميلها أول مرة.'));
       if (!snapshot.hasData || snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
       final rows = snapshot.data!.docs.where((row) => visibleAfterReset(row.data())).toList();
       final totalCents=rows.fold<int>(0,(sum,row){final value=row.data()['total'];if(value is! num || !value.isFinite)return sum;return sum+(value*100).round();});
       return Column(children: [
         Padding(padding: const EdgeInsets.only(bottom: 8), child: Text('عدد الفواتير: ${rows.length} • إجمالي الفترة: ${movementReportMoney(totalCents)}',style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
+        if(snapshot.data!.metadata.isFromCache||snapshot.data!.metadata.hasPendingWrites)
+          const Padding(padding:EdgeInsets.only(bottom:4),child:Text('عرض محفوظ على الجهاز؛ يتم تحديثه عند رجوع الإنترنت',style:TextStyle(color:Colors.orangeAccent),textAlign:TextAlign.center)),
         Expanded(child: rows.isEmpty ? const Center(child:Text('لا توجد فواتير في الفترة المختارة')) : ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
           final row = rows[index], data = row.data();
           final dayColor = _invoiceDayColor(data);
@@ -143,13 +145,13 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
             ),
             child: ListTile(
               leading: Icon(Icons.receipt_long_outlined,color:dayColor),
-              title: FutureBuilder<Map<String,dynamic>>(future: data['internalNumber'] is int || invoiceSerialCache.containsKey(serialKey(widget.type,row.id)) ? null : ensureInvoiceSerial(widget.type,row.id),builder:(context,serial)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+              title: Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
                 Text(party.isEmpty ? (sales ? 'بدون عميل مسجل' : 'مورد غير مسمى') : party,
-                  style:TextStyle(color:dayColor,fontWeight:FontWeight.bold,fontSize:16)),
+                  style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold,fontSize:16)),
                 Text('رقم الفاتورة: ${invoiceDisplayNumber(widget.type,row.id,data)}'),
-              ])),
-              subtitle: Text('${formatDate(data['createdAt'])}${sales ? ' • فرع: ${data['branchId'] ?? ''}' : ''}${returned ? '\nفاتورة مرتجعة' : ''}'),
-              trailing: Text('$total ج.م', style: TextStyle(color: returned ? Colors.redAccent : dayColor, fontWeight: FontWeight.bold)),
+              ]),
+              subtitle: Text('${formatDate(data['createdAt'])}${sales ? ' • فرع: ${data['branchId'] ?? ''}' : ''}${returned ? '\nفاتورة مرتجعة' : ''}',style:const TextStyle(color:Colors.redAccent)),
+              trailing: Text('$total ج.م', style: const TextStyle(color:Colors.lightBlueAccent,fontWeight: FontWeight.bold)),
               onTap: () => invoiceActions(context, widget.type, row.id, data),
             ),
           );

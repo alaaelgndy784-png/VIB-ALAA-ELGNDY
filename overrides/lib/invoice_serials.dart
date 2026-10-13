@@ -40,14 +40,20 @@ Future<void> prepareInvoiceSerials(String type) {
   final key='${FirebaseAuth.instance.currentUser!.uid}:$type';
   return _serialPreparations.putIfAbsent(key,() async {
     try {
-      final markers=await db.collection('settings').where('kind',isEqualTo:'invoiceSerial_$type').get(const GetOptions(source:Source.server));
+      // Use Firestore's default cache-first fallback so reports can still label
+      // invoices when the manager opens them without an internet connection.
+      final markers=await db.collection('settings').where('kind',isEqualTo:'invoiceSerial_$type').get();
       for(final marker in markers.docs)invoiceSerialCache[serialKey(type,'${marker.data()['invoiceId']}')]=marker.data();
-      final invoices=await db.collection(type).get(const GetOptions(source:Source.server));
+      final invoices=await db.collection(type).get();
       final rows=invoices.docs.toList()..sort((a,b){
         final left=(a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch??0,right=(b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch??0;
         final cmp=left.compareTo(right);return cmp==0?a.id.compareTo(b.id):cmp;
       });
-      for(final row in rows){if(!invoiceSerialCache.containsKey(serialKey(type,row.id)))await ensureInvoiceSerial(type,row.id);}
+      // Assigning a missing serial is a server transaction. Never let this
+      // optional numbering step hide cached invoice data while offline.
+      if(!invoices.metadata.isFromCache && !invoices.metadata.hasPendingWrites) {
+        for(final row in rows){if(!invoiceSerialCache.containsKey(serialKey(type,row.id)))await ensureInvoiceSerial(type,row.id);}
+      }
     }finally{_serialPreparations.remove(key);}
   });
 }
@@ -65,7 +71,7 @@ Future<String> resolveInvoiceNumber(String type,String input) async {
   final n=int.tryParse(match?.group(2)??value);
   if(n==null || n<=0)return value;
   try {
-    final claim=(await db.collection('settings').doc('invoiceSerialClaim_${type}_$n').get(const GetOptions(source:Source.server))).data();
+    final claim=(await db.collection('settings').doc('invoiceSerialClaim_${type}_$n').get()).data();
     if(claim!=null && claim['invoiceType']==type && claim['invoiceId'] is String)return claim['invoiceId'] as String;
   } on FirebaseException catch(e){if(e.code!='permission-denied')rethrow;}
   return value;

@@ -114,7 +114,7 @@ class _InvoiceMovementReportPageState extends State<InvoiceMovementReportPage> {
       await prepareInvoiceSerials(widget.type);
       if (mounted) setState(() => numbering = false);
     } catch (e) {
-      if (mounted) setState(() { numbering = false; numberError = 'تعذر تجهيز أرقام الفواتير: $e'; });
+      if (mounted) setState(() { numbering = false; numberError = 'الأرقام الإضافية تحتاج اتصالًا؛ ستظهر البيانات المحفوظة'; });
     }
   }
   void selectRange(DateTime start, DateTime finish) {
@@ -177,10 +177,10 @@ class _InvoiceMovementReportPageState extends State<InvoiceMovementReportPage> {
     if (numbering) const LinearProgressIndicator(),
     if (numberError.isNotEmpty) TextButton(onPressed: exporting ? null : prepareNumbers, child: Text('$numberError — إعادة المحاولة')),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: invoices, builder: (context, snapshot) {
-      if (snapshot.hasError) return const Center(child: Text('تعذر تحميل تقرير الحركة؛ راجع الاتصال'));
+      if (snapshot.hasError && !snapshot.hasData) return const Center(child: Text('لا توجد حركة محفوظة على الجهاز. اتصل بالإنترنت لتحميل بيانات الفترة أول مرة.'));
       if (!snapshot.hasData || snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
       return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream: returns, builder: (context, returnSnapshot) {
-      if (returnSnapshot.hasError) return const Center(child: Text('تعذر تحميل المرتجعات؛ لا يمكن حساب صافي الحركة'));
+      if (returnSnapshot.hasError && !returnSnapshot.hasData) return const Center(child: Text('لا توجد مرتجعات محفوظة على الجهاز؛ اتصل بالإنترنت لتحميلها.'));
       if (!returnSnapshot.hasData || returnSnapshot.connectionState == ConnectionState.waiting) return const Center(child:CircularProgressIndicator());
       final InvoiceMovementReport report;
       try {
@@ -192,14 +192,15 @@ class _InvoiceMovementReportPageState extends State<InvoiceMovementReportPage> {
               'displayNumber': invoiceDisplayNumber(widget.type, '${d.data()['sourceInvoiceId'] ?? d.id}', d.data())}).toList());
       } catch (e) { return Center(child: Text('$e', textAlign: TextAlign.center)); }
       final confirmed = !snapshot.data!.metadata.isFromCache && !snapshot.data!.metadata.hasPendingWrites && !returnSnapshot.data!.metadata.isFromCache && !returnSnapshot.data!.metadata.hasPendingWrites;
+      final cached = !confirmed;
       final enabled = confirmed && !numbering && numberError.isEmpty && !exporting;
       return Column(children: [
         Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(children: [
           Text('عدد الفواتير: ${report.rows.length} • مرتجعات الفترة: ${report.returnedCount}'),
-          Text('الإجمالي: ${movementReportMoney(report.totalCents)}', style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 19)),
-          Text('مرتجعات الفترة: ${movementReportMoney(report.returnCents)}'),
-          Text('صافي الحركة: ${movementReportMoney(report.netCents)}', style: const TextStyle(color: Colors.greenAccent, fontWeight:FontWeight.bold)),
-          if (!confirmed) const Text('انتظر تأكيد البيانات من الخادم قبل الإرسال'),
+          Text('الإجمالي: ${movementReportMoney(report.totalCents)}', style: const TextStyle(color: Colors.lightBlueAccent, fontWeight: FontWeight.bold, fontSize: 19)),
+          Text('مرتجعات الفترة: ${movementReportMoney(report.returnCents)}',style:const TextStyle(color:Colors.lightBlueAccent)),
+          Text('صافي الحركة: ${movementReportMoney(report.netCents)}', style: const TextStyle(color: Colors.lightBlueAccent, fontWeight:FontWeight.bold)),
+          if (cached) const Text('عرض من البيانات المحفوظة على الجهاز؛ الإرسال يحتاج اتصالًا بالإنترنت',style:TextStyle(color:Colors.orangeAccent),textAlign:TextAlign.center),
         ]))),
         Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: FilledButton.icon(
           onPressed: !enabled || (report.rows.isEmpty && report.returns.isEmpty) ? null : () => output(report),
@@ -213,11 +214,11 @@ class _InvoiceMovementReportPageState extends State<InvoiceMovementReportPage> {
             return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               Text('${index + 1}. فاتورة ${row.number}${row.returned ? ' • مرتجعة بالكامل' : ''}'),
               Text(row.customer, style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
-              Text(movementReportDate(row.date)),
-              Text('الإجمالي: ${movementReportMoney(row.totalCents)}'),
-              Text('المدفوع: ${movementReportMoney(row.paidCents)} • الباقي: ${movementReportMoney(row.dueCents)}'),
+              Text(movementReportDate(row.date),style:const TextStyle(color:Colors.redAccent)),
+              Text('الإجمالي: ${movementReportMoney(row.totalCents)}',style:const TextStyle(color:Colors.lightBlueAccent)),
+              Text('المدفوع: ${movementReportMoney(row.paidCents)} • الباقي: ${movementReportMoney(row.dueCents)}',style:const TextStyle(color:Colors.lightBlueAccent)),
               Wrap(spacing: 8, children: [
-                TextButton.icon(onPressed: enabled ? () => showInvoiceOverview(context, widget.type, row.id) : null,
+                TextButton.icon(onPressed: () => showInvoiceOverview(context, widget.type, row.id),
                   icon: const Icon(Icons.receipt_long), label: const Text('عرض الفاتورة')),
                 TextButton.icon(onPressed: enabled ? () => output(report, row: row) : null,
                   icon: const Icon(Icons.share), label: const Text('إرسال هذه الفاتورة PDF')),
@@ -411,7 +412,7 @@ class InvoiceOverviewContent extends StatelessWidget {
     final items=((data['items'] as List?) ?? []).map((x)=>Map<String,dynamic>.from(x as Map)).toList();
     if(items.isEmpty)items.add({'productName':data['productName'] ?? '', 'quantity':data['quantity'] ?? 0,
       sales ? 'unitPrice' : 'unitCost':data[sales ? 'unitPrice' : 'unitCost'] ?? 0,'lineTotal':data['total'] ?? 0});
-    String money(dynamic v)=>((v as num?) ?? 0).toStringAsFixed(2);
+  String money(dynamic v)=>((v as num?) ?? 0).toStringAsFixed(2);
     final paid=(data['paid'] as num?) ?? (sales ? (data['total'] as num?) ?? 0 : 0);
     final receipt=(data['receiptPaid'] as num?) ?? 0;
     final due=(data['due'] as num?) ?? ((data['total'] as num?) ?? 0)-paid;
@@ -419,25 +420,25 @@ class InvoiceOverviewContent extends StatelessWidget {
       Text(name.isEmpty ? (sales ? 'بدون عميل مسجل' : 'مورد غير مسمى') : name,
         style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold,fontSize:18)),
       Text('رقم الفاتورة: ${invoiceDisplayNumber(type,id,data)}'),
-      Text(formatDate(data['createdAt'])),
+      Text(formatDate(data['createdAt']),style:const TextStyle(color:Colors.redAccent)),
       for(var i=0;i<items.length;i++)Card(child:Padding(padding:const EdgeInsets.all(10),
         child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-          Text('${i+1}. ${items[i]['productName'] ?? ''}',style:const TextStyle(fontWeight:FontWeight.bold)),
-          Text('العدد: ${items[i]['quantity'] ?? 0} • السعر: ${money(items[i][sales ? 'unitPrice' : 'unitCost'])}'),
-          Text('إجمالي البند: ${money(items[i]['lineTotal'] ?? (((items[i]['quantity'] as num?) ?? 0) * ((items[i][sales ? 'unitPrice' : 'unitCost'] as num?) ?? 0)))} ج.م'),
+          Text('${i+1}. ${items[i]['productName'] ?? ''}',style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)),
+          Text('العدد: ${items[i]['quantity'] ?? 0} • السعر: ${money(items[i][sales ? 'unitPrice' : 'unitCost'])}',style:const TextStyle(color:Colors.lightBlueAccent)),
+          Text('إجمالي البند: ${money(items[i]['lineTotal'] ?? (((items[i]['quantity'] as num?) ?? 0) * ((items[i][sales ? 'unitPrice' : 'unitCost'] as num?) ?? 0)))} ج.م',style:const TextStyle(color:Colors.lightBlueAccent)),
         ]))),
-      Text('الإجمالي: ${money(data['total'])} ج.م',style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
-      Text('المدفوع مع السداد المرتبط: ${money(paid+receipt)} ج.م'),
-      Text(data['status']=='returned' ? 'الفاتورة مرتجعة بالكامل' : 'باقي الفاتورة: ${money(due-receipt)} ج.م'),
+      Text('الإجمالي: ${money(data['total'])} ج.م',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
+      Text('المدفوع مع السداد المرتبط: ${money(paid+receipt)} ج.م',style:const TextStyle(color:Colors.lightBlueAccent)),
+      Text(data['status']=='returned' ? 'الفاتورة مرتجعة بالكامل' : 'باقي الفاتورة: ${money(due-receipt)} ج.م',style:const TextStyle(color:Colors.lightBlueAccent)),
     ]);
   }
 }
 Future<void> showInvoiceOverview(BuildContext context,String type,String id) async {
   try {
-    final row=await db.collection(type).doc(id).get(const GetOptions(source:Source.server));
+    final row=await db.collection(type).doc(id).get();
     if(!row.exists || !visibleAfterReset(row.data()!))throw StateError('الفاتورة غير متاحة');
-    if(row.metadata.hasPendingWrites)throw StateError('انتظر تأكيد الفاتورة من الخادم');
-    final data=await numberedInvoiceData(type,id,row.data()!);
+    final cached=row.metadata.isFromCache||row.metadata.hasPendingWrites;
+    final data=row.data()!;
     if(!context.mounted)return;
     final choice=await showDialog<String>(context:context,builder:(c)=>Directionality(textDirection:TextDirection.rtl,
       child:AlertDialog(title:Text(type=='sales' ? 'فاتورة المبيعات' : 'فاتورة المشتريات'),
@@ -451,7 +452,8 @@ Future<void> showInvoiceOverview(BuildContext context,String type,String id) asy
             onError:(context,error)=>Center(child:Text('تعذر إنشاء معاينة الفاتورة: $error',textAlign:TextAlign.center)),
           )),
         actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إغلاق')),
-          FilledButton.icon(onPressed:()=>Navigator.pop(c,'share'),icon:const Icon(Icons.share),label:const Text('إرسال PDF'))])));
+          if(cached)const Padding(padding:EdgeInsets.all(8),child:Text('عرض محلي فقط؛ الإرسال بعد الاتصال',style:TextStyle(color:Colors.orangeAccent)))
+          else FilledButton.icon(onPressed:()=>Navigator.pop(c,'share'),icon:const Icon(Icons.share),label:const Text('إرسال PDF'))])));
     if(choice=='share' && context.mounted)await exportInvoicePdf(context,type,id,data);
   } catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'$e',title:'تعذر عرض الفاتورة',button:'رجوع');}
 }

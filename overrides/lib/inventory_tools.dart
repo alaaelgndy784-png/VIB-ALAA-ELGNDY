@@ -171,7 +171,7 @@ class InvoiceReturnPage extends StatefulWidget {
 class _InvoiceReturnPageState extends State<InvoiceReturnPage> {
   final number=TextEditingController();
   List<QueryDocumentSnapshot<Map<String,dynamic>>> invoices=[];
-  String error='';bool loading=false;
+  String error='';bool loading=false,offlineResults=false;
   late DateTime fromDate,toDate;
   bool get sales=>widget.type=='sales';
   @override void initState(){super.initState();final today=DateTime.now();fromDate=DateTime(today.year,today.month,today.day);toDate=fromDate;}
@@ -183,7 +183,7 @@ class _InvoiceReturnPageState extends State<InvoiceReturnPage> {
     setState(()=>start?fromDate=DateTime(value.year,value.month,value.day):toDate=DateTime(value.year,value.month,value.day));
   }
   Future<void> find() async {
-    setState((){loading=true;error='';invoices=[];});
+    setState((){loading=true;error='';invoices=[];offlineResults=false;});
     try {
       if(toDate.isBefore(fromDate))throw StateError('تاريخ النهاية لازم يكون بعد تاريخ البداية أو نفس اليوم');
       final key=number.text.trim();
@@ -191,14 +191,14 @@ class _InvoiceReturnPageState extends State<InvoiceReturnPage> {
       final endExclusive=DateTime(toDate.year,toDate.month,toDate.day+1);
       final result=await query.where('createdAt',isGreaterThanOrEqualTo:Timestamp.fromDate(fromDate))
         .where('createdAt',isLessThan:Timestamp.fromDate(endExclusive)).orderBy('createdAt',descending:true)
-        .limit(1000).get(const GetOptions(source:Source.server));
+        .limit(1000).get();
       var rows=result.docs.where((d)=>visibleAfterReset(d.data())).toList();
       if(key.isNotEmpty){
         final resolved=await resolveInvoiceNumber(widget.type,key);
         rows=rows.where((d)=>d.id==key||d.id==resolved||'${d.data()['invoiceNumber']??''}'==key||'${d.data()['internalNumber']??''}'==key).toList();
       }
-      if(mounted)setState((){invoices=rows;if(result.docs.length==1000)error='تم عرض 1000 فاتورة كحد أقصى؛ ضيّق الفترة إذا لم تظهر الفاتورة المطلوبة.';});
-    }catch(e){if(mounted)setState(()=>error='تعذر تحميل الفواتير: $e');}
+      if(mounted)setState((){invoices=rows;offlineResults=result.metadata.isFromCache||result.metadata.hasPendingWrites;if(result.docs.length==1000)error='تم عرض 1000 فاتورة كحد أقصى؛ ضيّق الفترة إذا لم تظهر الفاتورة المطلوبة.';});
+    }catch(e){if(mounted)setState(()=>error='لا توجد فواتير محفوظة لهذه الفترة. اتصل بالإنترنت وحاول مرة أخرى.');}
     finally{if(mounted)setState(()=>loading=false);}
   }
   Future<void> openReturnOptions(String id,Map<String,dynamic> data) async {
@@ -218,15 +218,21 @@ class _InvoiceReturnPageState extends State<InvoiceReturnPage> {
       FilledButton.icon(onPressed:loading?null:find,icon:const Icon(Icons.search),label:Text(number.text.trim().isEmpty?'عرض الفواتير في الفترة':'بحث في الفترة')),
     ])))),
     if(error.isNotEmpty)Text(error,style:const TextStyle(color:Colors.redAccent)),
+    if(offlineResults)const Padding(padding:EdgeInsets.all(6),child:Text('النتائج محفوظة على الجهاز. يمكنك عرضها، لكن تسجيل المرتجع يحتاج اتصالًا بالإنترنت.',style:TextStyle(color:Colors.orangeAccent),textAlign:TextAlign.center)),
     if(loading)const CircularProgressIndicator(),
     Expanded(child:ListView(children:invoices.map((d){
       final data=d.data(),partial=(data['partialReturnTotal'] as num?)?.toDouble()??0;
       final state=data['status']=='returned'?'تم إرجاعها بالكامل':partial>0?'تم تسجيل مرتجع أصناف بقيمة ${partial.toStringAsFixed(2)}':'اضغط لاختيار الفاتورة ونوع المرتجع';
       return Card(child:ListTile(
-        title:Text('فاتورة ${invoiceDisplayNumber(widget.type,d.id,data)}'),
-        subtitle:Text('${data[sales?'customerName':'supplierName'] ?? ''}\n${formatDate(data['createdAt'])} • الإجمالي: ${data['total']}\n$state'),
+        title:Text('فاتورة ${invoiceDisplayNumber(widget.type,d.id,data)}',style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)),
+        subtitle:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+          Text('${data[sales?'customerName':'supplierName'] ?? ''}',style:const TextStyle(color:Colors.greenAccent)),
+          Text(formatDate(data['createdAt']),style:const TextStyle(color:Colors.redAccent)),
+          Text('الإجمالي: ${data['total']}',style:const TextStyle(color:Colors.lightBlueAccent)),
+          Text(state),
+        ]),
         trailing:const Icon(Icons.chevron_left),
-        onTap:()=>openReturnOptions(d.id,data),
+        onTap:offlineResults?null:()=>openReturnOptions(d.id,data),
       ));
     }).toList())),
   ]);

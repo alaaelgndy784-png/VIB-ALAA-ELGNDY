@@ -90,13 +90,13 @@ class _AccountStatementPageState extends State<AccountStatementPage> {
       final r=snapshot.data!;
       return Column(children:[
         Card(child:Padding(padding:const EdgeInsets.all(10),child:Column(children:[
-          Text(r.name,style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
+          Text(r.name,style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)),
           if(r.fromCache||r.pendingWrites)Text(r.pendingWrites?'بيانات محلية بها تغييرات تنتظر المزامنة':'كشف من النسخة المحلية؛ اتصل بالإنترنت لتأكيد الأرقام والطباعة',
             style:const TextStyle(color:Colors.orangeAccent,fontWeight:FontWeight.bold),textAlign:TextAlign.center),
-          Text('رصيد أول المدة: ${receiptReportMoney(r.opening)}'),
-          Text('زيادة الدين: ${receiptReportMoney(r.increase)} • تخفيض الدين: ${receiptReportMoney(r.decrease)}'),
-          Text('رصيد آخر المدة: ${receiptReportMoney(r.closing)}',style:const TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold)),
-          Text('الرصيد الحالي: ${receiptReportMoney(r.current)}'),
+          Text('رصيد أول المدة: ${receiptReportMoney(r.opening)}',style:const TextStyle(color:Colors.lightBlueAccent)),
+          Text('زيادة الدين: ${receiptReportMoney(r.increase)} • تخفيض الدين: ${receiptReportMoney(r.decrease)}',style:const TextStyle(color:Colors.lightBlueAccent)),
+          Text('رصيد آخر المدة: ${receiptReportMoney(r.closing)}',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
+          Text('الرصيد الحالي: ${receiptReportMoney(r.current)}',style:const TextStyle(color:Colors.lightBlueAccent)),
           Wrap(spacing:8,runSpacing:6,alignment:WrapAlignment.center,children:[
             OutlinedButton.icon(onPressed:r.fromCache||r.pendingWrites?null:()=>printReport(r),icon:const Icon(Icons.picture_as_pdf),label:const Text('طباعة / حفظ PDF')),
             OutlinedButton.icon(onPressed:r.fromCache||r.pendingWrites?null:()=>printReport(r,thermal:true),icon:const Icon(Icons.print),label:const Text('طباعة 80 مم')),

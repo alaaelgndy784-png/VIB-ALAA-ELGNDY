@@ -333,7 +333,7 @@ class PendingSalesPage extends StatelessWidget {
   const PendingSalesPage({super.key,required this.owner});
   @override Widget build(BuildContext context)=>StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
     stream:pendingSalesQuery(owner).snapshots(),builder:(context,snapshot) {
-      if(snapshot.hasError) return const Center(child:Text('تعذر تحميل الطلبات. تأكد من الاتصال وتحديث قواعد الحماية.'));
+      if(snapshot.hasError && !snapshot.hasData) return const Center(child:Text('لا توجد طلبات محفوظة على الجهاز. اتصل بالإنترنت لتحميلها أول مرة.'));
       if(!snapshot.hasData) return const Center(child:CircularProgressIndicator());
       final rows=snapshot.data!.docs.where((d)=>visibleAfterReset(d.data()) && pendingSaleIsVisible(d.data())).toList()
         ..sort((a,b) {
@@ -346,8 +346,15 @@ class PendingSalesPage extends StatelessWidget {
         if(snapshot.data!.metadata.isFromCache)const Text('بيانات محفوظة على الجهاز؛ الحالة تتأكد عند الاتصال'),
         Expanded(child:rows.isEmpty?const Center(child:Text('لا توجد طلبات')):ListView(children:[for(final row in rows)
           Card(child:ListTile(leading:Icon(row.data()['status']=='approved'?Icons.check_circle:row.data()['status']=='rejected'?Icons.cancel:Icons.hourglass_top,color:gold),
-            title:Text('${row.data()['customerName'] ?? ''} • ${row.data()['total'] ?? 0} ج.م'),
-            subtitle:Text('${owner ? '${row.data()['employeeName'] ?? ''} • ' : ''}${row.data()['managerOffline']==true?'فاتورة مدير تنتظر المزامنة':'${pendingSaleStatus(row.data()['status'])}'} • ${formatDate(row.data()['createdAt'])}'),
+            title:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+              Text('${row.data()['customerName'] ?? ''}',style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)),
+              Text('${row.data()['total'] ?? 0} ج.م',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
+            ]),
+            subtitle:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+              if(owner)Text('${row.data()['employeeName'] ?? ''}',style:const TextStyle(color:Colors.greenAccent)),
+              Text(row.data()['managerOffline']==true?'فاتورة مدير تنتظر المزامنة':'${pendingSaleStatus(row.data()['status'])}'),
+              Text(formatDate(row.data()['createdAt']),style:const TextStyle(color:Colors.redAccent)),
+            ]),
             trailing:owner && row.data()['status']=='rejected' ? IconButton(tooltip:'مسح الطلب من التطبيقين',icon:const Icon(Icons.delete_outline,color:Colors.redAccent),onPressed:()=>removeRejectedPendingSale(context,row.reference)) : null,
             onTap:()=>reviewPendingSale(context,row.reference,owner)))])),
       ]);
@@ -426,7 +433,7 @@ class _PendingSaleInvoiceDialogState extends State<PendingSaleInvoiceDialog> {
     final total=items.fold<double>(0,(sum,x)=>sum+((x['unitPrice'] as num?)?.toDouble() ?? 0)*((x['quantity'] as num?)?.toInt() ?? 0));
     final paid=(data['paid'] as num?)?.toDouble() ?? 0;
     final quantity=items.fold<int>(0,(sum,x)=>sum+((x['quantity'] as num?)?.toInt() ?? 0));
-    Widget money(String label,double value)=>Text('$label: ${value.toStringAsFixed(2)} ج.م',style:const TextStyle(color:Colors.white,fontWeight:FontWeight.bold));
+    Widget money(String label,double value)=>Text('$label: ${value.toStringAsFixed(2)} ج.م',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold));
     return Directionality(textDirection:TextDirection.rtl,child:Dialog(
       backgroundColor:const Color(0xFF080808),insetPadding:const EdgeInsets.symmetric(horizontal:6,vertical:12),
       shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(16),side:const BorderSide(color:gold)),
@@ -435,8 +442,8 @@ class _PendingSaleInvoiceDialogState extends State<PendingSaleInvoiceDialog> {
         Expanded(child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
           Container(color:const Color(0xFF282215),padding:const EdgeInsets.all(8),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
             Text(pendingSaleStatus(data['status']),style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
-            Text('العميل: ${data['customerName'] ?? ''}'),Text('الموظف: ${data['employeeName'] ?? ''}'),
-            Text('التاريخ: ${formatDate(data['createdAt'])}'),
+            Text('العميل: ${data['customerName'] ?? ''}',style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold)),Text('الموظف: ${data['employeeName'] ?? ''}',style:const TextStyle(color:Colors.greenAccent)),
+            Text('التاريخ: ${formatDate(data['createdAt'])}',style:const TextStyle(color:Colors.redAccent)),
             if(data['status']!='approved')const Text('رقم الفاتورة: يُخصص عند الاعتماد'),
             Text(data['credit']==true?'طريقة الدفع: آجل':'طريقة الدفع: نقدي'),
           ])),
@@ -472,7 +479,7 @@ class _PendingSaleInvoiceDialogState extends State<PendingSaleInvoiceDialog> {
         ]))),
         Container(width:double.infinity,color:const Color(0xFF282215),padding:const EdgeInsets.all(8),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
           Text('الأصناف: ${items.length} • العدد: $quantity',style:const TextStyle(color:Colors.white,fontSize:12)),
-          Text('الإجمالي: ${total.toStringAsFixed(2)} ج.م',style:const TextStyle(color:gold,fontSize:20,fontWeight:FontWeight.bold)),
+          Text('الإجمالي: ${total.toStringAsFixed(2)} ج.م',style:const TextStyle(color:Colors.lightBlueAccent,fontSize:20,fontWeight:FontWeight.bold)),
           Wrap(spacing:16,runSpacing:4,children:[money('المدفوع',paid),money('المتبقي',total-paid)]),
         ])),
         const SizedBox(height:6),Wrap(alignment:WrapAlignment.end,spacing:6,runSpacing:4,children:actions),

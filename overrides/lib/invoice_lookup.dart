@@ -165,24 +165,24 @@ class _InvoiceEditSearchDialogState extends State<_InvoiceEditSearchDialog> {
   late final Future<QuerySnapshot<Map<String,dynamic>>> invoices=load();
   Future<QuerySnapshot<Map<String,dynamic>>> load() async {
     await prepareInvoiceSerials(widget.type);
-    final result=await db.collection(widget.type).orderBy('createdAt',descending:true).get(const GetOptions(source:Source.server));
-    if(result.metadata.isFromCache || result.metadata.hasPendingWrites) throw StateError('انتظر تأكيد الفواتير من الخادم');
-    return result;
+    return db.collection(widget.type).orderBy('createdAt',descending:true).get();
   }
   @override Widget build(BuildContext context)=>InvoiceEditSearchFrame(type:widget.type,search:widget.search,
     onChanged:(_)=>setState((){}),results:FutureBuilder<QuerySnapshot<Map<String,dynamic>>>(future:invoices,builder:(context,snapshot){
-      if(snapshot.hasError)return SingleChildScrollView(child:Text('تعذر تحميل الفواتير: ${snapshot.error}'));
+      if(snapshot.hasError && !snapshot.hasData)return const Center(child:Text('لا توجد فواتير محفوظة على الجهاز. اتصل بالإنترنت لتحميلها أول مرة.'));
       if(!snapshot.hasData)return const Center(child:CircularProgressIndicator());
       final rows=snapshot.data!.docs.where((d)=>visibleAfterReset(d.data()) && d.data()['status']=='completed' && invoiceMatchesEditSearch(widget.type,d.id,d.data(),widget.search.text)).toList();
-      if(rows.isEmpty)return const Center(child:Text('لا توجد فاتورة مطابقة للاسم أو الرقم'));
-      return ListView.builder(itemCount:rows.length,itemBuilder:(context,i){
+      final cached=snapshot.data!.metadata.isFromCache || snapshot.data!.metadata.hasPendingWrites;
+      return Column(children:[
+        if(cached)const Padding(padding:EdgeInsets.all(6),child:Text('نتائج محفوظة على الجهاز. افتح الفاتورة للتعديل بعد رجوع الإنترنت.',style:TextStyle(color:Colors.orangeAccent),textAlign:TextAlign.center)),
+        Expanded(child:rows.isEmpty?const Center(child:Text('لا توجد فاتورة مطابقة للاسم أو الرقم')):ListView.builder(itemCount:rows.length,itemBuilder:(context,i){
         final row=rows[i],data=row.data(),sales=widget.type=='sales';
         final blocked=invoiceHasLinkedVoucher(data);
         return InvoiceEditResultCard(key:ValueKey(row.id),party:'${data[sales ? 'customerName' : 'supplierName'] ?? ''}',
           number:invoiceDisplayNumber(widget.type,row.id,data),date:formatDate(data['createdAt']),
-          amount:((data['total'] as num?) ?? 0).toStringAsFixed(2),blocked:blocked,
+          amount:((data['total'] as num?) ?? 0).toStringAsFixed(2),blocked:blocked,readOnly:cached,
           onOpen:()=>Navigator.pop(context,row.id));
-      });
+      }))]);
     }));
 }
 
@@ -218,24 +218,26 @@ class InvoiceEditSearchFrame extends StatelessWidget {
 
 class InvoiceEditResultCard extends StatelessWidget {
   final String party,number,date,amount;
-  final bool blocked;
+  final bool blocked,readOnly;
   final VoidCallback onOpen;
   const InvoiceEditResultCard({super.key,required this.party,required this.number,required this.date,
-    required this.amount,required this.blocked,required this.onOpen});
+    required this.amount,required this.blocked,required this.onOpen,this.readOnly=false});
   @override Widget build(BuildContext context)=>Card(margin:const EdgeInsets.symmetric(vertical:3),
-    child:InkWell(onTap:blocked ? null : onOpen,child:Padding(padding:const EdgeInsets.all(9),
+    child:InkWell(onTap:blocked || readOnly ? null : onOpen,child:Padding(padding:const EdgeInsets.all(9),
       child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-        Row(children:[Icon(blocked ? Icons.lock_outline : Icons.receipt_long_outlined,size:19,color:gold),
+        Row(children:[Icon(blocked || readOnly ? Icons.lock_outline : Icons.receipt_long_outlined,size:19,color:gold),
           const SizedBox(width:6),Expanded(child:Text(party.isEmpty ? 'بدون اسم مسجل' : party,
             maxLines:2,overflow:TextOverflow.ellipsis,style:const TextStyle(color:Colors.greenAccent,fontSize:14,fontWeight:FontWeight.bold)))]),
         const SizedBox(height:4),
         Wrap(spacing:12,runSpacing:2,children:[
           Text('رقم الفاتورة: $number',maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12)),
-          Text('$amount ج.م',maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(color:gold,fontSize:12,fontWeight:FontWeight.bold)),
+          Text('$amount ج.م',maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(color:Colors.lightBlueAccent,fontSize:12,fontWeight:FontWeight.bold)),
         ]),
-        Text(date,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:11)),
+        Text(date,maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:11,color:Colors.redAccent)),
         if(blocked) const Text('مرتبطة بسند — التعديل ممنوع',maxLines:2,overflow:TextOverflow.ellipsis,
           style:TextStyle(fontSize:11,color:Colors.redAccent)),
+        if(readOnly) const Text('البيانات محفوظة محليًا؛ التعديل يحتاج اتصالًا بالإنترنت',maxLines:2,overflow:TextOverflow.ellipsis,
+          style:TextStyle(fontSize:11,color:Colors.orangeAccent)),
       ]))));
 }
 
