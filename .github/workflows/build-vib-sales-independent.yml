@@ -81,9 +81,9 @@ jobs:
           if [ "$APP" = manager ]; then python3 vib_overrides/apply_manager_offline_presentation.py lib/main.dart; fi
           python3 vib_overrides/prepare_cheque_notifications.py
 
-      - name: Prepare \${{ matrix.app }} app
+      - name: Prepare ${{ matrix.app }} app
         env:
-          APP: \${{ matrix.app }}
+          APP: ${{ matrix.app }}
         working-directory: VIB-SALES-INDEPENDENT
         run: |
           APP_ID='com.alaa.vibsales.staffscan'
