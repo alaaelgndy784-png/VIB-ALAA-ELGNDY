@@ -128,8 +128,6 @@ jobs:
           activity.write_text(text)
           source = Path('lib/main.dart')
           text = source.read_text()
-          if app == 'manager':
-              text = re.sub(r"'role':\s*'pending',\s*'active':\s*false", "'role': 'owner', 'active': true", text)
           source.write_text(text)
           PY
           if [ -d "assets/icons/$APP" ]; then cp -r "assets/icons/$APP"/mipmap-* android/app/src/main/res/; fi
