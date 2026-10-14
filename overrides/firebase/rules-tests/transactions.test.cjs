@@ -125,14 +125,17 @@ test('owner additions update same invoice with revision and journal',async()=>{
   await assertSucceeds(batch.commit());
   await assertFails(setDoc(doc(db,'invoiceEdits/edit'),{actorId:'owner'},{merge:true}));
 });
-test('employee receipt still reduces customer balance and credits cash atomically',async()=>{
+test('employee cannot post a receipt before manager approval',async()=>{
   const db=env.authenticatedContext('staff').firestore(),b=writeBatch(db),ts=serverTimestamp();
   b.set(doc(db,'receipts/r'),{customerId:'customer',customerName:'Customer',customerPhone:'010',amount:20,balanceBefore:100,balanceAfter:80,
     cashBefore:500,cashAfter:520,actorId:'staff',actorName:'Staff',branchId:'staffbranch',note:'',createdAt:ts,customerMovementId:'rc',cashMovementId:'rk'});
   b.update(doc(db,'customers/customer'),{balance:80,lastReceiptId:'r',updatedAt:ts});
   b.update(doc(db,'settings/cash'),{balance:520,lastReceiptId:'r',updatedAt:ts});
   for(const cash of [false,true])b.set(doc(db,'accountMovements/'+(cash?'rk':'rc')),{accountType:cash?'cash':'customers',accountId:'customer',accountName:'Customer',kind:cash?'customerCollection':'collection',amount:20,...(cash?{delta:20}:{}),balanceBefore:cash?500:100,balanceAfter:cash?520:80,referenceId:'r',reason:'',actorId:'staff',branchId:'staffbranch',createdAt:ts});
-  await assertSucceeds(b.commit());
+  await assertFails(b.commit());
+  assert.equal((await getDoc(doc(db,'customers/customer'))).data().balance,100);
+  assert.equal((await getDoc(doc(db,'settings/cash'))).data().balance,500);
+  assert.equal((await getDoc(doc(db,'receipts/r'))).exists(),false);
 });
 test('replaying saved sale cannot deduct stock twice',async()=>{
   const db=env.authenticatedContext('staff').firestore();await saleBatch(db,{paid:10});
@@ -254,7 +257,7 @@ test('owner cannot update partial-return summary without a matching return recor
  await assertFails(setDoc(doc(db,'sales/editable'),{partialReturnQuantities:{'0':1},partialReturnTotal:12.35,
   partialCashRefund:0,partialDebtReduction:12.35,lastPartialReturnId:'missing'},{merge:true}));
 });
-test('staff receipt links invoice atomically and prevents later edits',async()=>{
+test('staff cannot link a receipt to an invoice before approval',async()=>{
  await seedEditableSale();
  const db=env.authenticatedContext('staff').firestore(),b=writeBatch(db),ts=serverTimestamp();
  b.set(doc(db,'receipts/linked'),{invoiceId:'editable',customerId:'customer',customerName:'Customer',customerPhone:'010',amount:20,balanceBefore:100,balanceAfter:80,
@@ -263,8 +266,10 @@ test('staff receipt links invoice atomically and prevents later edits',async()=>
  b.update(doc(db,'settings/cash'),{balance:520,lastReceiptId:'linked',updatedAt:ts});
  b.update(doc(db,'sales/editable'),{receiptId:'linked',receiptPaid:20});
  for(const cash of [false,true])b.set(doc(db,'accountMovements/'+(cash?'lk':'lc')),{accountType:cash?'cash':'customers',accountId:'customer',accountName:'Customer',kind:cash?'customerCollection':'collection',amount:20,...(cash?{delta:20}:{}),balanceBefore:cash?500:100,balanceAfter:cash?520:80,referenceId:'linked',reason:'',actorId:'staff',branchId:'staffbranch',createdAt:ts});
- await assertSucceeds(b.commit());
- await assertFails(editSaleBatch(env.authenticatedContext('owner').firestore()));
+ await assertFails(b.commit());
+ await assert.equal((await getDoc(doc(db,'sales/editable'))).data().receiptId,undefined);
+ await assert.equal((await getDoc(doc(db,'customers/customer'))).data().balance,100);
+ await assert.equal((await getDoc(doc(db,'settings/cash'))).data().balance,500);
 });
 test('orphan invoice receipt link is denied',async()=>{
  await seedEditableSale();
@@ -459,9 +464,23 @@ function datedReceipt(db,date,movementDate=date,createdAt=serverTimestamp()){
  for(const cash of [false,true])b.set(doc(db,'accountMovements/'+(cash?'rk':'rc')),{accountType:cash?'cash':'customers',accountId:'customer',accountName:'Customer',kind:cash?'customerCollection':'collection',amount:20,...(cash?{delta:20}:{}),balanceBefore:cash?500:100,balanceAfter:cash?520:80,referenceId:'r',reason:'',actorId:'staff',branchId:'staffbranch',createdAt:ts,receiptDate:movementDate});
  return b.commit();
 }
+test('employee submits a receipt request without financial effect; owner may review it',async()=>{
+ const staff=env.authenticatedContext('staff').firestore(),owner=env.authenticatedContext('owner').firestore();
+ const date=new Date('2026-10-02T12:00:00Z');
+ const request={id:'receipt-request',employeeId:'staff',actorName:'Staff',branchId:'staffbranch',
+  customerId:'customer',customerName:'Customer',customerPhone:'010',amount:20,receiptDate:date,
+  receiptNumber:'VIB-RC-20261002-ABC123',paymentMethod:'نقدي',note:'Test receipt',
+  status:'pending',createdAt:serverTimestamp(),requestKey:'receipt-request-key'};
+ await assertSucceeds(setDoc(doc(staff,'pendingReceipts/receipt-request'),request));
+ assert.equal((await getDoc(doc(staff,'customers/customer'))).data().balance,100);
+ assert.equal((await getDoc(doc(staff,'settings/cash'))).data().balance,500);
+ const pending=doc(owner,'pendingReceipts/receipt-request');
+ await assertSucceeds(setDoc(pending,{status:'rejected',reviewedBy:'owner',reviewedAt:serverTimestamp(),rejectionReason:'Review test'},{merge:true}));
+ await assertFails(setDoc(pending,{status:'approved',reviewedBy:'owner',reviewedAt:serverTimestamp()},{merge:true}));
+});
 for(const date of ['2001-01-01T12:00:00Z','2030-12-31T20:00:00Z'])test('chosen receipt date '+date,async()=>{
- const db=env.authenticatedContext('staff').firestore();await assertSucceeds(datedReceipt(db,new Date(date)));
- assert.equal((await getDoc(doc(db,'receipts/r'))).data().receiptDate.toDate().toISOString(),new Date(date).toISOString());
+ const db=env.authenticatedContext('staff').firestore();await assertFails(datedReceipt(db,new Date(date)));
+ assert.equal((await getDoc(doc(db,'receipts/r'))).exists(),false);
 });
 for(const date of ['bad date',new Date('1999-12-31'),new Date('2101-01-01')])test('invalid receipt date '+date,async()=>assertFails(datedReceipt(env.authenticatedContext('staff').firestore(),date)));
 test('receipt ledger date mismatch denied',async()=>assertFails(datedReceipt(env.authenticatedContext('staff').firestore(),new Date('2026-10-02'),new Date('2026-10-03'))));
