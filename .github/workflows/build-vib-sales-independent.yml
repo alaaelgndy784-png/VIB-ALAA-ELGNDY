@@ -131,7 +131,8 @@ jobs:
           source.write_text(text)
           PY
           if [ -d "assets/icons/$APP" ]; then cp -r "assets/icons/$APP"/mipmap-* android/app/src/main/res/; fi
-          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do cp "../overrides/assets/$APP-icon.png" "android/app/src/main/res/mipmap-$density/ic_launcher.png"; done
+          base64 -d ../overrides/assets/vib-launcher.png.b64 > /tmp/vib-launcher.png
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do cp /tmp/vib-launcher.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"; done
           cp firebase/google-services.json android/app/google-services.json
           flutter pub get
 
