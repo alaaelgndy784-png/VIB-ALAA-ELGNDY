@@ -787,8 +787,6 @@ class DashboardActionTile extends StatelessWidget {
       borderRadius: BorderRadius.circular(16),
       onTap: onTap,
       child: Ink(
-        constraints: const BoxConstraints(minHeight: 66),
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
         decoration: BoxDecoration(
           gradient: const LinearGradient(
             begin: Alignment.topLeft,
@@ -799,10 +797,14 @@ class DashboardActionTile extends StatelessWidget {
           border: Border.all(color: accent.withValues(alpha: .58), width: 1),
           boxShadow: [BoxShadow(color: accent.withValues(alpha: .07), blurRadius: 10, spreadRadius: 0)],
         ),
-        child: Row(children: [
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 66),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+            child: Row(children: [
           Container(
-            width: 50,
-            height: 50,
+            width: 48,
+            height: 48,
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topLeft,
@@ -813,7 +815,7 @@ class DashboardActionTile extends StatelessWidget {
               border: Border.all(color: accent.withValues(alpha: .68), width: 1),
               boxShadow: [BoxShadow(color: accent.withValues(alpha: .10), blurRadius: 8)],
             ),
-            child: Icon(icon, color: accent, size: 25),
+            child: Icon(icon, color: accent, size: 24),
           ),
           const SizedBox(width: 8),
           Expanded(
@@ -828,7 +830,9 @@ class DashboardActionTile extends StatelessWidget {
           ),
           const SizedBox(width: 2),
           Icon(Icons.chevron_left, color: const Color(0xFFFFD477), size: 20),
-        ]),
+            ]),
+          ),
+        ),
       ),
     ),
   );
