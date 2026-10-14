@@ -433,7 +433,6 @@ service cloud.firestore {
       allow create: if owner() && receiptInvoiceValid(request.resource.data, id) && validReceiptDate(request.resource.data);
       allow get: if employee() && (!exists(/databases/$(database)/documents/receipts/$(id)) || resource.data.actorId == request.auth.uid);
       allow list: if employee() && resource.data.actorId == request.auth.uid;
-      allow create: if employee() && validReceipt(id);
       allow update, delete: if false;
     }
     match /voucherCancellations/{id} {
@@ -570,6 +569,34 @@ service cloud.firestore {
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['cashPaidPosted','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
         && resource.data.status == 'completed' && request.resource.data.revision == resource.data.get('revision', 0) + 1
         && request.resource.data.lastEditedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
+      allow delete: if false;
+    }
+    match /pendingReceipts/{id} {
+      allow get: if owner() || (employee() && (!exists(/databases/$(database)/documents/pendingReceipts/$(id)) || resource.data.employeeId == request.auth.uid));
+      allow list: if owner() || (employee() && resource.data.employeeId == request.auth.uid);
+      allow create: if employee()
+        && request.resource.data.keys().hasOnly(['id','employeeId','actorName','branchId','customerId','customerName','customerPhone','amount','receiptDate','receiptNumber','paymentMethod','note','status','createdAt','requestKey'])
+        && request.resource.data.id == id && request.resource.data.employeeId == request.auth.uid
+        && request.resource.data.actorName == profile().name && request.resource.data.branchId == branch()
+        && request.resource.data.customerId is string && request.resource.data.customerId.size() > 0
+        && request.resource.data.customerName is string && request.resource.data.customerName.size() > 0
+        && request.resource.data.customerPhone is string
+        && request.resource.data.amount is number && request.resource.data.amount > 0
+        && request.resource.data.receiptDate is timestamp
+        && request.resource.data.receiptDate >= timestamp.date(2000,1,1)
+        && request.resource.data.receiptDate < timestamp.date(2101,1,1)
+        && request.resource.data.receiptNumber is string && request.resource.data.receiptNumber.size() <= 80
+        && request.resource.data.paymentMethod is string && request.resource.data.paymentMethod.size() <= 80
+        && request.resource.data.note is string && request.resource.data.note.size() <= 2000
+        && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time
+        && request.resource.data.requestKey is string && request.resource.data.requestKey.size() <= 5000;
+      allow update: if owner() && resource.data.status == 'pending'
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','rejectionReason','reviewedBy','reviewedAt','approvedByName'])
+        && request.resource.data.status in ['approved','rejected']
+        && request.resource.data.reviewedBy == request.auth.uid && request.resource.data.reviewedAt == request.time
+        && ((request.resource.data.status == 'approved' && request.resource.data.get('rejectionReason','') == '')
+          || (request.resource.data.status == 'rejected' && request.resource.data.rejectionReason is string
+            && request.resource.data.rejectionReason.size() > 0 && request.resource.data.rejectionReason.size() <= 500));
       allow delete: if false;
     }
     // Drafts have no financial effect. Only an owner can approve or reject them.

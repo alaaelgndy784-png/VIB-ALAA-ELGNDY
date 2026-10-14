@@ -44,6 +44,7 @@ part 'chat_alerts.dart';
 
 part 'invoice_editor.dart';
 part 'pending_sales.dart';
+part 'pending_receipts.dart';
 part 'product_import.dart';
 part 'inventory_tools.dart';
 part 'online_payments.dart';
@@ -3689,6 +3690,7 @@ class ReceiptVouchers extends StatelessWidget {
       Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity,
         child: FilledButton.icon(onPressed: () => createReceiptVoucher(context, branchId, owner: owner),
           icon: const Icon(Icons.add), label: Text(owner ? 'إنشاء سند قبض' : 'إنشاء وإرسال سند قبض للمدير')))),
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: PendingReceiptShortcut(owner: owner)),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: SizedBox(width: double.infinity,
         child: OutlinedButton.icon(onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) =>
           Directionality(textDirection: TextDirection.rtl, child: CustomerPaymentReport(owner: owner)))),
@@ -4038,6 +4040,7 @@ Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, Rece
 }
 
 Future<void> createReceiptVoucher(BuildContext context, String branchId, {required bool owner, String? initialCustomerId}) async {
+  if (!owner) { await createPendingReceiptVoucher(context, branchId, initialCustomerId: initialCustomerId); return; }
   final amount = TextEditingController(), note = TextEditingController();
   DateTime selectedReceiptDate=tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
   // Reuse this ID on transaction retries and after an uncertain network response.
