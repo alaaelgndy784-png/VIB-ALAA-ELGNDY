@@ -31,6 +31,7 @@ jobs:
           cp overrides/lib/*.dart web-project/lib/
           cp overrides/pubspec.yaml web-project/pubspec.yaml
           cp overrides/assets/vip-logo.png web-project/assets/vip-logo.png
+          cp overrides/assets/login-chime.wav web-project/assets/login-chime.wav
           mkdir -p web-project/assets/tessdata web-project/assets/fonts web-project/test
           printf '%s\n' '{"files":[]}' > web-project/assets/tessdata_config.json
           touch web-project/assets/tessdata/.keep
