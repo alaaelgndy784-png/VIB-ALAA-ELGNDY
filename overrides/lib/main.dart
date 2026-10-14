@@ -128,8 +128,130 @@ bool visibleAfterReset(Map<String, dynamic> data) {
   return createdAt.compareTo(resetAt) >= 0;
 }
 
-bool isTemporaryFirestoreOffline(Object error) => error is FirebaseException &&
-    (error.code=='unavailable'||error.code=='deadline-exceeded'||error.code=='network-request-failed');
+bool isTemporaryFirestoreOffline(Object error) => error is TimeoutException || (error is FirebaseException &&
+    (error.code=='unavailable'||error.code=='deadline-exceeded'||error.code=='network-request-failed'));
+
+Future<QuerySnapshot<Map<String,dynamic>>> _getInvoiceDataWithCacheFallback(
+    Query<Map<String,dynamic>> query) async {
+  try {
+    return await query.get().timeout(const Duration(seconds:6));
+  } catch (error) {
+    if (!isTemporaryFirestoreOffline(error)) rethrow;
+    return query.get(const GetOptions(source:Source.cache));
+  }
+}
+
+class EmployeeOfflineSaleSync {
+  EmployeeOfflineSaleSync._();
+  static final instance=EmployeeOfflineSaleSync._();
+  final ValueNotifier<int> pendingCount=ValueNotifier<int>(0);
+  bool _running=false;
+  String _key(String uid)=>'vib_employee_offline_sales_v1_$uid';
+
+  Future<List<OfflineEmployeeSaleData>> _read(String uid) async {
+    final prefs=await SharedPreferences.getInstance();
+    final raw=prefs.getString(_key(uid));
+    if(raw==null||raw.isEmpty)return <OfflineEmployeeSaleData>[];
+    final decoded=jsonDecode(raw);
+    if(decoded is! List)throw const FormatException('قائمة الفواتير المحلية غير صحيحة');
+    return decoded.map((item) {
+      if(item is! Map)throw const FormatException('بيانات الفاتورة المحلية غير صحيحة');
+      return OfflineEmployeeSaleData.parse(Map<String,dynamic>.from(item));
+    }).toList();
+  }
+
+  Future<void> _write(String uid,List<OfflineEmployeeSaleData> sales) async {
+    final prefs=await SharedPreferences.getInstance();
+    final ok=await prefs.setString(_key(uid),jsonEncode(sales.map((sale)=>sale.toJson()).toList()));
+    if(!ok)throw StateError('تعذر حفظ الفاتورة على الجهاز');
+    pendingCount.value=sales.length;
+  }
+
+  Future<void> enqueue({required String id,required String branchId,required List<SaleEntry> entries,
+      required String customerId,required bool credit,required double paid,required double total}) async {
+    final uid=FirebaseAuth.instance.currentUser?.uid;
+    if(uid==null)throw StateError('سجّل الدخول مرة أخرى قبل حفظ الفاتورة');
+    final sale=OfflineEmployeeSaleData.parse({
+      'id':id,'branchId':branchId,'customerId':customerId,'credit':credit,'paid':paid,'total':total,
+      'createdAt':DateTime.now().toIso8601String(),
+      'items':entries.map((entry)=>{'productId':entry.id,'productName':entry.name,'quantity':entry.qty,
+        'unitPrice':entry.price,'basePrice':entry.basePrice,'discountPercent':entry.discount}).toList(),
+    });
+    final queue=await _read(uid);
+    final index=queue.indexWhere((existing)=>existing.id==id);
+    if(index>=0) {
+      if(jsonEncode(queue[index].identityJson())!=jsonEncode(sale.identityJson()))
+        throw StateError('رقم الفاتورة موجود ببيانات مختلفة');
+      pendingCount.value=queue.length;
+      return;
+    }
+    if(queue.length>=250)throw StateError('قائمة فواتير المزامنة ممتلئة؛ اتصل بالإنترنت لمزامنتها أولًا');
+    await _write(uid,[...queue,sale]);
+  }
+
+  Future<void> syncPending({bool retryBlocked=false}) async {
+    final user=FirebaseAuth.instance.currentUser;
+    if(user==null||_running)return;
+    _running=true;
+    try {
+      final uid=user.uid;
+      final queued=await _read(uid);
+      pendingCount.value=queued.length;
+      final work=retryBlocked?queued.map((sale)=>sale.copyWith(lastError:'')).toList():queued;
+      final remaining=<OfflineEmployeeSaleData>[];
+      for(var index=0;index<work.length;index++) {
+        final sale=work[index];
+        if(sale.lastError.isNotEmpty) {remaining.add(sale);continue;}
+        try {
+          final entries=sale.items.map((item)=>(id:'${item['productId']}',name:'${item['productName']}',
+            qty:item['quantity'] as int,price:(item['unitPrice'] as num).toDouble(),cost:null,
+            discount:(item['discountPercent'] as num).toDouble(),basePrice:(item['basePrice'] as num).toDouble())).toList();
+          if(entries.length>4) {
+            await submitPendingSale(sale.id,entries,sale.customerId,sale.credit,sale.paid,sale.total)
+                .timeout(const Duration(seconds:8));
+          } else {
+            await commitGroupedSale(owner:false,branchId:sale.branchId,entries:entries,total:sale.total,
+              payment:sale.paid,credit:sale.credit,customerId:sale.customerId,
+              saleRef:db.collection('sales').doc(sale.id)).timeout(const Duration(seconds:8));
+          }
+        } catch (error) {
+          if(isTemporaryFirestoreOffline(error)) {
+            remaining.add(sale);
+            remaining.addAll(work.skip(index+1));
+            break;
+          }
+          remaining.add(sale.copyWith(lastError:'تعذرت المزامنة؛ اضغط إعادة المحاولة أو راجع المدير.'));
+        }
+      }
+      await _write(uid,remaining);
+    } catch(error) {
+      debugPrint('VIB employee offline sale queue error: $error');
+    } finally {
+      _running=false;
+    }
+  }
+}
+
+class EmployeeOfflineSaleNotice extends StatelessWidget {
+  const EmployeeOfflineSaleNotice({super.key});
+  @override Widget build(BuildContext context)=>ValueListenableBuilder<int>(
+    valueListenable:EmployeeOfflineSaleSync.instance.pendingCount,
+    builder:(context,count,_) {
+      if(count==0)return const SizedBox.shrink();
+      return Padding(padding:const EdgeInsets.fromLTRB(10,2,10,6),child:Container(
+        padding:const EdgeInsets.symmetric(horizontal:10,vertical:5),
+        decoration:BoxDecoration(color:const Color(0xFF5A3B12),borderRadius:BorderRadius.circular(12)),
+        child:Row(children:[
+          Expanded(child:Text('$count فاتورة محفوظة على الجهاز وتنتظر المزامنة',
+            textAlign:TextAlign.center,style:const TextStyle(color:Colors.white,fontSize:12))),
+          IconButton(visualDensity:VisualDensity.compact,tooltip:'إعادة محاولة المزامنة',
+            onPressed:()=>unawaited(EmployeeOfflineSaleSync.instance.syncPending(retryBlocked:true)),
+            icon:const Icon(Icons.sync,color:gold,size:18)),
+        ]),
+      ));
+    },
+  );
+}
 
 class VibApp extends StatelessWidget {
   const VibApp({super.key});
@@ -534,7 +656,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   int page = 0;
   Timer? _presenceTimer;
   bool _presenceWriteInFlight = false;
-  @override void initState() { super.initState(); if(widget.role == 'owner') {ChequeReminders.instance.watch(widget.uid);ManagerOfflineSaleSync.instance.start();ManagerOfflineVoucherSync.instance.start();} else { WidgetsBinding.instance.addObserver(this); _writePresence(true); _presenceTimer=Timer.periodic(const Duration(seconds:20),(_)=>_writePresence(true)); } ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
+  @override void initState() { super.initState(); if(widget.role == 'owner') {ChequeReminders.instance.watch(widget.uid);ManagerOfflineSaleSync.instance.start();ManagerOfflineVoucherSync.instance.start();} else { WidgetsBinding.instance.addObserver(this); _writePresence(true); unawaited(EmployeeOfflineSaleSync.instance.syncPending()); _presenceTimer=Timer.periodic(const Duration(seconds:20),(_){_writePresence(true);unawaited(EmployeeOfflineSaleSync.instance.syncPending());}); } ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
   Future<void> _writePresence(bool online) async {
     if(widget.role!='employee' || _presenceWriteInFlight) return;
     _presenceWriteInFlight=true;
@@ -542,7 +664,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     catch (_) { /* A missed heartbeat expires automatically in the manager view. */ }
     finally { _presenceWriteInFlight=false; }
   }
-  @override void didChangeAppLifecycleState(AppLifecycleState state) { _writePresence(state==AppLifecycleState.resumed); }
+  @override void didChangeAppLifecycleState(AppLifecycleState state) { _writePresence(state==AppLifecycleState.resumed); if(state==AppLifecycleState.resumed&&widget.role=='employee')unawaited(EmployeeOfflineSaleSync.instance.syncPending()); }
   Future<void> _signOut() async { await _writePresence(false); await FirebaseAuth.instance.signOut(); }
   @override void dispose() { ChatAlerts.instance.stop(); if(widget.role == 'owner') {ChequeReminders.instance.stop();ManagerOfflineSaleSync.instance.stop();ManagerOfflineVoucherSync.instance.stop();} else { _presenceTimer?.cancel(); WidgetsBinding.instance.removeObserver(this); _writePresence(false); } super.dispose(); }
 
@@ -1327,8 +1449,9 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
 
 Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, required String branchId, String? initialProductId}) async {
   if(owner)await prepareInvoiceSerials('sales');
-  final productsSnap = await db.collection('products').where('active', isEqualTo: true).get();
-  var customersSnap = await db.collection('customers').get();
+  final productsSnap = await _getInvoiceDataWithCacheFallback(
+    db.collection('products').where('active', isEqualTo: true));
+  var customersSnap = await _getInvoiceDataWithCacheFallback(db.collection('customers'));
   final addedCustomers = <String, Map<String,dynamic>>{};
   if (!context.mounted) return;
 
@@ -1410,7 +1533,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
             onPressed:saving ? null : () async {
               final id=await selectRegisteredCustomer(c);
               if(id == null || !c.mounted) return;
-              final refreshed=await db.collection('customers').get();
+              final refreshed=await _getInvoiceDataWithCacheFallback(db.collection('customers'));
               if(c.mounted) update(() {customersSnap=refreshed;customerId=id;});
             }),
           if(owner) FilledButton.icon(icon:const Icon(Icons.person_add_alt_1),
@@ -1484,7 +1607,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
             update(() => saving = true);
             try {
               if (!owner && entries.length > 4) {
-                await submitPendingSale(saleRef.id, entries, customerId, credit, payment, total);
+                await submitPendingSale(saleRef.id, entries, customerId, credit, payment, total)
+                    .timeout(const Duration(seconds:8));
                 if (c.mounted) Navigator.pop(c);
                 if (context.mounted) await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
                   title:const Text('تم إرسال الفاتورة للمدير'),
@@ -1494,9 +1618,10 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               }
               Map<String,dynamic> savedInvoice;
               try {
-                savedInvoice = await commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
+                final commit=commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
                   total:total,payment:payment,credit:credit,customerId:customerId,saleRef:saleRef,
                   invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
+                savedInvoice=await (owner ? commit : commit.timeout(const Duration(seconds:8)));
               } catch(e) {
                 if(!owner||!isTemporaryFirestoreOffline(e)) rethrow;
                 await submitManagerOfflineSale(id:saleRef.id,branchId:branchId,entries:entries,customerId:customerId,
@@ -1512,6 +1637,15 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               if (c.mounted) Navigator.pop(c);
               if (context.mounted) await showInvoiceSavedActions(context, 'sales', saleRef.id, savedInvoice);
             } catch (e) {
+              if(!owner && isTemporaryFirestoreOffline(e)) {
+                await EmployeeOfflineSaleSync.instance.enqueue(id:saleRef.id,branchId:branchId,
+                  entries:entries,customerId:customerId,credit:credit,paid:payment,total:total);
+                if(c.mounted)Navigator.pop(c);
+                if(context.mounted)await showInvoiceSaveProblem(context,
+                  'تم حفظ الفاتورة على الجهاز. ستُرسل تلقائيًا عند رجوع الإنترنت. لن يُخصم المخزون أو يُسجل الحساب قبل المزامنة.',
+                  title:'الفاتورة محفوظة دون إنترنت',button:'تمام',success:true);
+                return;
+              }
               if (c.mounted) {
                 update(() => saving = false);
                 final message = invoiceSaveFailureMessage(e);
@@ -1591,6 +1725,7 @@ class _SalesState extends State<Sales> {
         Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.payments_outlined, size: 18), label: const Text('سند قبض', maxLines: 1, overflow: TextOverflow.ellipsis), onPressed:()=>createReceiptVoucher(context,branchId,owner:owner))),
       ])),
       Padding(padding:const EdgeInsets.symmetric(horizontal:10),child: PendingSalesShortcut(owner:owner, compact:true)),
+      if(!owner) const EmployeeOfflineSaleNotice(),
       MovementPeriodControls(key:ValueKey('${selectedFrom.toIso8601String()}-${selectedTo.toIso8601String()}'),from:selectedFrom,to:selectedTo,enabled:true,compact:true,onConfirm:(from,to)=>setState(() {selectedFrom=from;selectedTo=to;})),
       if (owner) Padding(padding: const EdgeInsets.fromLTRB(10,0,10,2), child: Row(children: [
         Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.summarize_outlined, size:18), label: const Text('تقرير المبيعات', maxLines:1, overflow:TextOverflow.ellipsis),

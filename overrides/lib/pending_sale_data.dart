@@ -8,6 +8,71 @@ class PendingSaleLine {
   PendingSaleLine(this.id, this.quantity, this.price, this.basePrice, this.discount);
 }
 
+class OfflineEmployeeSaleData {
+  final String id,branchId,customerId,createdAt,lastError;
+  final bool credit;
+  final double total,paid;
+  final List<Map<String,dynamic>> items;
+  const OfflineEmployeeSaleData({required this.id,required this.branchId,required this.customerId,
+    required this.createdAt,required this.credit,required this.total,required this.paid,
+    required this.items,this.lastError=''});
+
+  factory OfflineEmployeeSaleData.parse(Map<String,dynamic> data) {
+    String requiredText(Object? value,String label) {
+      if(value is! String||value.trim().isEmpty||value.contains('/'))throw FormatException('$label غير صحيح');
+      return value.trim();
+    }
+    double amount(Object? value,String label) {
+      if(value is! num||!value.toDouble().isFinite||value<0)throw FormatException('$label غير صحيح');
+      return value.toDouble();
+    }
+    final id=requiredText(data['id'],'رقم الفاتورة');
+    final branchId=requiredText(data['branchId'],'الفرع');
+    final rawCustomerId=data['customerId'];
+    final credit=data['credit'];
+    if(credit is! bool || rawCustomerId is! String || rawCustomerId.contains('/'))
+      throw const FormatException('العميل أو طريقة الدفع غير صحيحة');
+    final customerId=rawCustomerId.trim();
+    if(credit && customerId.isEmpty)throw const FormatException('اختر عميلًا لفاتورة الآجل');
+    final raw=data['items'];
+    if(raw is! List||raw.isEmpty||raw.length>50)throw const FormatException('عدد البنود غير صحيح');
+    final ids=<String>{};
+    final items=<Map<String,dynamic>>[];
+    double calculated=0;
+    for(final row in raw) {
+      if(row is! Map)throw const FormatException('بيانات الصنف غير صحيحة');
+      final productId=requiredText(row['productId'],'الصنف');
+      final name=row['productName'];
+      final quantity=row['quantity'];
+      if(name is! String||name.trim().isEmpty||quantity is! int||quantity<=0||quantity>1000000||!ids.add(productId))
+        throw const FormatException('راجع اسم الصنف والكمية ولا تكرر المنتج');
+      final unitPrice=amount(row['unitPrice'],'السعر');
+      final basePrice=amount(row['basePrice'],'السعر الأصلي');
+      final discount=amount(row['discountPercent'],'الخصم');
+      if(discount>100)throw const FormatException('نسبة الخصم غير صحيحة');
+      calculated+=unitPrice*quantity;
+      items.add({'productId':productId,'productName':name.trim(),'quantity':quantity,
+        'unitPrice':unitPrice,'basePrice':basePrice,'discountPercent':discount});
+    }
+    final total=amount(data['total'],'الإجمالي');
+    final paid=amount(data['paid'],'المدفوع');
+    if(!calculated.isFinite||(calculated-total).abs()>0.005||paid>total||(!credit&&(paid-total).abs()>0.005))
+      throw const FormatException('راجع إجمالي الفاتورة وطريقة الدفع');
+    final createdAt=requiredText(data['createdAt'],'تاريخ الحفظ');
+    final lastError=data['lastError'];
+    if(lastError!=null&&lastError is! String)throw const FormatException('حالة المزامنة غير صحيحة');
+    return OfflineEmployeeSaleData(id:id,branchId:branchId,customerId:customerId,createdAt:createdAt,
+      credit:credit,total:calculated,paid:paid,items:items,lastError:(lastError as String?)??'');
+  }
+
+  Map<String,dynamic> toJson()=>{'id':id,'branchId':branchId,'customerId':customerId,'createdAt':createdAt,
+    'credit':credit,'total':total,'paid':paid,'items':items,'lastError':lastError};
+  Map<String,dynamic> identityJson()=>{'id':id,'branchId':branchId,'customerId':customerId,
+    'credit':credit,'total':total,'paid':paid,'items':items};
+  OfflineEmployeeSaleData copyWith({String? lastError})=>OfflineEmployeeSaleData(id:id,branchId:branchId,
+    customerId:customerId,createdAt:createdAt,credit:credit,total:total,paid:paid,items:items,lastError:lastError??this.lastError);
+}
+
 class PendingSaleData {
   final List<PendingSaleLine> lines;
   final String customerId;
