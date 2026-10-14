@@ -1,4 +1,5 @@
 name: Deploy VIB Firestore Rules
+# Run the configured Firebase deployment for the owner's requested rules update.
 
 on:
   workflow_dispatch:
