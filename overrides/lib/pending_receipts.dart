@@ -105,7 +105,7 @@ Future<void> createPendingReceiptVoucher(BuildContext context,String branchId,{S
         FilledButton(onPressed:saving?null:() async {
           final paid=parseReceiptAmount(amount.text),id=customerId;
           if(id==null||paid==null||paid<=0){update(()=>error='اختر العميل واكتب مبلغًا صحيحًا أكبر من صفر.');return;}
-          update(()=>{saving=true;error=null;});
+          update(() { saving=true; error=null; });
           try {
             final uid=FirebaseAuth.instance.currentUser!.uid,date=Timestamp.fromDate(receiptDate);
             await db.runTransaction((tx) async {
@@ -128,7 +128,7 @@ Future<void> createPendingReceiptVoucher(BuildContext context,String branchId,{S
             if(dialog.mounted)Navigator.pop(dialog);
             if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content:Text('تم إرسال سند القبض للمدير للاعتماد؛ لم يتغير رصيد العميل أو الصندوق.')));
-          }catch(e){if(dialog.mounted)update(()=>{saving=false;error='تعذر إرسال السند: $e';});}
+          }catch(e){if(dialog.mounted)update(() { saving=false; error='تعذر إرسال السند: $e'; });}
         },child:Text(saving?'جارٍ الإرسال…':'إرسال للمدير')),
       ],
     )));
