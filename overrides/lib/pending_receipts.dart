@@ -6,19 +6,44 @@ Query<Map<String,dynamic>> pendingReceiptQuery(bool owner)=>owner
 
 class PendingReceiptShortcut extends StatelessWidget {
   final bool owner;
-  const PendingReceiptShortcut({super.key,required this.owner});
-  @override Widget build(BuildContext context)=>StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
-    stream:pendingReceiptQuery(owner).snapshots(),builder:(context,snapshot){
-      final count=snapshot.data?.docs.where((d)=>d.data()['status']=='pending').length;
-      return SizedBox(width:double.infinity,child:OutlinedButton.icon(
-        icon:Icon(Icons.pending_actions,color:owner?vibBlue:vibNeon),
-        label:Text('${owner?'اعتماد سندات قبض الموظفين':'سنداتي — متابعة الاعتماد'}${count==null?'':' (${count} معلّق)'}',
-          maxLines:1,overflow:TextOverflow.ellipsis),
-        onPressed:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>Directionality(
-          textDirection:TextDirection.rtl,child:Scaffold(
-            appBar:AppBar(title:Text(owner?'اعتماد سندات قبض الموظفين':'سندات القبض المرسلة')),
-            body:PendingReceiptPage(owner:owner))))));
-    });
+  const PendingReceiptShortcut({super.key, required this.owner});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
+      stream: pendingReceiptQuery(owner).snapshots(),
+      builder: (context, snapshot) {
+        final count = snapshot.data?.docs.where((d) => d.data()['status'] == 'pending').length;
+        return SizedBox(
+          width: double.infinity,
+          child: OutlinedButton.icon(
+            icon: Icon(Icons.pending_actions, color: owner ? vibBlue : vibNeon),
+            label: Text(
+              '${owner ? 'اعتماد سندات قبض الموظفين' : 'سنداتي — متابعة الاعتماد'}${count == null ? '' : ' (${count} معلّق)'}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => Directionality(
+                    textDirection: TextDirection.rtl,
+                    child: Scaffold(
+                      appBar: AppBar(
+                        title: Text(owner ? 'اعتماد سندات قبض الموظفين' : 'سندات القبض المرسلة'),
+                      ),
+                      body: PendingReceiptPage(owner: owner),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
 }
 
 class PendingReceiptPage extends StatelessWidget {
