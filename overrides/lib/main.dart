@@ -3,7 +3,7 @@ import 'pending_sale_data.dart';
 import 'dart:typed_data';
 import 'dart:async';
 import 'package:record/record.dart';
-import 'package:audioplayers/audioplayers.dart' show AssetSource, AudioPlayer, DeviceFileSource;
+import 'package:audioplayers/audioplayers.dart' show AssetSource, AudioPlayer, DeviceFileSource, UrlSource;
 import 'dart:convert';
 import 'dart:io';
 import 'package:tesseract_ocr/tesseract_ocr.dart';
