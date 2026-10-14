@@ -649,52 +649,6 @@ class _LoginPageState extends State<LoginPage> {
       if (mounted) setState(() => busy = false);
     }
   }
-  Future<void> _pickReportDate({required bool end}) async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: end ? draftEndDay : draftDay,
-      firstDate: DateTime(2018),
-      lastDate: DateTime(2100),
-      helpText: end ? 'اختر تاريخ النهاية' : 'اختر تاريخ البداية',
-    );
-    if (picked != null && mounted) {
-      setState(() {
-        final selected = DateTime(picked.year, picked.month, picked.day);
-        if (end) { draftEndDay = selected; } else { draftDay = selected; }
-      });
-    }
-  }
-
-  void _applyReportPeriod() {
-    if (draftDay.isAfter(draftEndDay)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تاريخ البداية يجب أن يكون قبل تاريخ النهاية')),
-      );
-      return;
-    }
-    setState(() { day = draftDay; endDay = draftEndDay; });
-  }
-
-  void _setReportPeriodToday() {
-    final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
-    final today = DateTime(now.year, now.month, now.day);
-    setState(() { day = endDay = draftDay = draftEndDay = today; });
-  }
-
-  Widget _compactDateButton(String label, DateTime value, VoidCallback onPressed) =>
-      Expanded(child: OutlinedButton.icon(
-        onPressed: onPressed,
-        style: OutlinedButton.styleFrom(
-          minimumSize: const Size(0, 42),
-          padding: const EdgeInsets.symmetric(horizontal: 8),
-          visualDensity: VisualDensity.compact,
-        ),
-        icon: const Icon(Icons.calendar_month, size: 17),
-        label: Text('$label ${DateFormat('dd/MM/yy').format(value)}',
-          maxLines: 1, overflow: TextOverflow.ellipsis,
-          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
-      ));
-
   @override
   Widget build(BuildContext context) => Scaffold(
     backgroundColor: const Color(0xFF030B17),
@@ -3905,6 +3859,52 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
         ? db.collection('voucherCancellations').snapshots(includeMetadataChanges: true)
         : const Stream<QuerySnapshot<Map<String, dynamic>>>.empty();
   }
+
+  Future<void> _pickReportDate({required bool end}) async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: end ? draftEndDay : draftDay,
+      firstDate: DateTime(2018),
+      lastDate: DateTime(2100),
+      helpText: end ? 'اختر تاريخ النهاية' : 'اختر تاريخ البداية',
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        final selected = DateTime(picked.year, picked.month, picked.day);
+        if (end) { draftEndDay = selected; } else { draftDay = selected; }
+      });
+    }
+  }
+
+  void _applyReportPeriod() {
+    if (draftDay.isAfter(draftEndDay)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تاريخ البداية يجب أن يكون قبل تاريخ النهاية')),
+      );
+      return;
+    }
+    setState(() { day = draftDay; endDay = draftEndDay; });
+  }
+
+  void _setReportPeriodToday() {
+    final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
+    final today = DateTime(now.year, now.month, now.day);
+    setState(() { day = endDay = draftDay = draftEndDay = today; });
+  }
+
+  Widget _compactDateButton(String label, DateTime value, VoidCallback onPressed) =>
+      Expanded(child: OutlinedButton.icon(
+        onPressed: onPressed,
+        style: OutlinedButton.styleFrom(
+          minimumSize: const Size(0, 42),
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          visualDensity: VisualDensity.compact,
+        ),
+        icon: const Icon(Icons.calendar_month, size: 17),
+        label: Text('$label ${DateFormat('dd/MM/yy').format(value)}',
+          maxLines: 1, overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+      ));
 
   @override
   Widget build(BuildContext context) => Scaffold(
