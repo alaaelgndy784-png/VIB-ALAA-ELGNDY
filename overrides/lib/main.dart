@@ -5267,9 +5267,9 @@ Future<void> _printPdfOnBluetoothThermal(
     for (var y = 0; y < rowInk.length; y++) {
       rollingInk += rowInk[y];
       if (y >= 7) rollingInk -= rowInk[y - 7];
-      if (y >= 6 && rollingInk >= 90) lastInkRow = y;
+      if (y >= 6 && rollingInk >= 260) lastInkRow = y;
     }
-    final cropHeight = (lastInkRow < 0 ? 1 : lastInkRow + 40)
+    final cropHeight = (lastInkRow < 0 ? 1 : lastInkRow + 48)
         .clamp(1, bitmap.height)
         .toInt();
     final printBitmap = img.copyCrop(
@@ -5280,14 +5280,22 @@ Future<void> _printPdfOnBluetoothThermal(
       height: cropHeight,
     );
 
-    // Send one cropped GS v 0 bitmap command to avoid multiple line feeds.
+    // Use ESC * column graphics because some compact printers misread GS v 0
+    // raster payloads as scattered symbols. The bitmap is already cropped above.
     final commands = <int>[
       ...generator.reset(),
-      ...generator.imageRaster(printBitmap, align: esc.PosAlign.center),
+      ...generator.image(printBitmap, align: esc.PosAlign.center),
       ...generator.feed(2),
     ];
-    if (!await PrintBluetoothThermal.writeBytes(commands)) {
-      throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');
+    const chunkSize = 1024;
+    for (var offset = 0; offset < commands.length; offset += chunkSize) {
+      final end = (offset + chunkSize).clamp(0, commands.length);
+      if (!await PrintBluetoothThermal.writeBytes(commands.sublist(offset, end))) {
+        throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');
+      }
+      if (end < commands.length) {
+        await Future.delayed(const Duration(milliseconds: 20));
+      }
     }
     // Keep Bluetooth connected while the printer drains its receive buffer.
     await Future.delayed(const Duration(seconds: 3));
