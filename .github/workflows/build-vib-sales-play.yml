@@ -1,0 +1,186 @@
+name: Build VIB Sales Play bundles
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_code:
+        description: Android version code (must be higher than the last Play upload)
+        required: true
+        default: '4047'
+      version_name:
+        description: App version shown to users
+        required: true
+        default: '0.2.24'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [manager, staff]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          channel: stable
+          cache: true
+
+      - name: Restore independent sales source
+        run: |
+          mkdir VIB-SALES-INDEPENDENT
+          unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d VIB-SALES-INDEPENDENT
+          cp overrides/lib/*.dart VIB-SALES-INDEPENDENT/lib/
+          mkdir -p VIB-SALES-INDEPENDENT/vib_overrides
+          cp overrides/android/prepare_cheque_notifications.py VIB-SALES-INDEPENDENT/vib_overrides/
+          cp overrides/android/apply_store_movement.py VIB-SALES-INDEPENDENT/vib_overrides/
+          cp overrides/android/apply_manager_thermal_printing.py VIB-SALES-INDEPENDENT/vib_overrides/
+          cp overrides/android/apply_manager_offline_presentation.py VIB-SALES-INDEPENDENT/vib_overrides/
+          cp overrides/pubspec.yaml VIB-SALES-INDEPENDENT/pubspec.yaml
+          cp overrides/assets/vip-logo.png VIB-SALES-INDEPENDENT/assets/vip-logo.png
+          cp overrides/assets/login-chime.wav VIB-SALES-INDEPENDENT/assets/login-chime.wav
+          mkdir -p VIB-SALES-INDEPENDENT/test
+          cp overrides/test/*.dart VIB-SALES-INDEPENDENT/test/
+          mkdir -p VIB-SALES-INDEPENDENT/assets/tessdata
+          printf '%s\n' '{"files":["ara.traineddata","eng.traineddata"]}' > VIB-SALES-INDEPENDENT/assets/tessdata_config.json
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/ara.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/ara.traineddata
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/eng.traineddata
+          mkdir -p VIB-SALES-INDEPENDENT/assets/fonts
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf VIB-SALES-INDEPENDENT/assets/fonts/DejaVuSans.ttf
+
+      - name: Create Android app and configure Play identity
+        env:
+          APP: ${{ matrix.app }}
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          flutter create --platforms=android --org com.alaa.vibsales --project-name "$APP" .
+          python3 vib_overrides/apply_store_movement.py lib/main.dart
+          python3 vib_overrides/apply_manager_thermal_printing.py lib/main.dart
+          if [ "$APP" = manager ]; then python3 vib_overrides/apply_manager_offline_presentation.py lib/main.dart; fi
+          python3 vib_overrides/prepare_cheque_notifications.py
+          sed -i 's/^name: .*/name: vib_sales/' pubspec.yaml
+          APP_ID='com.alaa.vibsales.staffscan'
+          LABEL='VIB Staff'
+          if [ "$APP" = manager ]; then
+            APP_ID='com.alaa.vibsales.managerscan'
+            LABEL='VIB Manager'
+          fi
+          python3 - "$APP" "$LABEL" "$APP_ID" <<'PY'
+          from pathlib import Path
+          import re, sys
+          app, label, app_id = sys.argv[1:]
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text()
+          text = re.sub(r'android:label="[^"]+"', f'android:label="{label}"', text, count=1)
+          permissions = '''    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />'''
+          root = re.search(r'<manifest\b[^>]*>', text)
+          if root is None: raise SystemExit('Android manifest root missing')
+          text = text[:root.end()] + '\n' + permissions + text[root.end():]
+          manifest.write_text(text)
+          gradle = Path('android/app/build.gradle.kts')
+          text = gradle.read_text()
+          text = re.sub(r'applicationId = "[^"]+"', f'applicationId = "{app_id}"', text, count=1)
+          text += '''
+
+          android {
+              signingConfigs {
+                  create("playUpload") {
+                      storeFile = file(System.getenv("PLAY_KEYSTORE_PATH"))
+                      storePassword = System.getenv("PLAY_STORE_PASSWORD")
+                      keyAlias = System.getenv("PLAY_KEY_ALIAS")
+                      keyPassword = System.getenv("PLAY_KEY_PASSWORD")
+                  }
+              }
+              buildTypes {
+                  getByName("release") {
+                      signingConfig = signingConfigs.getByName("playUpload")
+                  }
+              }
+          }
+          '''
+          gradle.write_text(text)
+          activity = Path(f'android/app/src/main/kotlin/com/alaa/vibsales/{app}/MainActivity.kt')
+          text = activity.read_text().replace('FlutterActivity', 'FlutterFragmentActivity')
+          activity.write_text(text)
+          PY
+          if [ -d "assets/icons/$APP" ]; then cp -r "assets/icons/$APP"/mipmap-* android/app/src/main/res/; fi
+          base64 -d ../overrides/assets/vib-launcher.png.b64 > /tmp/vib-launcher.png
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do cp /tmp/vib-launcher.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"; done
+          cp firebase/google-services.json android/app/google-services.json
+
+      - name: Configure private Play upload key
+        env:
+          APP: ${{ matrix.app }}
+          MANAGER_KEYSTORE_B64: ${{ secrets.VIB_MANAGER_UPLOAD_KEYSTORE_BASE64 }}
+          MANAGER_STORE_PASSWORD: ${{ secrets.VIB_MANAGER_UPLOAD_STORE_PASSWORD }}
+          MANAGER_KEY_PASSWORD: ${{ secrets.VIB_MANAGER_UPLOAD_KEY_PASSWORD }}
+          MANAGER_KEY_ALIAS: ${{ secrets.VIB_MANAGER_UPLOAD_KEY_ALIAS }}
+          STAFF_KEYSTORE_B64: ${{ secrets.VIB_STAFF_UPLOAD_KEYSTORE_BASE64 }}
+          STAFF_STORE_PASSWORD: ${{ secrets.VIB_STAFF_UPLOAD_STORE_PASSWORD }}
+          STAFF_KEY_PASSWORD: ${{ secrets.VIB_STAFF_UPLOAD_KEY_PASSWORD }}
+          STAFF_KEY_ALIAS: ${{ secrets.VIB_STAFF_UPLOAD_KEY_ALIAS }}
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          if [ "$APP" = manager ]; then
+            KEYSTORE_B64="$MANAGER_KEYSTORE_B64"
+            STORE_PASSWORD="$MANAGER_STORE_PASSWORD"
+            KEY_PASSWORD="$MANAGER_KEY_PASSWORD"
+            KEY_ALIAS="$MANAGER_KEY_ALIAS"
+          else
+            KEYSTORE_B64="$STAFF_KEYSTORE_B64"
+            STORE_PASSWORD="$STAFF_STORE_PASSWORD"
+            KEY_PASSWORD="$STAFF_KEY_PASSWORD"
+            KEY_ALIAS="$STAFF_KEY_ALIAS"
+          fi
+          if [ -z "$KEYSTORE_B64" ] || [ -z "$STORE_PASSWORD" ] || [ -z "$KEY_PASSWORD" ] || [ -z "$KEY_ALIAS" ]; then
+            echo "Missing Play upload signing secrets for $APP. See PLAY-STORE-READINESS.md."
+            exit 1
+          fi
+          KEYSTORE_PATH="$RUNNER_TEMP/vib-$APP-upload.jks"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
+          keytool -list -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+          echo "PLAY_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+          echo "PLAY_STORE_PASSWORD=$STORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "PLAY_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+          echo "PLAY_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+
+      - name: Install packages
+        working-directory: VIB-SALES-INDEPENDENT
+        run: flutter pub get
+
+      - name: Verify new accounts cannot self-assign manager access
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          if grep -Eq "'role': 'owner', 'active': true" lib/main.dart; then
+            echo "Unexpected client-side manager account creation found"
+            exit 1
+          fi
+
+      - name: Build signed Android App Bundle
+        env:
+          VERSION_CODE: ${{ inputs.version_code }}
+          VERSION_NAME: ${{ inputs.version_name }}
+        working-directory: VIB-SALES-INDEPENDENT
+        run: flutter build appbundle --release --build-number="$VERSION_CODE" --build-name="$VERSION_NAME"
+
+      - name: Upload Play bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-SALES-${{ matrix.app }}-AAB-${{ inputs.version_name }}
+          path: VIB-SALES-INDEPENDENT/build/app/outputs/bundle/release/app-release.aab
+          if-no-files-found: error
