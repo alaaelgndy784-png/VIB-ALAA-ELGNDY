@@ -19,6 +19,7 @@ class PendingReceiptShortcut extends StatelessWidget {
             appBar:AppBar(title:Text(owner?'اعتماد سندات قبض الموظفين':'سندات القبض المرسلة')),
             body:PendingReceiptPage(owner:owner))))));
     });
+}
 
 class PendingReceiptPage extends StatelessWidget {
   final bool owner;
