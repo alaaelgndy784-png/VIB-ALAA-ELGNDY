@@ -495,7 +495,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
   // Reserve enough length for the complete header, item table, four-row summary, and footer.
   // Add one rendered row-height for each wrapped item-name line so thermal printers
   // do not clip the table or totals at the end of the finite PDF page.
-  final thermalPageHeightMm = 115.0 + estimatedItemLines * 7.0;
+  final thermalPageHeightMm = 205.0 + estimatedItemLines * 8.0;
   if (thermal) {
     pdf.addPage(
       pw.Page(
