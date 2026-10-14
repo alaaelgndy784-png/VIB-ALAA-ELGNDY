@@ -45,6 +45,21 @@ test('employee presence is self-written and owner-readable only',async()=>{
  await assertFails(setDoc(own,{online:true,lastSeen:serverTimestamp(),name:'spoofed'}));
  await assertFails(setDoc(doc(inactive,'presence/inactive'),{online:true,lastSeen:serverTimestamp()}));
 });
+test('employee visit check-ins require consent and are visible only to the employee and owner',async()=>{
+ const staff=env.authenticatedContext('staff').firestore(),owner=env.authenticatedContext('owner').firestore(),inactive=env.authenticatedContext('inactive').firestore();
+ const visit={employeeId:'staff',employeeName:'Staff',branchId:'staffbranch',customerId:'customer',customerName:'Customer',
+   latitude:30.1,longitude:31.2,accuracyMeters:18,consented:true,createdAt:serverTimestamp()};
+ await assertSucceeds(setDoc(doc(staff,'employeeVisits/own'),visit));
+ await assertSucceeds(getDoc(doc(owner,'employeeVisits/own')));
+ await assertSucceeds(getDoc(doc(staff,'employeeVisits/own')));
+ await assertFails(getDoc(doc(inactive,'employeeVisits/own')));
+ await assertFails(setDoc(doc(staff,'employeeVisits/spoof'),{...visit,employeeId:'owner'}));
+ await assertFails(setDoc(doc(staff,'employeeVisits/no-consent'),{...visit,consented:false}));
+ await assertFails(setDoc(doc(staff,'employeeVisits/fake-customer'),{...visit,customerName:'Fake'}));
+ await assertFails(setDoc(doc(staff,'employeeVisits/out-of-range'),{...visit,latitude:91}));
+ await assertFails(setDoc(doc(staff,'employeeVisits/extra-field'),{...visit,phone:'010'}));
+ await assertFails(setDoc(doc(staff,'employeeVisits/own'),{...visit,createdAt:serverTimestamp()}));
+});
 function saleBatch(db,{n=1,paid,customer=true,mutate=()=>{},omit='',saleId='sale',cashBefore=500,createCash=false,unitPrice=12.35}={}){
   const items=Array.from({length:n},(_,i)=>({productId:'p'+i,productName:'Product'+i,quantity:2,unitPrice,lineTotal:unitPrice*2,purchasePriceAtSale:5}));
   const total=n*unitPrice*2,payment=paid??total,due=total-payment;

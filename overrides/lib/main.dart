@@ -14,6 +14,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
+import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:local_auth/local_auth.dart';
 import 'package:pdf/pdf.dart';
@@ -55,6 +56,7 @@ part 'invoice_lookup.dart';
 part 'account_statements.dart';
 part 'staff_purchases.dart';
 part 'voucher_cancellations.dart';
+part 'employee_visits.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -1466,6 +1468,8 @@ class StaffDashboard extends StatelessWidget {
               onTap: () => openStaffChat(context, owner: false)),
             DashboardActionTile(title: 'حركة المنتج', icon: Icons.insert_chart, accent: const Color(0xFF32E69B),
               onTap: () => openPage('حركة المنتجات', const ItemMovementReport())),
+            DashboardActionTile(title: 'تسجيل زيارة', icon: Icons.location_on, accent: const Color(0xFF38A9FF),
+              onTap: () => openPage('تسجيل زيارة', EmployeeVisitsPage(uid: uid, employeeName: employeeName, branchId: branchId))),
           ],
         ),
       ),
@@ -1524,6 +1528,7 @@ class OwnerDashboard extends StatelessWidget {
             tile('الموردين', Icons.local_shipping, () => openPage('الموردين', const Accounts(startWithSuppliers: true)), accent: const Color(0xFFFFC857)),
             tile('المحادثة', Icons.forum, () => openStaffChat(context, owner: true), accent: const Color(0xFFB866FF)),
             tile('حركة السداد', Icons.volunteer_activism, () => openPage('حركة السداد', const CustomerPaymentReport(owner: true)), accent: const Color(0xFF31E59A)),
+            tile('زيارات الموظفين', Icons.location_on, () => openPage('زيارات الموظفين', const EmployeeVisitReport()), accent: const Color(0xFF38A9FF)),
           ],
         ),
       ),
