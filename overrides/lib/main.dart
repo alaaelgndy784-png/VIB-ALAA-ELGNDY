@@ -808,8 +808,8 @@ const managerSurface = Color(0xFF091726);
 const managerBorder = Color(0xFF263B56);
 ThemeData managerTheme(BuildContext context) => Theme.of(context).copyWith(
   scaffoldBackgroundColor: managerNavy,
-  colorScheme: Theme.of(context).colorScheme.copyWith(surface: managerSurface, primary: gold),
-  appBarTheme: const AppBarTheme(backgroundColor: managerNavy, foregroundColor: gold, centerTitle: true, elevation: 0),
+  colorScheme: Theme.of(context).colorScheme.copyWith(surface: managerSurface, primary: vibBlue, secondary: vibNeon),
+  appBarTheme: const AppBarTheme(backgroundColor: managerNavy, foregroundColor: vibBlue, centerTitle: true, elevation: 0),
   cardTheme: const CardThemeData(color: managerSurface, elevation: 0),
 );
 
@@ -2312,11 +2312,11 @@ class _StaffState extends State<Staff> {
         final online=employee && staffPresenceIsOnline(presence[row.id],now);
         return ListTile(title:Row(children:[
           if(employee) Padding(padding:const EdgeInsetsDirectional.only(end:7),child:Tooltip(message:online?'متصل الآن':'غير متصل',child:Container(width:10,height:10,decoration:BoxDecoration(color:online?Colors.greenAccent:Colors.grey,borderRadius:BorderRadius.circular(8))))),
-          Expanded(child:Text('${i+1}. ${data['name'] ?? data['phone'] ?? row.id}',overflow:TextOverflow.ellipsis)),
+          Expanded(child:Text('${i+1}. ${data['name'] ?? data['phone'] ?? row.id}',overflow:TextOverflow.ellipsis,style:const TextStyle(color:vibBlue,fontWeight:FontWeight.w700))),
         ]),
-          subtitle:Text(data['role']=='owner'?'المدير':data['role']=='pending'?'بانتظار التفعيل':'${data['branchId'] ?? ''} • ${data['canPurchase']==true?'المشتريات مسموحة':'المشتريات ممنوعة'}'),
-          trailing:data['role']=='owner'?const Icon(Icons.verified_user):Row(mainAxisSize:MainAxisSize.min,children:[
-            IconButton(tooltip:'صلاحيات الموظف',icon:const Icon(Icons.manage_accounts),onPressed:()=>assignEmployee(context,row.id,data)),
+          subtitle:Text(data['role']=='owner'?'المدير':data['role']=='pending'?'بانتظار التفعيل':'${data['branchId'] ?? ''} • ${data['canPurchase']==true?'المشتريات مسموحة':'المشتريات ممنوعة'}',style:const TextStyle(color:vibNeon)),
+          trailing:data['role']=='owner'?const Icon(Icons.verified_user,color:vibBlue):Row(mainAxisSize:MainAxisSize.min,children:[
+            IconButton(tooltip:'صلاحيات الموظف',icon:const Icon(Icons.manage_accounts,color:vibNeon),onPressed:()=>assignEmployee(context,row.id,data)),
             IconButton(tooltip:'حذف الموظف',icon:const Icon(Icons.delete_forever,color:Colors.redAccent),onPressed:()=>deleteEmployee(context,row.id,data)),
           ]));});
     });
@@ -2344,10 +2344,10 @@ class Management extends StatelessWidget {
   Widget option(BuildContext context, String title, IconData icon, Widget page, {bool highlight = false}) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
     child: Material(color: managerSurface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: highlight ? gold : managerBorder, width: highlight ? 1.5 : 1)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: BorderSide(color: highlight ? vibNeon : const Color(0xFF174B84), width: highlight ? 1.5 : 1)),
       clipBehavior: Clip.antiAlias,
       child: ListTile(contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 7),
-        leading: Icon(icon, color: gold, size: 28),
+        leading: Icon(icon, color: vibBlue, size: 28),
         title: Text(title, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 17)),
         trailing: const Icon(Icons.chevron_left, color: Color(0xFFA7B8CE)),
         onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(textDirection: TextDirection.rtl,
@@ -2594,18 +2594,24 @@ class _ProfitReportState extends State<ProfitReport> {
       Padding(padding: const EdgeInsets.fromLTRB(8,10,8,4), child: Wrap(
         alignment: WrapAlignment.center, spacing: 6, runSpacing: 4,
         children: [for (final item in presets) FilterChip(label: Text(item.$2),
-          selected: period == item.$1, onSelected: (_) => chooseProfitPeriod(item.$1))])),
+          selected: period == item.$1, selectedColor: vibBlue.withValues(alpha:.24),
+          checkmarkColor: vibNeon,
+          side: BorderSide(color: period == item.$1 ? vibNeon : vibBlue.withValues(alpha:.45)),
+          labelStyle: TextStyle(color: period == item.$1 ? vibNeon : vibBlue, fontWeight: FontWeight.w700),
+          onSelected: (_) => chooseProfitPeriod(item.$1))])), 
       Padding(padding: const EdgeInsets.symmetric(horizontal:8), child: Row(children:[
         Expanded(child:OutlinedButton.icon(key:const ValueKey('profit-from-button'),
+          style:OutlinedButton.styleFrom(foregroundColor:vibBlue,side:const BorderSide(color:vibBlue)),
           onPressed:()=>chooseProfitBoundary(true),icon:const Icon(Icons.calendar_month),
           label:Text('من ${profitDateTime(start)}',maxLines:1,overflow:TextOverflow.ellipsis))),
         const SizedBox(width:6),
         Expanded(child:OutlinedButton.icon(key:const ValueKey('profit-to-button'),
+          style:OutlinedButton.styleFrom(foregroundColor:vibBlue,side:const BorderSide(color:vibBlue)),
           onPressed:()=>chooseProfitBoundary(false),icon:const Icon(Icons.schedule),
           label:Text('إلى ${profitDateTime(end)}',maxLines:1,overflow:TextOverflow.ellipsis))),
       ])),
       Text(validRange ? 'الفترة: ${profitDateTime(start)} إلى ${profitDateTime(end)}' : 'وقت النهاية لازم يكون بعد وقت البداية',
-        textAlign:TextAlign.center,style:TextStyle(color:validRange ? Colors.white70 : Colors.redAccent)),
+        textAlign:TextAlign.center,style:TextStyle(color:validRange ? vibBlue : Colors.redAccent)),
       if(!validRange) const Expanded(child:SizedBox.shrink()) else Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: db.collection('products').snapshots(),
         builder: (context, productsSnap) {
@@ -2660,15 +2666,15 @@ class _ProfitReportState extends State<ProfitReport> {
                 if (!expensesSnap.hasData) return const Center(child: CircularProgressIndicator());
                 final expenses = expensesSnap.data!.docs.where((d) { final data = d.data(); final date = (data['createdAt'] as Timestamp?)?.toDate(); return visibleAfterReset(data) && date != null && !date.isBefore(start) && date.isBefore(queryEnd); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
               return ListView(padding: const EdgeInsets.all(16), children: [
-                ListTile(title: const Text('عدد فواتير البيع'), trailing: Text('${sales.length}')),
-                ListTile(title: const Text('عدد المرتجعات خلال الفترة'), trailing: Text('${returns.length}')),
-                ListTile(title: const Text('صافي المبيعات بعد المرتجعات'), trailing: Text('${revenue.toStringAsFixed(2)} ج.م')),
-                ListTile(title: const Text('تكلفة الأصناف المعروفة'), trailing: Text('${knownCost.toStringAsFixed(2)} ج.م')),
-                ListTile(title: const Text('المصروفات'), trailing: Text('${expenses.toStringAsFixed(2)} ج.م')),
-                ListTile(title: const Text('الربح الإجمالي التقديري'),
+                ListTile(title: const Text('عدد فواتير البيع',style:TextStyle(color:vibBlue)), trailing: Text('${sales.length}',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
+                ListTile(title: const Text('عدد المرتجعات خلال الفترة',style:TextStyle(color:vibBlue)), trailing: Text('${returns.length}',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
+                ListTile(title: const Text('صافي المبيعات بعد المرتجعات',style:TextStyle(color:vibBlue)), trailing: Text('${revenue.toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
+                ListTile(title: const Text('تكلفة الأصناف المعروفة',style:TextStyle(color:vibBlue)), trailing: Text('${knownCost.toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
+                ListTile(title: const Text('المصروفات',style:TextStyle(color:vibBlue)), trailing: Text('${expenses.toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
+                ListTile(title: const Text('الربح الإجمالي التقديري',style:TextStyle(color:vibBlue)),
                   trailing: Text('${(revenue - knownCost).toStringAsFixed(2)} ج.م',
-                    style: const TextStyle(color: gold, fontWeight: FontWeight.bold))),
-                ListTile(title: const Text('الربح بعد المصروفات'), trailing: Text('${(revenue - knownCost - expenses).toStringAsFixed(2)} ج.م')),
+                    style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold))),
+                ListTile(title: const Text('الربح بعد المصروفات',style:TextStyle(color:vibBlue)), trailing: Text('${(revenue - knownCost - expenses).toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
                 if (missingCost > 0) Text('الربح المعروض تقديري: تكلفة الشراء غير مسجلة في $missingCost فاتورة، ولذلك قد يكون الربح الفعلي أقل. أضف تكلفة شراء الأصناف أولًا.'),
                 const SizedBox(height: 16),
                 const Text('هذا تقدير حسب سعر الشراء المسجل حاليًا للصنف. يشمل المصروفات المسجلة في الفترة، وقد يختلف إذا تغيرت التكلفة بعد البيع.'),
