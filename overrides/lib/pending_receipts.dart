@@ -213,7 +213,7 @@ Future<void> createPendingReceiptVoucher(BuildContext context,String branchId,{S
                 'id':request.id,'employeeId':uid,'actorName':'${profile?['name']??''}','branchId':branchId,
                 'customerId':id,'customerName':'${customer['name']??''}','customerPhone':'${customer['phone']??''}',
                 'amount':paid,'receiptDate':date,
-                'receiptNumber':'VIB-RC-${DateFormat('yyyyMMdd').format(receiptDate)}-${request.id.substring(0,6).toUpperCase()}',
+                'receiptNumber':'بانتظار الاعتماد',
                 'paymentMethod':method,'note':note.text.trim(),'status':'pending','createdAt':FieldValue.serverTimestamp(),
                 'requestKey':jsonEncode({'customerId':id,'amount':paid,'date':date.millisecondsSinceEpoch,'method':method,'note':note.text.trim()}),
               });
@@ -242,6 +242,9 @@ Future<void> approvePendingReceiptVoucher(BuildContext context,DocumentReference
       final customerRef=db.collection('customers').doc(customerId),customer=(await tx.get(customerRef)).data();
       final cashRef=db.collection('settings').doc('cash'),cash=(await tx.get(cashRef)).data();
       final receiptRef=db.collection('receipts').doc(ref.id),existing=(await tx.get(receiptRef)).data();
+      final receiptCounterRef=db.collection('settings').doc('receiptCounter');
+      final receiptCounter=(await tx.get(receiptCounterRef)).data();
+      final receiptNumber=((receiptCounter?['lastNumber'] as num?)?.toInt()??0)+1;
       if(existing!=null)throw StateError('السند موجود بالفعل؛ راجع السجل قبل إعادة الاعتماد');
       if(employee?['active']!=true||employee?['role']!='employee'||employee?['branchId']!=pending['branchId'])
         throw StateError('حساب الموظف غير مفعل أو الفرع تغيّر');
@@ -254,11 +257,12 @@ Future<void> approvePendingReceiptVoucher(BuildContext context,DocumentReference
       final km=db.collection('accountMovements').doc('${ref.id}_cash'),now=FieldValue.serverTimestamp();
       tx.update(customerRef,{'balance':balance-amount,'lastReceiptId':ref.id,'updatedAt':now});
       tx.set(cashRef,{'balance':cashAfter,'lastReceiptId':ref.id,'updatedAt':now},SetOptions(merge:true));
+      tx.set(receiptCounterRef,{'lastNumber':receiptNumber,'updatedAt':now},SetOptions(merge:true));
       tx.set(receiptRef,{'customerId':customerId,'customerName':customerName,'customerPhone':phone,
         'receiptDate':pending['receiptDate'],'createdAt':now,'amount':amount,'balanceBefore':balance,'balanceAfter':balance-amount,
         'cashBefore':cashBefore,'cashAfter':cashAfter,'actorId':employeeId,'actorName':name,
         'branchId':pending['branchId'],'note':pending['note']??'','paymentMethod':pending['paymentMethod']??'نقدي',
-        'receiptNumber':pending['receiptNumber']??ref.id,'customerMovementId':cm.id,'cashMovementId':km.id});
+        'receiptNumber':'$receiptNumber','customerMovementId':cm.id,'cashMovementId':km.id});
       tx.set(cm,{'accountType':'customers','accountId':customerId,'accountName':customerName,'kind':'collection',
         'amount':amount,'balanceBefore':balance,'balanceAfter':balance-amount,'referenceId':ref.id,
         'actorId':employeeId,'branchId':pending['branchId'],'createdAt':now,'receiptDate':pending['receiptDate']});

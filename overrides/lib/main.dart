@@ -1025,34 +1025,38 @@ class DashboardActionTile extends StatelessWidget {
   );
 }
 
-DateTime _dashboardStartOfDay() {
-  final now = DateTime.now();
-  return DateTime(now.year, now.month, now.day);
+DateTime _dashboardStartOfDay([DateTime? day]) {
+  final value = day ?? DateTime.now();
+  return DateTime(value.year, value.month, value.day);
 }
 
 class DashboardMetric extends StatelessWidget {
   final String label, collection, valueField;
   final String? actorId;
+  final DateTime selectedDay;
   final bool count;
   final Color accent;
   final IconData icon;
   const DashboardMetric({super.key, required this.label, required this.collection, required this.valueField,
-    required this.accent, required this.icon, this.actorId, this.count = false});
+    required this.accent, required this.icon, required this.selectedDay, this.actorId, this.count = false});
   @override
   Widget build(BuildContext context) {
+    final start = _dashboardStartOfDay(selectedDay);
+    final end = start.add(const Duration(days: 1));
     Query<Map<String, dynamic>> query = db.collection(collection);
     if (actorId != null) {
       query = query.where('actorId', isEqualTo: actorId);
     } else {
-      query = query.where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(_dashboardStartOfDay()));
+      query = query.where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+          .where('createdAt', isLessThan: Timestamp.fromDate(end));
     }
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: query.snapshots(),
       builder: (context, snapshot) {
-        final cutoff = Timestamp.fromDate(_dashboardStartOfDay());
+        final from = Timestamp.fromDate(start), until = Timestamp.fromDate(end);
         final docs = (snapshot.data?.docs ?? const []).where((doc) {
           final created = doc.data()['createdAt'];
-          return actorId == null || (created is Timestamp && created.compareTo(cutoff) >= 0);
+          return created is Timestamp && created.compareTo(from) >= 0 && created.compareTo(until) < 0;
         }).toList();
         final amount = count ? docs.length.toDouble() : docs.fold<double>(0, (sum, doc) {
           final value = doc.data()[valueField];
@@ -1074,36 +1078,65 @@ class DashboardMetric extends StatelessWidget {
   }
 }
 
-class DashboardSummaryCard extends StatelessWidget {
+class DashboardSummaryCard extends StatefulWidget {
   final bool owner;
   final String? actorId;
   const DashboardSummaryCard({super.key, required this.owner, this.actorId});
 
+  @override
+  State<DashboardSummaryCard> createState() => _DashboardSummaryCardState();
+}
+
+class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
+  late DateTime selectedDay;
+
+  @override
+  void initState() {
+    super.initState();
+    selectedDay = _dashboardStartOfDay();
+  }
+
   Widget _divider() => Container(width: 1, height: 54, color: const Color(0xFF35435A));
+
+  Future<void> _selectDay() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: selectedDay,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      helpText: 'اختر تاريخ الملخص',
+    );
+    if (picked != null && mounted) {
+      setState(() => selectedDay = _dashboardStartOfDay(picked));
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+    final owner = widget.owner;
+    final metricDay = owner ? selectedDay : _dashboardStartOfDay();
     final metrics = owner
         ? <Widget>[
-            DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total',
+            DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', selectedDay: metricDay,
               accent: gold, icon: Icons.monetization_on_outlined),
             _divider(),
-            DashboardMetric(label: 'إجمالي المشتريات', collection: 'purchases', valueField: 'total',
+            DashboardMetric(label: 'إجمالي المشتريات', collection: 'purchases', valueField: 'total', selectedDay: metricDay,
               accent: const Color(0xFF55B8FF), icon: Icons.shopping_cart_outlined),
             _divider(),
-            DashboardMetric(label: 'حركة السداد', collection: 'receipts', valueField: 'amount',
+            DashboardMetric(label: 'حركة السداد', collection: 'receipts', valueField: 'amount', selectedDay: metricDay,
               accent: const Color(0xFF45D483), icon: Icons.volunteer_activism_outlined),
           ]
         : <Widget>[
-            DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', actorId: actorId,
+            DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', actorId: widget.actorId, selectedDay: metricDay,
               accent: gold, icon: Icons.monetization_on_outlined),
             _divider(),
-            DashboardMetric(label: 'عدد الفواتير', collection: 'sales', valueField: 'total', actorId: actorId,
+            DashboardMetric(label: 'عدد الفواتير', collection: 'sales', valueField: 'total', actorId: widget.actorId, selectedDay: metricDay,
               accent: const Color(0xFF55B8FF), icon: Icons.description_outlined, count: true),
             _divider(),
-            DashboardMetric(label: 'المحصل اليوم', collection: 'receipts', valueField: 'amount', actorId: actorId,
+            DashboardMetric(label: 'المحصل اليوم', collection: 'receipts', valueField: 'amount', actorId: widget.actorId, selectedDay: metricDay,
               accent: const Color(0xFF45D483), icon: Icons.volunteer_activism_outlined),
           ];
+    final title = owner ? 'ملخص ${DateFormat('dd/MM/yyyy').format(selectedDay)}' : 'ملخص اليوم';
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       decoration: BoxDecoration(color: const Color(0xFF081526), borderRadius: BorderRadius.circular(20),
@@ -1111,12 +1144,21 @@ class DashboardSummaryCard extends StatelessWidget {
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Padding(padding: const EdgeInsetsDirectional.fromSTEB(14, 10, 14, 0),
           child: Row(children: [
-            Container(width: 31, height: 31,
-              decoration: BoxDecoration(color: const Color(0xFF0D1C30), borderRadius: BorderRadius.circular(9),
-                border: Border.all(color: const Color(0xFF35435A))),
-              child: const Icon(Icons.calendar_month_outlined, color: gold, size: 19)),
+            if (owner)
+              IconButton(
+                tooltip: 'اختيار تاريخ الملخص',
+                onPressed: _selectDay,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints.tightFor(width: 31, height: 31),
+                icon: const Icon(Icons.calendar_month_outlined, color: gold, size: 19),
+              )
+            else
+              Container(width: 31, height: 31,
+                decoration: BoxDecoration(color: const Color(0xFF0D1C30), borderRadius: BorderRadius.circular(9),
+                  border: Border.all(color: const Color(0xFF35435A))),
+                child: const Icon(Icons.calendar_month_outlined, color: gold, size: 19)),
             const SizedBox(width: 8),
-            Text('ملخص اليوم', style: TextStyle(color: owner ? gold : Colors.white,
+            Text(title, style: TextStyle(color: owner ? gold : Colors.white,
               fontWeight: FontWeight.bold, fontSize: 16)),
           ])),
         Row(children: metrics),
@@ -4203,6 +4245,9 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
               final customer = await tx.get(customerRef);
               final cashRef = db.collection('settings').doc('cash');
               final cash = await tx.get(cashRef);
+              final receiptCounterRef = db.collection('settings').doc('receiptCounter');
+              final receiptCounter = await tx.get(receiptCounterRef);
+              final receiptNumber = ((receiptCounter.data()?['lastNumber'] as num?)?.toInt() ?? 0) + 1;
               if (!customer.exists || customer.data()?['active'] == false) throw Exception('العميل غير متاح');
               final balance = (customer.data()?['balance'] as num?)?.toDouble() ?? 0;
               if (paid > balance) throw Exception('المبلغ أكبر من المديونية الحالية للعميل');
@@ -4213,17 +4258,18 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
                 'customerId':id,'customerName':customerName,'customerPhone':'${customer.data()?['phone'] ?? ''}',
                 'receiptDate':receiptDate,'createdAt':receiptDate,'amount':paid,'balanceBefore':balance,
                 'balanceAfter':balance-paid,'actorId':actor,'actorName':'${profile?['name'] ?? ''}',
-                'branchId':branchId,'note':note.text.trim(),'paymentMethod':paymentMethod,'receiptNumber':'VIB-RC-${DateFormat('yyyyMMdd').format(selectedReceiptDate)}-${receiptRef.id.substring(0,6).toUpperCase()}',
+                'branchId':branchId,'note':note.text.trim(),'paymentMethod':paymentMethod,'receiptNumber':'$receiptNumber',
               };
               tx.update(customerRef, {'balance': balance - paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now});
               tx.set(cashRef, {'balance': beforeCash + paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now}, SetOptions(merge: true));
+              tx.set(receiptCounterRef, {'lastNumber': receiptNumber, 'updatedAt': now}, SetOptions(merge: true));
               tx.set(receiptRef, {
                 'customerId': id, 'customerName': customerName, 'customerPhone': '${customer.data()?['phone'] ?? ''}',
                 'receiptDate':receiptDate,
                 'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
                 'cashBefore': beforeCash, 'cashAfter': beforeCash + paid,
                 'actorId': actor, 'actorName': '${profile?['name'] ?? ''}', 'branchId': branchId,
-                'note': note.text.trim(), 'paymentMethod':paymentMethod,'receiptNumber':'VIB-RC-${DateFormat('yyyyMMdd').format(selectedReceiptDate)}-${receiptRef.id.substring(0,6).toUpperCase()}', 'createdAt': now,
+                'note': note.text.trim(), 'paymentMethod':paymentMethod,'receiptNumber':'$receiptNumber', 'createdAt': now,
                 'customerMovementId': customerMovement.id, 'cashMovementId': cashMovement.id,
               });
               tx.set(customerMovement, {
@@ -5254,7 +5300,7 @@ Future<void> _printPdfOnBluetoothThermal(
       for (var x = 0; x < bitmap.width; x++) {
         final pixel = bitmap.getPixel(x, y);
         final luminance = (pixel.r * 299 + pixel.g * 587 + pixel.b * 114) / 1000;
-        final channel = luminance < 210 ? 0 : 255;
+        final channel = luminance < 230 ? 0 : 255;
         bitmap.setPixelRgb(x, y, channel, channel, channel);
         if (channel == 0) darkPixels++;
       }
