@@ -3,7 +3,7 @@ import 'pending_sale_data.dart';
 import 'dart:typed_data';
 import 'dart:async';
 import 'package:record/record.dart';
-import 'package:audioplayers/audioplayers.dart' show AudioPlayer, DeviceFileSource;
+import 'package:audioplayers/audioplayers.dart' show AssetSource, AudioPlayer, DeviceFileSource;
 import 'dart:convert';
 import 'dart:io';
 import 'package:tesseract_ocr/tesseract_ocr.dart';
@@ -411,6 +411,38 @@ class _LoginPageState extends State<LoginPage> {
   static const _secure = FlutterSecureStorage();
   String? error;
   bool busy = false;
+  bool backupAfterLogin = false;
+  bool playLoginChime = true;
+  final AudioPlayer _loginPlayer = AudioPlayer();
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadLoginPreferences());
+  }
+
+  Future<void> _loadLoginPreferences() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    setState(() {
+      backupAfterLogin = prefs.getBool('vib_backup_after_login') ?? false;
+      playLoginChime = prefs.getBool('vib_login_chime') ?? true;
+    });
+  }
+
+  Future<void> _setLoginPreference(String key, bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(key, value);
+  }
+
+  @override
+  void dispose() {
+    phone.dispose();
+    pin.dispose();
+    unawaited(_loginPlayer.dispose());
+    super.dispose();
+  }
+
   String? normalizedPhone() {
     var value = phone.text.replaceAll(RegExp(r'\D'), '');
     if (value.startsWith('00')) value = value.substring(2);
@@ -441,6 +473,13 @@ class _LoginPageState extends State<LoginPage> {
       }
       await _secure.write(key: 'vib_saved_phone', value: number);
       await _secure.write(key: 'vib_saved_pin', value: password);
+      if (!create && playLoginChime) {
+        try {
+          await _loginPlayer.play(AssetSource('login-chime.wav'), volume: .58);
+        } catch (soundError) {
+          debugPrint('VIB login chime failed: $soundError');
+        }
+      }
     } on FirebaseAuthException catch (e) {
       final message = switch (e.code) {
         'user-not-found' || 'invalid-credential' => 'الرقم أو الرقم السري غير صحيح',
@@ -608,22 +647,160 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
   @override
-  Widget build(BuildContext context) => Scaffold(body: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420), child: Padding(
-    padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [
-      const Text('VIB', style: TextStyle(fontSize: 52, fontWeight: FontWeight.bold, color: gold)),
-      const Text('المبيعات والمخزون', style: TextStyle(fontSize: 20)), const SizedBox(height: 28),
-      TextField(controller: phone, keyboardType: TextInputType.phone, decoration: const InputDecoration(labelText: 'رقم الهاتف المصري')),
-      const SizedBox(height: 12),
-      TextField(controller: pin, obscureText: true, keyboardType: TextInputType.number,
-        decoration: const InputDecoration(labelText: 'رقم سري من 6 أرقام أو أكثر')),
-      if (error != null) Text(error!, style: const TextStyle(color: Colors.redAccent)),
-      const SizedBox(height: 18),
-      FilledButton(onPressed: busy ? null : () => login(create: false), child: const Text('دخول')),
-      TextButton.icon(onPressed: busy ? null : recoverPasswordByBiometric, icon: const Icon(Icons.fingerprint), label: const Text('نسيت كلمة السر؟ استرجاع بالبصمة')),
-      TextButton(onPressed: busy ? null : () => login(create: true), child: const Text('إنشاء حساب جديد')),
-      const Text('استرجاع كلمة السر بالبصمة يعمل مجانًا على نفس الموبايل بعد أول تسجيل دخول ناجح. المدير يفعّل حساب الموظف ويحدد فرعه.'),
-    ]),
-  ))));
+  Widget build(BuildContext context) => Scaffold(
+    backgroundColor: const Color(0xFF030B17),
+    body: SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 420),
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(20, 26, 20, 18),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF0D1B2D), Color(0xFF06101C)],
+                ),
+                borderRadius: BorderRadius.circular(26),
+                border: Border.all(color: const Color(0xFF174B84), width: 1.1),
+                boxShadow: const [BoxShadow(color: Color(0x33247BFF), blurRadius: 24)],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 72,
+                    height: 72,
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFFFFD46B), Color(0xFFD6AC55)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(21),
+                      boxShadow: const [BoxShadow(color: Color(0x33FFD46B), blurRadius: 14)],
+                    ),
+                    alignment: Alignment.center,
+                    child: const Text('VIB', style: TextStyle(color: Color(0xFF10131B), fontSize: 27, fontWeight: FontWeight.w900)),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('VIB Manager', style: TextStyle(color: gold, fontWeight: FontWeight.w900, fontSize: 25)),
+                  const SizedBox(height: 3),
+                  const Text('إدارة متجرك بسهولة', style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 15)),
+                  const SizedBox(height: 22),
+                  TextField(
+                    controller: phone,
+                    keyboardType: TextInputType.phone,
+                    textDirection: TextDirection.ltr,
+                    decoration: InputDecoration(
+                      labelText: 'رقم الهاتف المصري',
+                      prefixIcon: const Icon(Icons.phone_android_rounded, color: Color(0xFF76B7FF)),
+                      filled: true,
+                      fillColor: const Color(0xFF071321),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16),
+                        borderSide: const BorderSide(color: Color(0xFF29425F))),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16),
+                        borderSide: const BorderSide(color: Color(0xFF2587FF), width: 1.4)),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: pin,
+                    obscureText: true,
+                    keyboardType: TextInputType.number,
+                    textDirection: TextDirection.ltr,
+                    decoration: InputDecoration(
+                      labelText: 'الرقم السري',
+                      prefixIcon: const Icon(Icons.lock_outline, color: Color(0xFF76B7FF)),
+                      filled: true,
+                      fillColor: const Color(0xFF071321),
+                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16),
+                        borderSide: const BorderSide(color: Color(0xFF29425F))),
+                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(16),
+                        borderSide: const BorderSide(color: Color(0xFF2587FF), width: 1.4)),
+                    ),
+                  ),
+                  if (error != null) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(color: const Color(0xFF361D24), borderRadius: BorderRadius.circular(12)),
+                      child: Text(error!, textAlign: TextAlign.center, style: const TextStyle(color: Color(0xFFFF8B8B), fontSize: 13)),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  SizedBox(
+                    width: double.infinity,
+                    height: 54,
+                    child: FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: gold,
+                        foregroundColor: const Color(0xFF12151C),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        textStyle: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                      ),
+                      onPressed: busy ? null : () => login(create: false),
+                      child: busy
+                          ? const SizedBox(width: 23, height: 23, child: CircularProgressIndicator(strokeWidth: 2.2, color: Color(0xFF12151C)))
+                          : const Text('تسجيل الدخول'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  CheckboxListTile(
+                    value: backupAfterLogin,
+                    onChanged: (value) {
+                      final selected = value ?? false;
+                      setState(() => backupAfterLogin = selected);
+                      unawaited(_setLoginPreference('vib_backup_after_login', selected));
+                    },
+                    controlAffinity: ListTileControlAffinity.trailing,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 3),
+                    dense: true,
+                    activeColor: const Color(0xFF56A8FF),
+                    title: const Text('نسخ نسخة احتياطية إلى Google Drive',
+                      style: TextStyle(color: Color(0xFFE1E9F4), fontSize: 13, fontWeight: FontWeight.w600)),
+                    subtitle: const Text('يظهر خيار Drive بعد دخول المدير',
+                      style: TextStyle(color: Color(0xFF8D9FB5), fontSize: 11)),
+                    secondary: const Icon(Icons.cloud_upload_outlined, color: Color(0xFF56A8FF), size: 21),
+                  ),
+                  SwitchListTile(
+                    value: playLoginChime,
+                    onChanged: (value) {
+                      setState(() => playLoginChime = value);
+                      unawaited(_setLoginPreference('vib_login_chime', value));
+                    },
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 3),
+                    dense: true,
+                    activeThumbColor: const Color(0xFF31E59A),
+                    title: const Text('رنة الدخول', style: TextStyle(color: Color(0xFFE1E9F4), fontSize: 13, fontWeight: FontWeight.w600)),
+                    secondary: const Icon(Icons.music_note_rounded, color: gold, size: 21),
+                  ),
+                  const Divider(color: Color(0x332B4967), height: 15),
+                  TextButton.icon(
+                    onPressed: busy ? null : recoverPasswordByBiometric,
+                    icon: const Icon(Icons.fingerprint, size: 20),
+                    label: const Text('نسيت كلمة السر؟ استرجاع بالبصمة'),
+                  ),
+                  TextButton(
+                    onPressed: busy ? null : () => login(create: true),
+                    child: const Text('إنشاء حساب جديد'),
+                  ),
+                  const Text(
+                    'استرجاع كلمة السر بالبصمة يعمل مجانًا على نفس الموبايل بعد أول تسجيل دخول ناجح. المدير يفعّل حساب الموظف ويحدد فرعه.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Color(0xFF8396AE), fontSize: 11, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 const managerNavy = Color(0xFF030B17);
@@ -670,7 +847,14 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   int page = 0;
   Timer? _presenceTimer;
   bool _presenceWriteInFlight = false;
-  @override void initState() { super.initState(); if(widget.role == 'owner') {ChequeReminders.instance.watch(widget.uid);ManagerOfflineSaleSync.instance.start();ManagerOfflineVoucherSync.instance.start();} else { WidgetsBinding.instance.addObserver(this); _writePresence(true); unawaited(EmployeeOfflineSaleSync.instance.syncPending()); _presenceTimer=Timer.periodic(const Duration(seconds:20),(_){_writePresence(true);unawaited(EmployeeOfflineSaleSync.instance.syncPending());}); } ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
+  @override void initState() { super.initState(); if(widget.role == 'owner') {ChequeReminders.instance.watch(widget.uid);ManagerOfflineSaleSync.instance.start();ManagerOfflineVoucherSync.instance.start();unawaited(_backupAtOwnerLogin());} else { WidgetsBinding.instance.addObserver(this); _writePresence(true); unawaited(EmployeeOfflineSaleSync.instance.syncPending()); _presenceTimer=Timer.periodic(const Duration(seconds:20),(_){_writePresence(true);unawaited(EmployeeOfflineSaleSync.instance.syncPending());}); } ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
+  Future<void> _backupAtOwnerLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getBool('vib_backup_after_login') != true) return;
+    await Future<void>.delayed(const Duration(milliseconds: 900));
+    if (!mounted) return;
+    await backupToDrive(context);
+  }
   Future<void> _writePresence(bool online) async {
     if(widget.role!='employee' || _presenceWriteInFlight) return;
     _presenceWriteInFlight=true;

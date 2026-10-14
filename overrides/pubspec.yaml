@@ -1,5 +1,5 @@
 name: vib_sales
-version: 0.2.16+4036
+version: 0.2.19+4042
 publish_to: none
 description: VIB sales, inventory and branches
 
@@ -45,6 +45,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/vip-logo.png
+    - assets/login-chime.wav
     - assets/tessdata_config.json
     - assets/tessdata/
     - assets/fonts/DejaVuSans.ttf
