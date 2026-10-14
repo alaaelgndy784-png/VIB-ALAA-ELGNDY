@@ -1032,8 +1032,9 @@ class DashboardMetric extends StatelessWidget {
   final String? actorId;
   final bool count;
   final Color accent;
+  final IconData icon;
   const DashboardMetric({super.key, required this.label, required this.collection, required this.valueField,
-    required this.accent, this.actorId, this.count = false});
+    required this.accent, required this.icon, this.actorId, this.count = false});
   @override
   Widget build(BuildContext context) {
     Query<Map<String, dynamic>> query = db.collection(collection);
@@ -1055,9 +1056,9 @@ class DashboardMetric extends StatelessWidget {
           return sum + (value is num ? value.toDouble() : 0);
         });
         final value = snapshot.hasError ? '—' : count ? amount.toInt().toString() : amount.toStringAsFixed(2);
-        return Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 10),
+        return Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(count ? Icons.description_outlined : Icons.payments_outlined, color: accent, size: 25),
+            Icon(icon, color: accent, size: 25),
             const SizedBox(height: 5),
             Text(label, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
@@ -1074,26 +1075,76 @@ class DashboardSummaryCard extends StatelessWidget {
   final bool owner;
   final String? actorId;
   const DashboardSummaryCard({super.key, required this.owner, this.actorId});
+
+  Widget _divider() => Container(width: 1, height: 54, color: const Color(0xFF35435A));
+
   @override
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-    decoration: BoxDecoration(color: const Color(0xFF081526), borderRadius: BorderRadius.circular(20),
-      border: Border.all(color: const Color(0xFF31445E))),
-    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-      Padding(padding: const EdgeInsetsDirectional.fromSTEB(14, 12, 14, 0),
-        child: Row(children: [
-          const Icon(Icons.calendar_month_outlined, color: gold, size: 20), const SizedBox(width: 8),
-          Text('ملخص اليوم', style: TextStyle(color: owner ? gold : Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-        ])),
-      Row(children: owner ? [
-        DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', accent: gold),
-        DashboardMetric(label: 'إجمالي المشتريات', collection: 'purchases', valueField: 'total', accent: const Color(0xFF55B8FF)),
-        DashboardMetric(label: 'حركة السداد', collection: 'receipts', valueField: 'amount', accent: const Color(0xFF45D483)),
-      ] : [
-        DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', actorId: actorId, accent: gold),
-        DashboardMetric(label: 'عدد الفواتير', collection: 'sales', valueField: 'total', actorId: actorId, accent: const Color(0xFF55B8FF), count: true),
-        DashboardMetric(label: 'المحصل اليوم', collection: 'receipts', valueField: 'amount', actorId: actorId, accent: const Color(0xFF45D483)),
+  Widget build(BuildContext context) {
+    final metrics = owner
+        ? <Widget>[
+            DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total',
+              accent: gold, icon: Icons.monetization_on_outlined),
+            _divider(),
+            DashboardMetric(label: 'إجمالي المشتريات', collection: 'purchases', valueField: 'total',
+              accent: const Color(0xFF55B8FF), icon: Icons.shopping_cart_outlined),
+            _divider(),
+            DashboardMetric(label: 'حركة السداد', collection: 'receipts', valueField: 'amount',
+              accent: const Color(0xFF45D483), icon: Icons.volunteer_activism_outlined),
+          ]
+        : <Widget>[
+            DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', actorId: actorId,
+              accent: gold, icon: Icons.monetization_on_outlined),
+            _divider(),
+            DashboardMetric(label: 'عدد الفواتير', collection: 'sales', valueField: 'total', actorId: actorId,
+              accent: const Color(0xFF55B8FF), icon: Icons.description_outlined, count: true),
+            _divider(),
+            DashboardMetric(label: 'المحصل اليوم', collection: 'receipts', valueField: 'amount', actorId: actorId,
+              accent: const Color(0xFF45D483), icon: Icons.volunteer_activism_outlined),
+          ];
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      decoration: BoxDecoration(color: const Color(0xFF081526), borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF31445E))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(padding: const EdgeInsetsDirectional.fromSTEB(14, 10, 14, 0),
+          child: Row(children: [
+            Container(width: 31, height: 31,
+              decoration: BoxDecoration(color: const Color(0xFF0D1C30), borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: const Color(0xFF35435A))),
+              child: const Icon(Icons.calendar_month_outlined, color: gold, size: 19)),
+            const SizedBox(width: 8),
+            Text('ملخص اليوم', style: TextStyle(color: owner ? gold : Colors.white,
+              fontWeight: FontWeight.bold, fontSize: 16)),
+          ])),
+        Row(children: metrics),
       ]),
+    );
+  }
+}
+
+class DashboardNoticeButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const DashboardNoticeButton({super.key, required this.onTap});
+  @override
+  Widget build(BuildContext context) => SizedBox(
+    width: 50, height: 50,
+    child: Stack(clipBehavior: Clip.none, children: [
+      Container(
+        decoration: BoxDecoration(
+          color: const Color(0xFF101D31), shape: BoxShape.circle,
+          border: Border.all(color: const Color(0xFF314562)),
+        ),
+        child: IconButton(
+          tooltip: 'الإشعارات',
+          onPressed: onTap,
+          icon: const Icon(Icons.notifications_none_rounded, color: Colors.white, size: 24),
+        ),
+      ),
+      Positioned(right: 6, top: 5, child: Container(
+        width: 9, height: 9,
+        decoration: BoxDecoration(color: const Color(0xFFFFD477), shape: BoxShape.circle,
+          border: Border.all(color: const Color(0xFF101D31), width: 1)),
+      )),
     ]),
   );
 }
@@ -1110,20 +1161,20 @@ class DashboardWelcome extends StatelessWidget {
       textDirection: TextDirection.ltr,
       children: [
         Container(
-          width: 58,
-          height: 58,
-          alignment: Alignment.center,
+          width: 62, height: 62, alignment: Alignment.center,
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(17),
-            gradient: const LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: [Color(0xFF17263A), Color(0xFF07111E)],
-            ),
-            border: Border.all(color: gold.withValues(alpha: .75), width: 1.4),
-            boxShadow: [BoxShadow(color: gold.withValues(alpha: .10), blurRadius: 10)],
+            gradient: const LinearGradient(begin: Alignment.topLeft, end: Alignment.bottomRight,
+              colors: [Color(0xFF17263A), Color(0xFF07111E)]),
+            border: Border.all(color: gold.withValues(alpha: .35), width: 1),
           ),
-          child: const Text('VIB', style: TextStyle(color: gold, fontWeight: FontWeight.w900, fontSize: 21, letterSpacing: -.8)),
+          child: Stack(alignment: Alignment.center, children: [
+            Positioned(top: 3, child: Icon(Icons.home_outlined, color: gold, size: 17)),
+            Padding(padding: const EdgeInsets.only(top: 8),
+              child: Text('VIB', style: const TextStyle(color: gold, fontWeight: FontWeight.w900,
+                fontSize: 22, letterSpacing: -.8))),
+            const Positioned(bottom: -4, child: Text('⌄', style: TextStyle(color: gold, fontSize: 19, height: 1))),
+          ]),
         ),
         const SizedBox(width: 11),
         Expanded(
@@ -1134,9 +1185,10 @@ class DashboardWelcome extends StatelessWidget {
               Text(owner ? 'VIB Manager' : 'VIB Employee', maxLines: 1, overflow: TextOverflow.ellipsis,
                 textAlign: TextAlign.left,
                 style: const TextStyle(color: gold, fontWeight: FontWeight.w900, fontSize: 20)),
-              Text(name.isEmpty ? (owner ? 'المدير' : 'الموظف') : name, maxLines: 1, overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.left,
-                style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
+              if (!owner)
+                Text('أهلاً، ${name.isEmpty ? 'الموظف' : name}', maxLines: 1, overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.left,
+                  style: const TextStyle(color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600)),
               const Row(children: [
                 Icon(Icons.circle, size: 8, color: Color(0xFF45D483)),
                 SizedBox(width: 6),
@@ -1153,72 +1205,222 @@ class DashboardWelcome extends StatelessWidget {
 
 class DashboardRecentSales extends StatelessWidget {
   final bool owner;
-  final String? actorId;
-  const DashboardRecentSales({super.key, required this.owner, this.actorId});
+  final String? actorId, branchId;
+  const DashboardRecentSales({super.key, required this.owner, this.actorId, this.branchId});
+
   @override
   Widget build(BuildContext context) {
-    Query<Map<String, dynamic>> query = db.collection('sales');
+    Query<Map<String, dynamic>> salesQuery = db.collection('sales').limit(60);
+    Query<Map<String, dynamic>> receiptsQuery = db.collection('receipts').limit(60);
     if (!owner && actorId != null) {
-      query = query.where('actorId', isEqualTo: actorId).limit(60);
-    } else {
-      query = query.orderBy('createdAt', descending: true).limit(20);
+      salesQuery = salesQuery.where('actorId', isEqualTo: actorId);
+      receiptsQuery = receiptsQuery.where('actorId', isEqualTo: actorId);
     }
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: query.snapshots(),
-      builder: (context, snapshot) {
-        final docs = (snapshot.data?.docs ?? const []).toList()
-          ..sort((a, b) {
-            final aTime = a.data()['createdAt'];
-            final bTime = b.data()['createdAt'];
-            final aDate = aTime is Timestamp ? aTime.toDate() : DateTime(1970);
-            final bDate = bTime is Timestamp ? bTime.toDate() : DateTime(1970);
-            return bDate.compareTo(aDate);
-          });
-        return Container(
-          margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-          decoration: BoxDecoration(color: const Color(0xFF071321), borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFF253750))),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            Padding(padding: const EdgeInsetsDirectional.fromSTEB(14, 12, 14, 8),
-              child: Row(children: [
-                const Icon(Icons.access_time, color: gold, size: 20), const SizedBox(width: 8),
-                Expanded(child: Text(owner ? 'آخر المعاملات' : 'آخر النشاط',
-                  style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 16))),
-                if (owner) TextButton(onPressed: () => openVibReport(context, 'فواتير المبيعات',
-                  const InvoiceHistoryPage(type: 'sales')), child: const Text('عرض الكل')),
-              ])),
-            if (snapshot.hasError) const Padding(padding: EdgeInsets.all(16), child: Text('تعذر تحميل النشاط الأخير')),
-            if (!snapshot.hasError && !snapshot.hasData) const Padding(padding: EdgeInsets.all(16),
-              child: Center(child: CircularProgressIndicator())),
-            if (snapshot.hasData && docs.isEmpty) const Padding(padding: EdgeInsets.all(16),
-              child: Text('لا توجد فواتير مبيعات حتى الآن', textAlign: TextAlign.center,
-                style: TextStyle(color: Color(0xFFB8C5D9)))),
-            for (final doc in docs.take(5))
-              Builder(builder: (context) {
-                final data = doc.data();
-                final timestamp = data['createdAt'];
-                final date = timestamp is Timestamp ? DateFormat('dd/MM/yyyy').format(timestamp.toDate()) : 'اليوم';
-                final amount = data['total'] is num ? (data['total'] as num).toDouble().toStringAsFixed(2) : '0.00';
-                final customer = (data['customerName'] ?? '').toString().trim();
-                return Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-                  decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0x332B3A50)))),
-                  child: Row(children: [
-                    Icon(Icons.shopping_cart_outlined, color: owner ? gold : const Color(0xFFFF9B42), size: 25),
-                    const SizedBox(width: 10),
-                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text(customer.isEmpty ? 'فاتورة مبيعات' : 'فاتورة مبيعات • ' + customer,
-                        maxLines: 1, overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                      Text(date, style: const TextStyle(color: Color(0xFF9EACC2), fontSize: 12)),
-                    ])),
-                    Text(amount + ' ج.م', style: TextStyle(color: owner ? gold : const Color(0xFF45D483), fontWeight: FontWeight.bold)),
-                  ]),
+      stream: salesQuery.snapshots(includeMetadataChanges: true),
+      builder: (context, salesSnapshot) {
+        if (salesSnapshot.hasError) return _error();
+        if (!salesSnapshot.hasData) return _loading();
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: receiptsQuery.snapshots(includeMetadataChanges: true),
+          builder: (context, receiptsSnapshot) {
+            if (receiptsSnapshot.hasError) return _error();
+            if (!receiptsSnapshot.hasData) return _loading();
+            if (!owner) return _card(context, salesSnapshot.data!.docs, receiptsSnapshot.data!.docs, const [], const []);
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: db.collection('purchases').limit(60).snapshots(includeMetadataChanges: true),
+              builder: (context, purchasesSnapshot) {
+                if (purchasesSnapshot.hasError) return _error();
+                if (!purchasesSnapshot.hasData) return _loading();
+                return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                  stream: db.collection('accountMovements')
+                      .where('accountType', isEqualTo: 'suppliers').limit(100)
+                      .snapshots(includeMetadataChanges: true),
+                  builder: (context, suppliersSnapshot) {
+                    if (suppliersSnapshot.hasError) return _error();
+                    if (!suppliersSnapshot.hasData) return _loading();
+                    return _card(context, salesSnapshot.data!.docs, receiptsSnapshot.data!.docs,
+                      purchasesSnapshot.data!.docs, suppliersSnapshot.data!.docs);
+                  },
                 );
-              }),
-          ]),
+              },
+            );
+          },
         );
       },
+    );
+  }
+
+  Widget _loading() => const Padding(
+    padding: EdgeInsets.all(18),
+    child: Center(child: CircularProgressIndicator()),
+  );
+  Widget _error() => const Padding(
+    padding: EdgeInsets.all(16),
+    child: Text('تعذر تحميل النشاط الأخير', textAlign: TextAlign.center),
+  );
+
+  Widget _card(
+    BuildContext context,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> sales,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> receipts,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> purchases,
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> supplierMovements,
+  ) {
+    final activities = <DashboardActivity>[];
+    void add(String kind, List<QueryDocumentSnapshot<Map<String, dynamic>>> docs) {
+      for (final doc in docs) {
+        if (visibleAfterReset(doc.data())) activities.add(DashboardActivity(kind, doc.id, doc.data()));
+      }
+    }
+    add('sale', sales);
+    add('receipt', receipts);
+    if (owner) {
+      add('purchase', purchases);
+      add('supplierPayment', supplierMovements.where((d) => d.data()['kind'] == 'payment').toList());
+    }
+    activities.sort((a, b) => b.sortDate.compareTo(a.sortDate));
+    final visible = activities.take(owner ? 4 : 3).toList();
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+      decoration: BoxDecoration(
+        color: const Color(0xFF071321),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFF253750)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Padding(
+          padding: const EdgeInsetsDirectional.fromSTEB(12, 10, 12, 7),
+          child: Row(children: [
+            Container(width: 31, height: 31,
+              decoration: BoxDecoration(color: const Color(0xFF0D1C30), borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: const Color(0xFF35435A))),
+              child: const Icon(Icons.access_time_rounded, color: gold, size: 19)),
+            const SizedBox(width: 8),
+            Expanded(child: Text(owner ? 'آخر المعاملات' : 'آخر النشاط',
+              textAlign: TextAlign.right,
+              style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 16))),
+            InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: () {
+                final page = owner
+                    ? const InvoiceHistoryPage(type: 'sales')
+                    : Sales(owner: false, branchId: branchId ?? '');
+                Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
+                  textDirection: TextDirection.rtl, child: Scaffold(appBar: AppBar(title: const Text('فواتيري')), body: page))));
+              },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFF667386)),
+                  color: const Color(0xFF101D31),
+                ),
+                child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                  Text('عرض الكل', style: TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.w700)),
+                  SizedBox(width: 4),
+                  Icon(Icons.chevron_left, color: gold, size: 17),
+                ]),
+              ),
+            ),
+          ]),
+        ),
+        if (visible.isEmpty)
+          const Padding(padding: EdgeInsets.all(16),
+            child: Text('لا توجد معاملات حتى الآن', textAlign: TextAlign.center,
+              style: TextStyle(color: Color(0xFFB8C5D9)))),
+        for (final activity in visible)
+          DashboardActivityRow(activity: activity, owner: owner),
+      ]),
+    );
+  }
+}
+
+class DashboardActivity {
+  final String kind, id;
+  final Map<String, dynamic> data;
+  const DashboardActivity(this.kind, this.id, this.data);
+
+  DateTime get sortDate {
+    final value = data['createdAt'];
+    return value is Timestamp ? value.toDate() : DateTime(1970);
+  }
+
+  String get title => switch (kind) {
+    'sale' => 'فاتورة مبيعات',
+    'receipt' => 'سداد من عميل',
+    'purchase' => 'فاتورة مشتريات',
+    'supplierPayment' => 'سداد لمورد',
+    _ => 'معاملة',
+  };
+
+  IconData get icon => switch (kind) {
+    'sale' => Icons.shopping_cart_outlined,
+    'receipt' => Icons.volunteer_activism_outlined,
+    'purchase' => Icons.shopping_cart_outlined,
+    'supplierPayment' => Icons.payments_outlined,
+    _ => Icons.receipt_long_outlined,
+  };
+
+  Color get accent => switch (kind) {
+    'sale' || 'purchase' => const Color(0xFFFF922E),
+    'receipt' || 'supplierPayment' => const Color(0xFF31E59A),
+    _ => Colors.white,
+  };
+
+  String status({required bool owner}) {
+    if (owner) return 'تم السداد';
+    if (kind == 'receipt') return 'تم التحصيل';
+    final raw = '${data['approvalStatus'] ?? data['status'] ?? ''}'.toLowerCase();
+    if (['approved', 'accepted', 'complete', 'completed', 'confirmed'].contains(raw)) return 'تمت الفاتورة';
+    return 'إرسال للمدير';
+  }
+
+  Color statusColor({required bool owner}) {
+    final value = status(owner: owner);
+    return value == 'إرسال للمدير' ? const Color(0xFF2587FF) : const Color(0xFF31DFA0);
+  }
+}
+
+class DashboardActivityRow extends StatelessWidget {
+  final DashboardActivity activity;
+  final bool owner;
+  const DashboardActivityRow({super.key, required this.activity, required this.owner});
+
+  @override
+  Widget build(BuildContext context) {
+    final date = activity.sortDate.year > 1970
+        ? DateFormat('dd/MM/yyyy').format(activity.sortDate)
+        : 'اليوم';
+    final color = activity.statusColor(owner: owner);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: const BoxDecoration(border: Border(top: BorderSide(color: Color(0x332B3A50)))),
+      child: Row(children: [
+        Icon(activity.icon, color: activity.accent, size: 30),
+        const SizedBox(width: 10),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          Text(activity.title, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis,
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 14)),
+          Text(date, textAlign: TextAlign.right,
+            style: const TextStyle(color: Color(0xFF9EACC2), fontSize: 12)),
+        ])),
+        const SizedBox(width: 10),
+        Container(
+          constraints: const BoxConstraints(minWidth: 74),
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: .07),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color, width: 1),
+          ),
+          child: Text(activity.status(owner: owner), textAlign: TextAlign.center,
+            style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)),
+        ),
+        const SizedBox(width: 8),
+        const Icon(Icons.chevron_right, color: Color(0xFFFFD477), size: 21),
+      ]),
     );
   }
 }
@@ -1238,31 +1440,9 @@ class StaffDashboard extends StatelessWidget {
       DashboardWelcome(
         name: employeeName,
         owner: false,
-        actions: Row(mainAxisSize: MainAxisSize.min, children: [
-          Container(
-            width: 48,
-            height: 48,
-            decoration: BoxDecoration(
-              color: const Color(0xFF101D31),
-              shape: BoxShape.circle,
-              border: Border.all(color: const Color(0xFF314562)),
-            ),
-            child: const ChatShortcut(owner: false),
-          ),
-          if (canPurchase)
-            IconButton(
-              tooltip: 'مشتريات الموظف',
-              onPressed: () => openPage('مشتريات الموظف', const Purchases(owner: false)),
-              icon: const Icon(Icons.post_add, color: gold, size: 21),
-            ),
-        ]),
+        actions: DashboardNoticeButton(onTap: () => openStaffChat(context, owner: false)),
       ),
       DashboardSummaryCard(owner: false, actorId: uid),
-      Padding(
-        padding: const EdgeInsetsDirectional.fromSTEB(14, 1, 14, 6),
-        child: const Text('القائمة الرئيسية',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-      ),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: GridView.count(
@@ -1289,7 +1469,7 @@ class StaffDashboard extends StatelessWidget {
           ],
         ),
       ),
-      DashboardRecentSales(owner: false, actorId: uid),
+      DashboardRecentSales(owner: false, actorId: uid, branchId: branchId),
     ],
   );
 }
@@ -1325,23 +1505,9 @@ class OwnerDashboard extends StatelessWidget {
       DashboardWelcome(
         name: managerName,
         owner: true,
-        actions: Container(
-          width: 50,
-          height: 50,
-          decoration: BoxDecoration(
-            color: const Color(0xFF101D31),
-            shape: BoxShape.circle,
-            border: Border.all(color: const Color(0xFF314562)),
-          ),
-          child: const ChatShortcut(owner: true),
-        ),
+        actions: DashboardNoticeButton(onTap: () => openStaffChat(context, owner: true)),
       ),
       const DashboardSummaryCard(owner: true),
-      Padding(
-        padding: const EdgeInsetsDirectional.fromSTEB(14, 1, 14, 6),
-        child: const Text('القائمة الرئيسية',
-          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-      ),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: GridView.count(
@@ -1356,8 +1522,8 @@ class OwnerDashboard extends StatelessWidget {
             tile('المشتريات', Icons.shopping_cart, () => openPage('المشتريات', const Purchases()), accent: const Color(0xFFFF922E)),
             tile('العملاء', Icons.groups, () => openPage('العملاء', const Accounts()), accent: const Color(0xFF38A9FF)),
             tile('الموردين', Icons.local_shipping, () => openPage('الموردين', const Accounts(startWithSuppliers: true)), accent: const Color(0xFFFFC857)),
-            tile('حركة السداد', Icons.volunteer_activism, () => openPage('حركة السداد', const CustomerPaymentReport(owner: true)), accent: const Color(0xFF31E59A)),
             tile('المحادثة', Icons.forum, () => openStaffChat(context, owner: true), accent: const Color(0xFFB866FF)),
+            tile('حركة السداد', Icons.volunteer_activism, () => openPage('حركة السداد', const CustomerPaymentReport(owner: true)), accent: const Color(0xFF31E59A)),
           ],
         ),
       ),
