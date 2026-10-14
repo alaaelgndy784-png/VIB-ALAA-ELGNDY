@@ -278,7 +278,7 @@ class VibApp extends StatelessWidget {
         )),
         labelTextStyle: WidgetStateProperty.resolveWith((states) => TextStyle(
           color: states.contains(WidgetState.selected) ? const Color(0xFF66B8FF) : const Color(0xFF8795AA),
-          fontSize: 11,
+          fontSize: 9,
           fontWeight: states.contains(WidgetState.selected) ? FontWeight.w700 : FontWeight.w500,
         )),
       ),
