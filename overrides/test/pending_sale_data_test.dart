@@ -4,6 +4,46 @@ import '../lib/pending_sale_data.dart';
 Map<String,dynamic> request(int n)=>{'customerId':'customer','credit':true,'paid':10.0,'total':n*22.23,
   'items':[for(var i=0;i<n;i++){'productId':'p$i','quantity':2,'unitPrice':11.115,'basePrice':12.35,'discountPercent':10}]};
 void main() {
+  test('employee offline draft round-trips without changing invoice lines or totals',() {
+    final draft=OfflineEmployeeSaleData.parse({
+      'id':'sale123','branchId':'branchA','customerId':'customerA','createdAt':'2026-10-14T08:00:00Z',
+      'credit':true,'total':30.0,'paid':10.0,'items':[
+        {'productId':'p1','productName':'حنفية','quantity':2,'unitPrice':15.0,'basePrice':18.0,'discountPercent':0}
+      ],
+    });
+    final restored=OfflineEmployeeSaleData.parse(draft.toJson());
+    expect(restored.id,'sale123');expect(restored.branchId,'branchA');
+    expect(restored.total,30);expect(restored.paid,10);expect(restored.items.single['productId'],'p1');
+    expect(restored.lastError,'');
+  });
+  test('cash employee offline draft can be saved without a registered customer',() {
+    final draft=OfflineEmployeeSaleData.parse({
+      'id':'sale124','branchId':'branchA','customerId':'','createdAt':'2026-10-14T08:00:00Z',
+      'credit':false,'total':30.0,'paid':30.0,'items':[
+        {'productId':'p1','productName':'حنفية','quantity':2,'unitPrice':15.0,'basePrice':18.0,'discountPercent':0}
+      ],
+    });
+    expect(draft.customerId,'');expect(draft.credit,false);
+  });
+  test('credit employee offline draft requires a registered customer',() {
+    final draft={
+      'id':'sale124','branchId':'branchA','customerId':'','createdAt':'2026-10-14T08:00:00Z',
+      'credit':true,'total':30.0,'paid':10.0,'items':[
+        {'productId':'p1','productName':'حنفية','quantity':2,'unitPrice':15.0,'basePrice':18.0,'discountPercent':0}
+      ],
+    };
+    expect(()=>OfflineEmployeeSaleData.parse(draft),throwsFormatException);
+  });
+  test('invalid employee offline draft cannot be queued',() {
+    final draft={
+      'id':'sale123','branchId':'branchA','customerId':'customerA','createdAt':'2026-10-14T08:00:00Z',
+      'credit':false,'total':30.0,'paid':30.0,'items':[
+        {'productId':'p1','productName':'حنفية','quantity':2,'unitPrice':15.0,'basePrice':18.0,'discountPercent':0},
+        {'productId':'p1','productName':'حنفية ثانية','quantity':1,'unitPrice':0.0,'basePrice':0.0,'discountPercent':0},
+      ],
+    };
+    expect(()=>OfflineEmployeeSaleData.parse(draft),throwsFormatException);
+  });
   test('five and fifty item proposals recalculate totals instead of trusting supplied totals',() {
     for(final n in [5,50]) {
       final parsed=PendingSaleData.parse(request(n));
