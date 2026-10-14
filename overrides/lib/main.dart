@@ -5280,22 +5280,14 @@ Future<void> _printPdfOnBluetoothThermal(
       height: cropHeight,
     );
 
-    // Use ESC * column graphics because some compact printers misread GS v 0
-    // raster payloads as scattered symbols. The bitmap is already cropped above.
+    // Keep the printer's compatible raster image mode and send the cropped receipt as one job.
     final commands = <int>[
       ...generator.reset(),
-      ...generator.image(printBitmap, align: esc.PosAlign.center),
+      ...generator.imageRaster(printBitmap, align: esc.PosAlign.center),
       ...generator.feed(2),
     ];
-    const chunkSize = 1024;
-    for (var offset = 0; offset < commands.length; offset += chunkSize) {
-      final end = offset + chunkSize < commands.length ? offset + chunkSize : commands.length;
-      if (!await PrintBluetoothThermal.writeBytes(commands.sublist(offset, end))) {
-        throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');
-      }
-      if (end < commands.length) {
-        await Future.delayed(const Duration(milliseconds: 20));
-      }
+    if (!await PrintBluetoothThermal.writeBytes(commands)) {
+      throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');
     }
     // Keep Bluetooth connected while the printer drains its receive buffer.
     await Future.delayed(const Duration(seconds: 3));
