@@ -5289,7 +5289,7 @@ Future<void> _printPdfOnBluetoothThermal(
     ];
     const chunkSize = 1024;
     for (var offset = 0; offset < commands.length; offset += chunkSize) {
-      final end = (offset + chunkSize).clamp(0, commands.length);
+      final end = offset + chunkSize < commands.length ? offset + chunkSize : commands.length;
       if (!await PrintBluetoothThermal.writeBytes(commands.sublist(offset, end))) {
         throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');
       }
