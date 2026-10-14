@@ -4020,10 +4020,10 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                         trailing: Text(receiptReportMoney(((row['amount'] as num) * 100).round()),
                           style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold, fontSize: 13)),
-                        subtitle: Text('رقم السند: ${receiptDisplayNumber(row)} • المسؤول: ${row['actorName'] ?? ''}\\n${row['note'] ?? ''}',
+                        subtitle: Text('رقم السند: ${receiptDisplayNumber(row)} • المسؤول: ${row['actorName'] ?? ''}\n${row['note'] ?? ''}',
                           style: const TextStyle(fontSize: 11, height: 1.15)),
                       ),
-                    ))).toList())),                    )))).toList())),
+                    ))).toList())),
               ]);
             },
           );
