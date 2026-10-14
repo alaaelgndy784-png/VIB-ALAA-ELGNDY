@@ -48,45 +48,112 @@ class PendingReceiptShortcut extends StatelessWidget {
 
 class PendingReceiptPage extends StatelessWidget {
   final bool owner;
-  const PendingReceiptPage({super.key,required this.owner});
-  @override Widget build(BuildContext context)=>StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
-    stream:pendingReceiptQuery(owner).snapshots(includeMetadataChanges:true),
-    builder:(context,snapshot){
-      if(snapshot.hasError)return const Center(child:Text('تعذر تحميل طلبات سندات القبض؛ راجع الاتصال والصلاحيات'));
-      if(!snapshot.hasData)return const Center(child:CircularProgressIndicator());
-      final rows=snapshot.data!.docs.toList()..sort((a,b){
-        final pa=a.data()['status']=='pending',pb=b.data()['status']=='pending';
-        if(pa!=pb)return pa?-1:1;
-        return ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch??0)
-          .compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch??0);
-      });
-      return Column(children:[
-        Padding(padding:const EdgeInsets.all(12),child:Text(owner
-          ?'راجع السند ثم اعتمده. رصيد العميل والصندوق لا يتغيران قبل الاعتماد.'
-          :'السند لا يغيّر رصيد العميل أو الصندوق إلا بعد اعتماد المدير.',textAlign:TextAlign.center)),
-        if(snapshot.data!.metadata.isFromCache)const Text('بيانات محفوظة على الجهاز؛ تأكد من الحالة عند الاتصال'),
-        Expanded(child:rows.isEmpty?const Center(child:Text('لا توجد طلبات سند قبض'))
-          :ListView(children:[for(final row in rows)Card(child:Padding(
-            padding:const EdgeInsets.all(8),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-              ListTile(contentPadding:const EdgeInsets.symmetric(horizontal:8),
-                leading:Icon(row.data()['status']=='approved'?Icons.check_circle:
-                  row.data()['status']=='rejected'?Icons.cancel:Icons.hourglass_top,color:gold),
-                title:Text('${row.data()['customerName']??'عميل'} • ${row.data()['amount']??0} ج.م',
-                  style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
-                subtitle:Text('${owner?'${row.data()['actorName']??''} • ':''}${pendingReceiptStatus(row.data())}\\n'
-                  '${formatDate(row.data()['receiptDate']??row.data()['createdAt'])}\\n${row.data()['note']??''}')),
-              if(owner&&row.data()['status']=='pending')Wrap(alignment:WrapAlignment.end,children:[
-                TextButton.icon(icon:const Icon(Icons.close,color:Colors.redAccent),label:const Text('رفض'),
-                  onPressed:()=>rejectPendingReceiptVoucher(context,row.reference)),
-                FilledButton.icon(icon:const Icon(Icons.check),label:const Text('اعتماد السند'),
-                  onPressed:()=>approvePendingReceiptVoucher(context,row.reference)),
-              ]),
-            ])))])),
-      ]);
-    });
+  const PendingReceiptPage({super.key, required this.owner});
 
-String pendingReceiptStatus(Map<String,dynamic> data)=>data['status']=='approved'?'تم الاعتماد':
-  data['status']=='rejected'?'مرفوض — ${data['rejectionReason']??''}':'في انتظار اعتماد المدير';
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: pendingReceiptQuery(owner).snapshots(includeMetadataChanges: true),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return const Center(child: Text('تعذر تحميل طلبات سندات القبض؛ راجع الاتصال والصلاحيات'));
+        }
+        if (!snapshot.hasData) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        final rows = snapshot.data!.docs.toList()
+          ..sort((a, b) {
+            final aPending = a.data()['status'] == 'pending';
+            final bPending = b.data()['status'] == 'pending';
+            if (aPending != bPending) return aPending ? -1 : 1;
+            final aTime = (a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+            final bTime = (b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0;
+            return bTime.compareTo(aTime);
+          });
+        return Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Text(
+                owner
+                    ? 'راجع السند ثم اعتمده. رصيد العميل والصندوق لا يتغيران قبل الاعتماد.'
+                    : 'السند لا يغيّر رصيد العميل أو الصندوق إلا بعد اعتماد المدير.',
+                textAlign: TextAlign.center,
+              ),
+            ),
+            if (snapshot.data!.metadata.isFromCache)
+              const Text('بيانات محفوظة على الجهاز؛ تأكد من الحالة عند الاتصال'),
+            Expanded(
+              child: rows.isEmpty
+                  ? const Center(child: Text('لا توجد طلبات سند قبض'))
+                  : ListView.builder(
+                      itemCount: rows.length,
+                      itemBuilder: (context, index) {
+                        final row = rows[index];
+                        final data = row.data();
+                        final status = '${data['status'] ?? 'pending'}';
+                        return Card(
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                ListTile(
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                                  leading: Icon(
+                                    status == 'approved'
+                                        ? Icons.check_circle
+                                        : status == 'rejected'
+                                            ? Icons.cancel
+                                            : Icons.hourglass_top,
+                                    color: gold,
+                                  ),
+                                  title: Text(
+                                    '${data['customerName'] ?? 'عميل'} • ${data['amount'] ?? 0} ج.م',
+                                    style: const TextStyle(color: gold, fontWeight: FontWeight.bold),
+                                  ),
+                                  subtitle: Text(
+                                    '${owner ? '${data['actorName'] ?? ''} • ' : ''}${pendingReceiptStatus(data)}\n'
+                                    '${formatDate(data['receiptDate'] ?? data['createdAt'])}\n'
+                                    '${data['note'] ?? ''}',
+                                  ),
+                                ),
+                                if (owner && status == 'pending')
+                                  Wrap(
+                                    alignment: WrapAlignment.end,
+                                    children: [
+                                      TextButton.icon(
+                                        icon: const Icon(Icons.close, color: Colors.redAccent),
+                                        label: const Text('رفض'),
+                                        onPressed: () => rejectPendingReceiptVoucher(context, row.reference),
+                                      ),
+                                      FilledButton.icon(
+                                        icon: const Icon(Icons.check),
+                                        label: const Text('اعتماد السند'),
+                                        onPressed: () => approvePendingReceiptVoucher(context, row.reference),
+                                      ),
+                                    ],
+                                  ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+String pendingReceiptStatus(Map<String, dynamic> data) {
+  final status = data['status'];
+  if (status == 'approved') return 'تم الاعتماد';
+  if (status == 'rejected') return 'مرفوض — ${data['rejectionReason'] ?? ''}';
+  return 'في انتظار اعتماد المدير';
+}
 
 Future<void> createPendingReceiptVoucher(BuildContext context,String branchId,{String? initialCustomerId}) async {
   final amount=TextEditingController(),note=TextEditingController();
