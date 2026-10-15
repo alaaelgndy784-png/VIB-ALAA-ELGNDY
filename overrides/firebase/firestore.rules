@@ -121,11 +121,12 @@ service cloud.firestore {
     function moneyEqual(a, b) { return math.abs(a - b) <= 0.000001; }
     function validSaleTender(s) {
       let t = s.get('paymentBreakdown', {'cash': s.paid});
+      let c = t.get('cash', 0);
+      let i = t.get('instapay', 0);
+      let v = t.get('vodafoneCash', 0);
       return t is map && t.keys().hasOnly(['cash','instapay','vodafoneCash'])
-        && t.get('cash', 0) is number && t.get('cash', 0) >= 0
-        && t.get('instapay', 0) is number && t.get('instapay', 0) >= 0
-        && t.get('vodafoneCash', 0) is number && t.get('vodafoneCash', 0) >= 0
-        && moneyEqual(t.get('cash', 0) + t.get('instapay', 0) + t.get('vodafoneCash', 0), s.paid);
+        && c is number && c >= 0 && i is number && i >= 0 && v is number && v >= 0
+        && math.abs(c + i + v - s.paid) <= 0.000001;
     }
     function staffLine(s, i) {
       let x = s.items[i];
