@@ -68,6 +68,29 @@ void main() {
     final draft=request(5);draft['credit']=false;draft['paid']=5*22.23;
     expect(PendingSaleData.parse(draft).paid,closeTo(111.15,0.000001));
   });
+  test('sale tender split adds exactly to paid and old invoices default to cash',() {
+    final split=request(5)..['paymentBreakdown']={'cash':4.25,'instapay':3.50,'vodafoneCash':2.25};
+    final parsed=PendingSaleData.parse(split);
+    expect(parsed.paymentBreakdown['cash'],4.25);
+    expect(parsed.paymentBreakdown['instapay'],3.50);
+    expect(parsed.paymentBreakdown['vodafoneCash'],2.25);
+    final legacy=request(5);
+    expect(PendingSaleData.parse(legacy).paymentBreakdown['cash'],10);
+    for(final bad in [
+      {'cash':4.0,'instapay':3.5,'vodafoneCash':2.0},
+      {'cash':-1.0,'instapay':6.0,'vodafoneCash':5.0},
+      {'cash':4.0,'instapay':3.0,'vodafoneCash':2.0,'unknown':1.0},
+    ]) {
+      final invalid=request(5)..['paymentBreakdown']=bad;
+      expect(()=>PendingSaleData.parse(invalid),throwsFormatException);
+    }
+  });
+  test('invoice correction preserves tender history and treats payment changes as cash',() {
+    final increased=adjustSalePaymentBreakdown({'cash':4,'instapay':3,'vodafoneCash':3},10,12);
+    expect(increased,{'cash':6.0,'instapay':3.0,'vodafoneCash':3.0});
+    final reduced=adjustSalePaymentBreakdown({'cash':4,'instapay':3,'vodafoneCash':3},10,5);
+    expect(reduced,{'cash':0.0,'instapay':2.0,'vodafoneCash':3.0});
+  });
   test('manager repricing recalculates totals and preserves the original quote',() {
     final draft=request(5);
     final edited=repricePendingSale(draft,List<double>.filled(5,20));

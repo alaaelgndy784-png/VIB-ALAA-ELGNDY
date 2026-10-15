@@ -413,6 +413,7 @@ class InvoiceOverviewContent extends StatelessWidget {
       sales ? 'unitPrice' : 'unitCost':data[sales ? 'unitPrice' : 'unitCost'] ?? 0,'lineTotal':data['total'] ?? 0});
     String money(dynamic v)=>((v as num?) ?? 0).toStringAsFixed(2);
     final paid=(data['paid'] as num?) ?? (sales ? (data['total'] as num?) ?? 0 : 0);
+    final tender=sales ? normalizeSalePaymentBreakdown(data['paymentBreakdown'],paid.toDouble()) : const <String,double>{};
     final receipt=(data['receiptPaid'] as num?) ?? 0;
     final due=(data['due'] as num?) ?? ((data['total'] as num?) ?? 0)-paid;
     return ListView(shrinkWrap:true,children:[
@@ -428,6 +429,8 @@ class InvoiceOverviewContent extends StatelessWidget {
         ]))),
       Text('الإجمالي: ${money(data['total'])} ج.م',style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
       Text('المدفوع مع السداد المرتبط: ${money(paid+receipt)} ج.م'),
+      if(sales) for(final method in salePaymentMethodLabels.keys)
+        if((tender[method]??0)>0) Text('${salePaymentMethodLabels[method]}: ${money(tender[method])} ج.م'),
       Text(data['status']=='returned' ? 'الفاتورة مرتجعة بالكامل' : 'باقي الفاتورة: ${money(due-receipt)} ج.م'),
     ]);
   }

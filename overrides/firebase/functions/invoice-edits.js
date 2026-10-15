@@ -92,6 +92,12 @@ async function appendInvoice(db, FieldValue, ErrorType, uid, input) {
       fail('invalid-argument', 'عدد البنود أو الإجمالي أكبر من المسموح');
     const payment = cents(input.paid);
     if (payment > addedTotal) fail('invalid-argument', 'المدفوع أكبر من قيمة البنود المضافة');
+    const priorTender = old.paymentBreakdown || {cash: (old.paid ?? 0)};
+    const paymentBreakdown = purchase ? null : {
+      cash: Math.round(((priorTender.cash ?? 0) * 100) + payment) / 100,
+      instapay: priorTender.instapay ?? 0,
+      vodafoneCash: priorTender.vodafoneCash ?? 0,
+    };
     const addedDue = addedTotal - payment;
     if ((purchase || addedDue > 0) && !account) fail('failed-precondition', 'الفاتورة غير مرتبطة بحساب نشط');
     if (account?.active === false) fail('failed-precondition', 'الحساب غير نشط');
@@ -130,6 +136,7 @@ async function appendInvoice(db, FieldValue, ErrorType, uid, input) {
     tx.update(invoiceRef, {items, itemCount: items.length, total: total / 100, paid: paid / 100,
       due: (total - paid) / 100, paymentStatus: total > paid ? 'credit' : 'cash',
       revision, updatedAt: now, lastEditedBy: uid,
+      ...(!purchase ? {paymentBreakdown} : {}),
       ...(!purchase ? {customerBalanceAfter: account ? (cents(account.balance ?? 0) + addedDue) / 100 : 0} : {}),
       ...(items.length === 1 ? {productId: items[0].productId, productName: items[0].productName,
         quantity: items[0].quantity, [purchase ? 'unitCost' : 'unitPrice']: items[0][purchase ? 'unitCost' : 'unitPrice']} : {})});

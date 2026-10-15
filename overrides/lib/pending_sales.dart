@@ -63,7 +63,7 @@ class ManagerOfflineSaleSync {
         qty:line.quantity,price:line.price,cost:null,discount:line.discount,basePrice:line.basePrice));
     }
     await commitGroupedSale(owner:true,branchId:'${data['branchId']}',entries:entries,total:proposal.total,
-      payment:proposal.paid,credit:proposal.credit,customerId:proposal.customerId,
+      payment:proposal.paid,paymentBreakdown:proposal.paymentBreakdown,credit:proposal.credit,customerId:proposal.customerId,
       saleRef:db.collection('sales').doc(doc.id),invoiceNote:'${data['note']??''}',
       allowShortage:data['allowShortage']==true,allowBelowCost:data['allowBelowCost']==true,
       overrideReason:'${data['overrideReason']??''}',pendingRef:doc.reference);
@@ -74,10 +74,12 @@ class ManagerOfflineSaleSync {
 // The owner commits stock, accounts, invoice number and approval in one transaction.
 Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required String branchId,
   required List<SaleEntry> entries, required double total, required double payment,
+  Map<String,double>? paymentBreakdown,
   required bool credit, required String customerId,
   required DocumentReference<Map<String,dynamic>> saleRef,
   String invoiceNote='', bool allowShortage=false, bool allowBelowCost=false, String overrideReason='',
   DocumentReference<Map<String,dynamic>>? pendingRef}) async {
+  final tender=normalizeSalePaymentBreakdown(paymentBreakdown,payment);
   final due=total-payment;
   return db.runTransaction<Map<String,dynamic>>((tx) async {
 
@@ -93,7 +95,7 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                 if (actualBranch.isEmpty || (!owner && entries.length > 4)) {
                   throw Exception('فاتورة الموظف تقبل حتى 4 أصناف مختلفة');
                 }
-                final requestKey = jsonEncode({'customerId': customerId, 'credit': credit, 'paid': payment,
+                final requestKey = jsonEncode({'customerId': customerId, 'credit': credit, 'paid': payment,'paymentBreakdown':tender,
                   if(owner) 'note':invoiceNote,
                   'items': entries.map((e) => {'id': e.id, 'qty': e.qty, 'price': e.price}).toList()});
                 final priorSale = (await tx.get(saleRef)).data();
@@ -111,7 +113,8 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                 }
                 if(pending != null) {
                   final proposal=PendingSaleData.parse(pending);
-                  if(proposal.customerId!=customerId || proposal.credit!=credit || proposal.paid!=payment || proposal.lines.length!=entries.length ||
+                  if(proposal.customerId!=customerId || proposal.credit!=credit || proposal.paid!=payment ||
+                    jsonEncode(proposal.paymentBreakdown)!=jsonEncode(tender) || proposal.lines.length!=entries.length ||
                     List.generate(entries.length,(i)=>proposal.lines[i].id!=entries[i].id || proposal.lines[i].quantity!=entries[i].qty ||
                       proposal.lines[i].price!=entries[i].price || proposal.lines[i].basePrice!=entries[i].basePrice || proposal.lines[i].discount!=entries[i].discount).any((x)=>x)) {
                     throw Exception('بيانات الطلب اتغيرت؛ افتحه من جديد');
@@ -263,6 +266,7 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                   'itemCount': items.length,
                   'total': total,
                   'paid': payment,
+                  'paymentBreakdown':tender,
                   'due': due,
                   'paymentStatus': due > 0 ? 'credit' : 'cash',
                   'status': 'completed',
@@ -285,12 +289,15 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
   });
 }
 
-Future<void> submitPendingSale(String id,List<SaleEntry> entries,String customerId,bool credit,double paid,double total) async {
+Future<void> submitPendingSale(String id,List<SaleEntry> entries,String customerId,bool credit,double paid,double total,
+    {Map<String,double>? paymentBreakdown}) async {
   final uid=FirebaseAuth.instance.currentUser!.uid;
   final ref=db.collection('pendingSales').doc(id);
   final items=entries.map((e)=><String,dynamic>{'productId':e.id,'productName':e.name,'quantity':e.qty,
     'unitPrice':e.price,'basePrice':e.basePrice,'discountPercent':e.discount}).toList();
-  final payload=<String,dynamic>{'customerId':customerId,'credit':credit,'paid':paid,'items':items};
+  final tender=normalizeSalePaymentBreakdown(paymentBreakdown,paid);
+  final payload=<String,dynamic>{'customerId':customerId,'credit':credit,'paid':paid,
+    'paymentBreakdown':tender,'items':items};
   final parsed=PendingSaleData.parse(payload);
   final requestKey=jsonEncode(payload);
   await db.runTransaction((tx) async {
@@ -573,7 +580,7 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
             final parsed=PendingSaleData.parse(latest);
             final entries=parsed.lines.map((x)=>(id:x.id,name:'',qty:x.quantity,price:x.price,cost:null as double?,discount:x.discount,basePrice:x.basePrice)).toList();
             final saved=await commitGroupedSale(owner:true,branchId:'${latest['branchId']}',entries:entries,total:parsed.total,payment:parsed.paid,
-              credit:parsed.credit,customerId:parsed.customerId,saleRef:db.collection('sales').doc(ref.id),pendingRef:ref);
+              paymentBreakdown:parsed.paymentBreakdown,credit:parsed.credit,customerId:parsed.customerId,saleRef:db.collection('sales').doc(ref.id),pendingRef:ref);
             if(c.mounted)Navigator.pop(c);
             if(context.mounted)await showInvoiceSavedActions(context,'sales',ref.id,saved);
           }catch(e){if(c.mounted){update(()=>busy=false);await showInvoiceSaveProblem(c,invoiceSaveFailureMessage(e));}}

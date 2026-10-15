@@ -58,6 +58,7 @@ part 'account_statements.dart';
 part 'staff_purchases.dart';
 part 'voucher_cancellations.dart';
 part 'employee_visits.dart';
+part 'employee_collections.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -171,11 +172,13 @@ class EmployeeOfflineSaleSync {
   }
 
   Future<void> enqueue({required String id,required String branchId,required List<SaleEntry> entries,
-      required String customerId,required bool credit,required double paid,required double total}) async {
+      required String customerId,required bool credit,required double paid,required double total,
+      Map<String,double>? paymentBreakdown}) async {
     final uid=FirebaseAuth.instance.currentUser?.uid;
     if(uid==null)throw StateError('سجّل الدخول مرة أخرى قبل حفظ الفاتورة');
     final sale=OfflineEmployeeSaleData.parse({
       'id':id,'branchId':branchId,'customerId':customerId,'credit':credit,'paid':paid,'total':total,
+      'paymentBreakdown':paymentBreakdown ?? {'cash':paid},
       'createdAt':DateTime.now().toIso8601String(),
       'items':entries.map((entry)=>{'productId':entry.id,'productName':entry.name,'quantity':entry.qty,
         'unitPrice':entry.price,'basePrice':entry.basePrice,'discountPercent':entry.discount}).toList(),
@@ -210,11 +213,12 @@ class EmployeeOfflineSaleSync {
             qty:item['quantity'] as int,price:(item['unitPrice'] as num).toDouble(),cost:null,
             discount:(item['discountPercent'] as num).toDouble(),basePrice:(item['basePrice'] as num).toDouble())).toList();
           if(entries.length>4) {
-            await submitPendingSale(sale.id,entries,sale.customerId,sale.credit,sale.paid,sale.total)
+            await submitPendingSale(sale.id,entries,sale.customerId,sale.credit,sale.paid,sale.total,
+              paymentBreakdown:sale.paymentBreakdown)
                 .timeout(const Duration(seconds:8));
           } else {
             await commitGroupedSale(owner:false,branchId:sale.branchId,entries:entries,total:sale.total,
-              payment:sale.paid,credit:sale.credit,customerId:sale.customerId,
+              payment:sale.paid,paymentBreakdown:sale.paymentBreakdown,credit:sale.credit,customerId:sale.customerId,
               saleRef:db.collection('sales').doc(sale.id)).timeout(const Duration(seconds:8));
           }
         } catch (error) {
@@ -2015,6 +2019,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
   bool allowBelowCost = false;
   bool saving = false, checkout = false;
   final paid = TextEditingController(text: '0');
+  final instaPay = TextEditingController(text: '0');
+  final vodafoneCash = TextEditingController(text: '0');
   final reason = TextEditingController();
   final note = TextEditingController();
   final draftNumber = owner ? await invoiceDraftNumberPreview('sales') : 'يُخصص لدى المدير';
@@ -2033,6 +2039,10 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
       final selectedCustomer = customerId.isEmpty ? null : addedCustomers[customerId] ?? customersSnap.docs.firstWhere((d) => d.id == customerId).data();
 
       final previousBalance = (selectedCustomer?['balance'] as num?)?.toDouble() ?? 0;
+      final checkoutPaid = credit ? (double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? 0) : previewTotal;
+      final instaAmount = double.tryParse(instaPay.text.trim().replaceAll(',', '.')) ?? 0;
+      final vodafoneAmount = double.tryParse(vodafoneCash.text.trim().replaceAll(',', '.')) ?? 0;
+      final cashAmount = checkoutPaid - instaAmount - vodafoneAmount;
       Future<void> editSelected(SaleLine row, {bool adding=false}) async {
         final product=productDoc(row.productId!).data();
         final result=await showInvoiceLineEditor(c,name:'${product['name'] ?? ''}',price:row.price,quantity:row.quantity,
@@ -2068,6 +2078,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
             paid:paid,enabled:!saving,partyLabel:'العميل',
             onModeChanged:(value)=>update(() => credit=value),onChanged:()=>update(() {})),
+          if(!owner) _employeeTenderPanel(instaPay:instaPay,vodafoneCash:vodafoneCash,
+            cashAmount:cashAmount,enabled:!saving,onChanged:()=>update(() {})),
           OutlinedButton.icon(icon:const Icon(Icons.person_search),
             label:Text(customerId.isEmpty ? 'اسم العميل — اختيار عميل' : '${selectedCustomer?['name'] ?? ''}',softWrap:true),
             onPressed:saving ? null : () async {
@@ -2134,6 +2146,18 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               await showInvoiceSaveProblem(c, 'قيمة المدفوع غير صحيحة');
               return;
             }
+            final nonCashPaid = owner ? 0.0 :
+              (double.tryParse(instaPay.text.trim().replaceAll(',', '.')) ?? -1) +
+              (double.tryParse(vodafoneCash.text.trim().replaceAll(',', '.')) ?? -1);
+            if(!nonCashPaid.isFinite || nonCashPaid < 0 || nonCashPaid-payment > 0.005) {
+              await showInvoiceSaveProblem(c, 'مجموع إنستا باي وفودافون كاش لا يمكن أن يزيد عن المدفوع');
+              return;
+            }
+            final paymentBreakdown=normalizeSalePaymentBreakdown(owner ? {'cash':payment} : {
+              'cash':payment-nonCashPaid,
+              'instapay':double.tryParse(instaPay.text.trim().replaceAll(',', '.')) ?? 0,
+              'vodafoneCash':double.tryParse(vodafoneCash.text.trim().replaceAll(',', '.')) ?? 0,
+            },payment);
             final due = total - payment;
             if ((!owner || due > 0) && customerId.isEmpty) {
               await showInvoiceSaveProblem(c, 'اختر عميلًا مسجلًا لربط الفاتورة ورصيد المديونية بحسابه');
@@ -2147,7 +2171,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
             update(() => saving = true);
             try {
               if (!owner && entries.length > 4) {
-                await submitPendingSale(saleRef.id, entries, customerId, credit, payment, total)
+                await submitPendingSale(saleRef.id, entries, customerId, credit, payment, total,
+                    paymentBreakdown:paymentBreakdown)
                     .timeout(const Duration(seconds:8));
                 if (c.mounted) Navigator.pop(c);
                 if (context.mounted) await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
@@ -2159,7 +2184,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               Map<String,dynamic> savedInvoice;
               try {
                 final commit=commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
-                  total:total,payment:payment,credit:credit,customerId:customerId,saleRef:saleRef,
+                  total:total,payment:payment,paymentBreakdown:paymentBreakdown,credit:credit,customerId:customerId,saleRef:saleRef,
                   invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
                 savedInvoice=await (owner ? commit : commit.timeout(const Duration(seconds:8)));
               } catch(e) {
@@ -2179,7 +2204,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
             } catch (e) {
               if(!owner && isTemporaryFirestoreOffline(e)) {
                 await EmployeeOfflineSaleSync.instance.enqueue(id:saleRef.id,branchId:branchId,
-                  entries:entries,customerId:customerId,credit:credit,paid:payment,total:total);
+                  entries:entries,customerId:customerId,credit:credit,paid:payment,total:total,
+                  paymentBreakdown:paymentBreakdown);
                 if(c.mounted)Navigator.pop(c);
                 if(context.mounted)await showInvoiceSaveProblem(context,
                   'تم حفظ الفاتورة على الجهاز. ستُرسل تلقائيًا عند رجوع الإنترنت. لن يُخصم المخزون أو يُسجل الحساب قبل المزامنة.',
@@ -2200,11 +2226,27 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
   for (final row in lines) { row.dispose(); }
   paid.dispose();
+  instaPay.dispose();
+  vodafoneCash.dispose();
   reason.dispose(); note.dispose();
 }
 
 Future<void> saleDialog(BuildContext context, String productId, Map<String, dynamic> product, String uid, String branchId, {bool owner = false}) async {
   await groupedSaleDialog(context, owner: owner, branchId: branchId, initialProductId: productId);
+}
+
+Widget _employeeTenderPanel({required TextEditingController instaPay,required TextEditingController vodafoneCash,
+  required double cashAmount,required bool enabled,required VoidCallback onChanged}) {
+  Widget amountField(String label,TextEditingController controller) => TextField(
+    controller:controller,enabled:enabled,keyboardType:const TextInputType.numberWithOptions(decimal:true),
+    decoration:InputDecoration(labelText:label,suffixText:'ج.م',isDense:true),onChanged:(_)=>onChanged());
+  return _vibInvoicePanel(child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+    const Text('توزيع المبلغ المحصّل',style:TextStyle(color:gold,fontWeight:FontWeight.bold)),
+    const Text('اكتب التحويلات، والباقي يتحسب نقدي مع الموظف.',style:TextStyle(fontSize:12,color:Colors.white70)),
+    amountField('إنستا باي',instaPay),amountField('فودافون كاش',vodafoneCash),
+    Padding(padding:const EdgeInsets.only(top:6),child:Text('النقدي مع الموظف: ${cashAmount.toStringAsFixed(2)} ج.م',
+      style:TextStyle(color:cashAmount < -0.005 ? vibRed : vibNeon,fontWeight:FontWeight.bold))),
+  ]));
 }
 
 
@@ -2405,6 +2447,7 @@ class Management extends StatelessWidget {
   @override
   Widget build(BuildContext context) => ListView(padding: const EdgeInsets.all(16), children: [
     option(context, 'الموظفون والصلاحيات', Icons.groups_outlined, const Staff(), highlight: true),
+    option(context, 'تحصيلات الموظفين', Icons.account_balance_wallet_outlined, const EmployeeCollections(), highlight: true),
     option(context, 'الفروع والمخزون', Icons.storefront_outlined, const Branches()),
     option(context, 'جرد المخزون', Icons.inventory_2_outlined, const InventoryAudit()),
     option(context, 'عرض فواتير المبيعات', Icons.receipt_long_outlined, const InvoiceHistoryPage(type: 'sales')),
@@ -5512,6 +5555,7 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
     final total = cents(old['total'] as num) + addedTotal, paid = cents(old['paid'] as num) + payment;
     tx.update(invoiceRef, {'items': items, 'itemCount': items.length, 'total': total / 100, 'paid': paid / 100,
       'due': (total - paid) / 100, 'paymentStatus': total > paid ? 'credit' : 'cash',
+      if(!purchase) 'paymentBreakdown':adjustSalePaymentBreakdown(old['paymentBreakdown'],(old['paid'] as num).toDouble(),paid/100),
       'revision': revision + 1, 'updatedAt': FieldValue.serverTimestamp(), 'lastEditedBy': actor,
       if (purchase) 'cashPaidPosted': (cents((old['cashPaidPosted'] as num?) ?? 0) + payment) / 100,
       if (!purchase) 'customerBalanceAfter': account == null ? 0 :
@@ -7329,6 +7373,7 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
     }
     tx.update(ref, {'items': items, 'itemCount': items.length, 'stockIndex': {for (var i = 0; i < items.length; i++) '${items[i]['productId']}': i},
       'total': total / 100, 'paid': paid / 100, 'due': due / 100, 'paymentStatus': due > 0 ? 'credit' : 'cash',
+      'paymentBreakdown':adjustSalePaymentBreakdown(old['paymentBreakdown'],(old['paid'] as num).toDouble(),paid/100),
       'revision': revision + 1, 'updatedAt': FieldValue.serverTimestamp(), 'lastEditedBy': actor,
       if(partyChanged) 'customerId':customerId,
       if(partyChanged) 'customerName':customer?['name'] ?? '',

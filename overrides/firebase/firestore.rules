@@ -119,6 +119,14 @@ service cloud.firestore {
       return !exists(/databases/$(database)/documents/sales/$(id)) && s.employeeId == request.auth.uid;
     }
     function moneyEqual(a, b) { return math.abs(a - b) <= 0.000001; }
+    function validSaleTender(s) {
+      let t = s.get('paymentBreakdown', {'cash': s.paid});
+      return t is map && t.keys().hasOnly(['cash','instapay','vodafoneCash'])
+        && t.get('cash', 0) is number && t.get('cash', 0) >= 0
+        && t.get('instapay', 0) is number && t.get('instapay', 0) >= 0
+        && t.get('vodafoneCash', 0) is number && t.get('vodafoneCash', 0) >= 0
+        && moneyEqual(t.get('cash', 0) + t.get('instapay', 0) + t.get('vodafoneCash', 0), s.paid);
+    }
     function staffLine(s, i) {
       let x = s.items[i];
       let stock = getAfter(/databases/$(database)/documents/stock/$('main_' + x.productId)).data;
@@ -146,7 +154,7 @@ service cloud.firestore {
       let s = request.resource.data;
       return s.keys().hasOnly(['id','branchId','stockBranchId','employeeId','customerId','customerName','customerPhone',
           'customerPreviousBalance','customerBalanceAfter','items','itemCount','stockIndex','total','paid','due',
-          'cashBefore','cashAfter','paymentStatus','status','createdAt','requestKey','productId','productName','quantity','unitPrice'])
+          'cashBefore','cashAfter','paymentStatus','status','createdAt','requestKey','productId','productName','quantity','unitPrice','paymentBreakdown'])
         && s.id == id && s.branchId == branch() && s.stockBranchId == 'main' && s.employeeId == request.auth.uid
         && s.status == 'completed' && s.createdAt == request.time
         && s.requestKey is string && s.requestKey.size() <= 6000
@@ -157,7 +165,7 @@ service cloud.firestore {
         && moneyEqual(s.total, s.items[0].lineTotal + (s.itemCount > 1 ? s.items[1].lineTotal : 0)
           + (s.itemCount > 2 ? s.items[2].lineTotal : 0) + (s.itemCount > 3 ? s.items[3].lineTotal : 0))
         && s.paid is number && s.paid >= 0 && s.paid <= s.total && moneyEqual(s.due, s.total - s.paid)
-        && s.paymentStatus == (s.due > 0 ? 'credit' : 'cash')
+        && s.paymentStatus == (s.due > 0 ? 'credit' : 'cash') && validSaleTender(s)
         && s.customerId is string
         && (s.customerId == '' ? (s.due == 0 && s.customerName == '' && s.customerPhone == ''
           && s.customerPreviousBalance == 0 && s.customerBalanceAfter == 0) : staffCustomer(s))
@@ -604,7 +612,7 @@ service cloud.firestore {
       allow get: if owner() || (employee() && (!exists(/databases/$(database)/documents/pendingSales/$(id)) || resource.data.employeeId == request.auth.uid));
       allow list: if owner() || (employee() && resource.data.employeeId == request.auth.uid);
       allow create: if employee()
-        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey'])
+        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey','paymentBreakdown'])
         && request.resource.data.id == id && request.resource.data.employeeId == request.auth.uid
         && request.resource.data.employeeName == profile().name && request.resource.data.branchId == branch()
         && request.resource.data.status == 'pending' && request.resource.data.createdAt == request.time
@@ -613,11 +621,12 @@ service cloud.firestore {
         && request.resource.data.items is list && request.resource.data.items.size() > 4 && request.resource.data.items.size() <= 50
         && request.resource.data.total is number && request.resource.data.total >= 0
         && request.resource.data.paid is number && request.resource.data.paid >= 0 && request.resource.data.paid <= request.resource.data.total
+        && validSaleTender(request.resource.data)
         && request.resource.data.requestKey is string && request.resource.data.requestKey.size() <= 100000;
       // A manager may save a sale draft offline. The draft has no accounting
       // effect until the normal server transaction revalidates and posts it.
       allow create: if owner()
-        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey','managerOffline','note','allowShortage','allowBelowCost','overrideReason'])
+        && request.resource.data.keys().hasOnly(['id','employeeId','employeeName','branchId','customerId','customerName','credit','paid','items','total','status','createdAt','requestKey','managerOffline','note','allowShortage','allowBelowCost','overrideReason','paymentBreakdown'])
         && request.resource.data.id == id && request.resource.data.employeeId == request.auth.uid
         && request.resource.data.employeeName == profile().name && request.resource.data.managerOffline == true
         && request.resource.data.branchId is string && request.resource.data.branchId.size() > 0
@@ -631,6 +640,7 @@ service cloud.firestore {
         && request.resource.data.total is number && request.resource.data.total >= 0
         && request.resource.data.paid is number && request.resource.data.paid >= 0 && request.resource.data.paid <= request.resource.data.total
         && request.resource.data.requestKey is string && request.resource.data.requestKey.size() <= 100000
+        && validSaleTender(request.resource.data)
         && request.resource.data.note is string && request.resource.data.note.size() <= 1000
         && request.resource.data.allowShortage is bool && request.resource.data.allowBelowCost is bool
         && request.resource.data.overrideReason is string && request.resource.data.overrideReason.size() <= 500;
@@ -650,7 +660,7 @@ service cloud.firestore {
         && request.resource.data.status == 'pending'
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
           'items','total','paid','requestKey','managerPriceAdjusted','managerOriginalItems',
-          'managerOriginalTotal','managerAdjustedBy','managerAdjustedAt'])
+          'managerOriginalTotal','managerAdjustedBy','managerAdjustedAt','paymentBreakdown'])
         && request.resource.data.managerPriceAdjusted == true
         && request.resource.data.managerAdjustedBy == request.auth.uid
         && request.resource.data.managerAdjustedAt == request.time
@@ -660,7 +670,8 @@ service cloud.firestore {
         && request.resource.data.paid <= request.resource.data.total
         && request.resource.data.requestKey is string && request.resource.data.requestKey.size() <= 100000
         && request.resource.data.managerOriginalItems is list
-        && request.resource.data.managerOriginalTotal is number;
+        && request.resource.data.managerOriginalTotal is number
+        && validSaleTender(request.resource.data);
       // Owner-only removal of rejected proposals. Preserve payload and review audit.
       allow update: if owner() && resource.data.status == 'rejected'
         && resource.data.get('removed', false) == false
@@ -682,9 +693,10 @@ service cloud.firestore {
       allow update: if owner() && request.resource.data.diff(resource.data).affectedKeys()
         .hasOnly(['status','returnedAt','returnId','printedAt','printedBy'])
         && (resource.data.get('onlinePaid', 0) == 0 || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy']));
-      allow update: if owner() && saleHasNoReceipt(resource.data) && validCorrectedCustomer(resource.data,request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customerId','customerName','customerPhone','customerPreviousBalance','stockIndex','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice'])
+      allow update: if owner() && saleHasNoReceipt(resource.data) && validCorrectedCustomer(resource.data,request.resource.data) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['customerId','customerName','customerPhone','customerPreviousBalance','stockIndex','items','itemCount','total','paid','due','paymentStatus','revision','updatedAt','lastEditedBy','customerBalanceAfter','productId','productName','quantity','unitCost','unitPrice','paymentBreakdown'])
         && resource.data.status == 'completed' && request.resource.data.revision == resource.data.get('revision', 0) + 1
-        && request.resource.data.lastEditedBy == request.auth.uid && request.resource.data.updatedAt == request.time;
+        && request.resource.data.lastEditedBy == request.auth.uid && request.resource.data.updatedAt == request.time
+        && validSaleTender(request.resource.data);
       allow update: if (owner() || (employee() && resource.data.branchId == branch())) && linkedReceiptUpdate(id);
       allow update: if employee() && resource.data.branchId == branch()
         && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['printedAt','printedBy'])
