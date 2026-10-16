@@ -1561,6 +1561,10 @@ class OwnerDashboard extends StatelessWidget {
       const DashboardSummaryCard(owner: true),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: const PendingSalesShortcut(owner: true, compact: true),
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
         child: GridView.count(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -1576,6 +1580,7 @@ class OwnerDashboard extends StatelessWidget {
             tile('المحادثة', Icons.forum, () => openStaffChat(context, owner: true), accent: const Color(0xFFB866FF)),
             tile('حركة السداد', Icons.volunteer_activism, () => openPage('حركة السداد', const CustomerPaymentReport(owner: true)), accent: const Color(0xFF31E59A)),
             tile('زيارات الموظفين', Icons.location_on, () => openPage('زيارات الموظفين', const EmployeeVisitReport()), accent: const Color(0xFF38A9FF)),
+            tile('مواعيد الشيكات', Icons.event_note, () => openPage('مواعيد الشيكات', ChequeAgenda(uid: uid)), accent: const Color(0xFFFFC857)),
           ],
         ),
       ),
@@ -1592,11 +1597,8 @@ class OwnerDashboard extends StatelessWidget {
               title: const Text('سندات القبض'), onTap: () => openPage('سندات القبض', ReceiptVouchers(owner: true, branchId: branchId))),
             ListTile(leading: const Icon(Icons.receipt, color: gold),
               title: const Text('سندات صرف الموردين'), onTap: () => openPage('سندات صرف الموردين', const SupplierPaymentVouchers())),
-            ListTile(leading: const Icon(Icons.event_note, color: gold),
-              title: const Text('مواعيد الشيكات'), onTap: () => openPage('مواعيد الشيكات', ChequeAgenda(uid: uid))),
             ListTile(leading: const Icon(Icons.sync_alt, color: const Color(0xFF51F2B0)),
               title: const Text('حركة المنتجات'), onTap: () => openPage('حركة المنتجات', const ItemMovementReport())),
-            const PendingSalesShortcut(owner: true),
           ],
         )),
     ],
@@ -2516,6 +2518,7 @@ Future<void> expenseDialog(BuildContext context) async {
 
 class _InventoryAuditState extends State<InventoryAudit> {
   String category = 'الكل';
+  String nameQuery = '';
 
   @override
   Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -2544,7 +2547,8 @@ class _InventoryAuditState extends State<InventoryAudit> {
           }
 
           final filtered = rows
-              .where((p) => selected == 'الكل' || '${p.data()['category'] ?? 'غير مصنف'}' == selected)
+              .where((p) => (selected == 'الكل' || '${p.data()['category'] ?? 'غير مصنف'}' == selected) &&
+                '${p.data()['name'] ?? ''}'.toLowerCase().contains(nameQuery.trim().toLowerCase()))
               .toList()
             ..sort((a, b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
 
@@ -2564,6 +2568,13 @@ class _InventoryAuditState extends State<InventoryAudit> {
           final totalSale = auditRows.fold<double>(0, (sum, row) => sum + ((row['price'] as num).toDouble() * (row['quantity'] as num).toDouble()));
 
           return Column(children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+              child: TextField(
+                decoration: const InputDecoration(labelText: 'بحث في جرد المخزون', prefixIcon: Icon(Icons.search)),
+                onChanged: (value) => setState(() => nameQuery = value),
+              ),
+            ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
               child: DropdownButtonFormField<String>(

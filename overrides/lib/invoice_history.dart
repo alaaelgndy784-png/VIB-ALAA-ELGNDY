@@ -12,6 +12,9 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
   bool _showYesterdayAndToday = true;
   Timer? _dayRolloverTimer;
   late Stream<QuerySnapshot<Map<String, dynamic>>> invoices;
+  final TextEditingController partySearchController = TextEditingController();
+  bool _searchingByParty = false;
+  String _partySearchError = '';
   bool get sales => widget.type == 'sales';
 
   @override void initState() {
@@ -25,6 +28,7 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
 
   @override void dispose() {
     _dayRolloverTimer?.cancel();
+    partySearchController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -32,6 +36,10 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
   @override void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed || !mounted) return;
     final now = DateTime.now();
+    if (_searchingByParty) {
+      setState(() {});
+      return;
+    }
     if (_showYesterdayAndToday && !_sameDay(to, now)) {
       setState(() => selectRange(DateTime(now.year, now.month, now.day - 1), DateTime(now.year, now.month, now.day), includeYesterday: true));
     } else {
@@ -53,7 +61,7 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
         if (!mounted) return;
         final today = DateTime.now();
         setState(() {
-          if (_showYesterdayAndToday) {
+          if (_showYesterdayAndToday && !_searchingByParty) {
             selectRange(DateTime(today.year, today.month, today.day - 1), today, includeYesterday: true);
           }
           // For a manually chosen date, rebuild to refresh its today/yesterday color.
@@ -81,16 +89,54 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
     return gold;
   }
 
-  void selectRange(DateTime start, DateTime end, {bool includeYesterday = false}) {
-    from = DateTime(start.year, start.month, start.day);
-    to = DateTime(end.year, end.month, end.day);
-    _showYesterdayAndToday = includeYesterday;
+  void _setDateRangeStream() {
     final fromDay = movementReportBoundary(from);
     final nextDay = movementReportBoundary(to, next: true);
     invoices = db.collection(widget.type)
       .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(fromDay))
       .where('createdAt', isLessThan: Timestamp.fromDate(nextDay))
       .orderBy('createdAt', descending: true).snapshots();
+  }
+
+  void selectRange(DateTime start, DateTime end, {bool includeYesterday = false}) {
+    from = DateTime(start.year, start.month, start.day);
+    to = DateTime(end.year, end.month, end.day);
+    _showYesterdayAndToday = includeYesterday;
+    _searchingByParty = false;
+    _partySearchError = '';
+    partySearchController.clear();
+    _setDateRangeStream();
+  }
+
+  void searchByParty() {
+    final prefix = partySearchController.text.trim();
+    if (prefix.isEmpty) {
+      setState(() => _partySearchError = 'اكتب بداية اسم العميل أو المورد للبحث.');
+      return;
+    }
+    if (prefix.length < 2) {
+      setState(() => _partySearchError = 'اكتب أول حرفين من الاسم على الأقل لتضييق البحث.');
+      return;
+    }
+    final field = sales ? 'customerName' : 'supplierName';
+    setState(() {
+      _searchingByParty = true;
+      _partySearchError = '';
+      invoices = db.collection(widget.type)
+        .orderBy(field)
+        .startAt([prefix])
+        .endAt(['${prefix}${String.fromCharCode(0xF8FF)}'])
+        .snapshots();
+    });
+  }
+
+  void clearPartySearch() {
+    setState(() {
+      partySearchController.clear();
+      _searchingByParty = false;
+      _partySearchError = '';
+      _setDateRangeStream();
+    });
   }
 
   Widget _legend(Color color, String label) => Row(mainAxisSize: MainAxisSize.min, children: [
@@ -106,11 +152,28 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
       TextButton.icon(onPressed: () { final now=DateTime.now(); setState(() => selectRange(DateTime(now.year,now.month,now.day-1),DateTime(now.year,now.month,now.day),includeYesterday:true)); },
         icon: const Icon(Icons.today), label: const Text('فواتير اليوم')),
     ])),
-    MovementPeriodControls(key:ValueKey('${from.toIso8601String()}-${to.toIso8601String()}'),from:from,to:to,enabled:true,onConfirm:(start,end)=>setState(()=>selectRange(start,end))),
-    Text(_showYesterdayAndToday
-        ? 'فواتير ${sales ? 'المبيعات' : 'المشتريات'} • امبارح واليوم'
-        : 'فواتير ${sales ? 'المبيعات' : 'المشتريات'} • من ${DateFormat('dd/MM/yyyy').format(from)} إلى ${DateFormat('dd/MM/yyyy').format(to)}',
-      style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+    Padding(padding: const EdgeInsets.fromLTRB(12, 0, 12, 4), child: Row(children: [
+      Expanded(child: TextField(
+        controller: partySearchController,
+        textInputAction: TextInputAction.search,
+        decoration: InputDecoration(
+          labelText: 'بحث باسم ${sales ? 'العميل' : 'المورد'} — اكتب بداية الاسم',
+          prefixIcon: const Icon(Icons.search),
+        ),
+        onSubmitted: (_) => searchByParty(),
+      )),
+      const SizedBox(width: 8),
+      FilledButton.icon(onPressed: searchByParty, icon: const Icon(Icons.search), label: const Text('بحث')),
+      if (_searchingByParty) IconButton(tooltip: 'مسح البحث', onPressed: clearPartySearch, icon: const Icon(Icons.close)),
+    ])),
+    MovementPeriodControls(key:ValueKey('${from.toIso8601String()}-${to.toIso8601String()}'),from:from,to:to,enabled:true,compact:true,onConfirm:(start,end)=>setState(()=>selectRange(start,end))),
+    if (_partySearchError.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text(_partySearchError, style: const TextStyle(color: Colors.redAccent))),
+    Text(_searchingByParty
+        ? 'كل فواتير ${sales ? 'العميل' : 'المورد'} التي يبدأ اسمها بـ ${partySearchController.text.trim()} • الأحدث أولًا'
+        : _showYesterdayAndToday
+            ? 'فواتير ${sales ? 'المبيعات' : 'المشتريات'} • امبارح واليوم'
+            : 'فواتير ${sales ? 'المبيعات' : 'المشتريات'} • من ${DateFormat('dd/MM/yyyy').format(from)} إلى ${DateFormat('dd/MM/yyyy').format(to)}',
+      textAlign: TextAlign.center, style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
     if (_showYesterdayAndToday)
       Padding(padding: const EdgeInsets.only(top: 6, bottom: 2), child: Wrap(spacing: 16, children: [
         _legend(Colors.greenAccent, 'النهارده'),
@@ -124,6 +187,14 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
       if (snapshot.hasError) return const Center(child: Text('تعذر تحميل الفواتير؛ راجع اتصال الإنترنت وحاول مرة أخرى'));
       if (!snapshot.hasData || snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
       final rows = snapshot.data!.docs.where((row) => visibleAfterReset(row.data())).toList();
+      if (_searchingByParty) {
+        rows.sort((a, b) {
+          final rawA = a.data()['createdAt'], rawB = b.data()['createdAt'];
+          final timeA = rawA is Timestamp ? rawA.millisecondsSinceEpoch : rawA is DateTime ? rawA.millisecondsSinceEpoch : 0;
+          final timeB = rawB is Timestamp ? rawB.millisecondsSinceEpoch : rawB is DateTime ? rawB.millisecondsSinceEpoch : 0;
+          return timeB.compareTo(timeA);
+        });
+      }
       final totalCents=rows.fold<int>(0,(sum,row){final value=row.data()['total'];if(value is! num || !value.isFinite)return sum;return sum+(value*100).round();});
       return Column(children: [
         Padding(padding: const EdgeInsets.only(bottom: 8), child: Text('عدد الفواتير: ${rows.length} • إجمالي الفترة: ${movementReportMoney(totalCents)}',style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
