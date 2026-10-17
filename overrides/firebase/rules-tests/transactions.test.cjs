@@ -45,7 +45,7 @@ test('employee presence is self-written and owner-readable only',async()=>{
  await assertFails(setDoc(own,{online:true,lastSeen:serverTimestamp(),name:'spoofed'}));
  await assertFails(setDoc(doc(inactive,'presence/inactive'),{online:true,lastSeen:serverTimestamp()}));
 });
-test('employee visit check-ins require consent and are visible only to the employee and owner',async()=>{
+test('employee visits support shortage text, voice, return reminders, and safe deletion',async()=>{
  const staff=env.authenticatedContext('staff').firestore(),owner=env.authenticatedContext('owner').firestore(),inactive=env.authenticatedContext('inactive').firestore();
  const visit={employeeId:'staff',employeeName:'Staff',branchId:'staffbranch',customerId:'customer',customerName:'Customer',
    latitude:30.1,longitude:31.2,accuracyMeters:18,consented:true,createdAt:serverTimestamp()};
@@ -58,7 +58,18 @@ test('employee visit check-ins require consent and are visible only to the emplo
  await assertFails(setDoc(doc(staff,'employeeVisits/fake-customer'),{...visit,customerName:'Fake'}));
  await assertFails(setDoc(doc(staff,'employeeVisits/out-of-range'),{...visit,latitude:91}));
  await assertFails(setDoc(doc(staff,'employeeVisits/extra-field'),{...visit,phone:'010'}));
- await assertFails(setDoc(doc(staff,'employeeVisits/own'),{...visit,createdAt:serverTimestamp()}));
+ const returnAt=new Date(Date.now()+86400000);
+ const withText={...visit,shortageText:'خلاط حوض',shortageAudioSeconds:0,nextVisitAt:returnAt};
+ await assertSucceeds(setDoc(doc(staff,'employeeVisits/text'),withText));
+ const noReturn={...visit,shortageText:'',shortageAudioBase64:'YWFh',shortageAudioSeconds:5};
+ await assertFails(setDoc(doc(staff,'employeeVisits/no-return-date'),noReturn));
+ const withAudio={...visit,shortageText:'',shortageAudioBase64:'YWFh',shortageAudioSeconds:5,nextVisitAt:returnAt};
+ await assertSucceeds(setDoc(doc(staff,'employeeVisits/audio'),withAudio));
+ await assertSucceeds(deleteDoc(doc(owner,'employeeVisits/audio')));
+ await env.withSecurityRulesDisabled(async ctx=>setDoc(doc(ctx.firestore(),'employeeVisits/other'),{...visit,employeeId:'other'}));
+ await assertFails(deleteDoc(doc(staff,'employeeVisits/other')));
+ await assertSucceeds(deleteDoc(doc(staff,'employeeVisits/own')));
+ await assertFails(deleteDoc(doc(inactive,'employeeVisits/own')));
 });
 function saleBatch(db,{n=1,paid,customer=true,mutate=()=>{},omit='',saleId='sale',cashBefore=500,createCash=false,unitPrice=12.35}={}){
   const items=Array.from({length:n},(_,i)=>({productId:'p'+i,productName:'Product'+i,quantity:2,unitPrice,lineTotal:unitPrice*2,purchasePriceAtSale:5}));

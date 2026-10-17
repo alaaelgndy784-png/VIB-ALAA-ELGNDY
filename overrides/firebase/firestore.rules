@@ -400,7 +400,8 @@ service cloud.firestore {
       allow get, list: if owner() || (employee() && resource.data.employeeId == request.auth.uid);
       allow create: if employee()
         && request.resource.data.keys().hasOnly(['employeeId','employeeName','branchId','customerId','customerName',
-          'latitude','longitude','accuracyMeters','consented','createdAt'])
+          'latitude','longitude','accuracyMeters','consented','createdAt','shortageText','shortageAudioBase64',
+          'shortageAudioSeconds','nextVisitAt'])
         && request.resource.data.keys().hasAll(['employeeId','employeeName','branchId','customerId','customerName',
           'latitude','longitude','accuracyMeters','consented','createdAt'])
         && request.resource.data.employeeId == request.auth.uid
@@ -415,8 +416,24 @@ service cloud.firestore {
         && request.resource.data.latitude is number && request.resource.data.latitude >= -90 && request.resource.data.latitude <= 90
         && request.resource.data.longitude is number && request.resource.data.longitude >= -180 && request.resource.data.longitude <= 180
         && request.resource.data.accuracyMeters is number
-        && request.resource.data.accuracyMeters >= 0 && request.resource.data.accuracyMeters <= 20000;
-      allow update, delete: if false;
+        && request.resource.data.accuracyMeters >= 0 && request.resource.data.accuracyMeters <= 20000
+        && request.resource.data.get('shortageText', '') is string
+        && request.resource.data.get('shortageText', '').size() <= 1000
+        && request.resource.data.get('shortageAudioSeconds', 0) is int
+        && (('shortageAudioBase64' in request.resource.data
+            && request.resource.data.shortageAudioBase64 is string
+            && request.resource.data.shortageAudioBase64.size() > 0
+            && request.resource.data.shortageAudioBase64.size() <= 800000
+            && request.resource.data.get('shortageAudioSeconds', 0) >= 1
+            && request.resource.data.get('shortageAudioSeconds', 0) <= 60)
+          || (!('shortageAudioBase64' in request.resource.data)
+            && request.resource.data.get('shortageAudioSeconds', 0) == 0))
+        && (!('nextVisitAt' in request.resource.data)
+          || (request.resource.data.nextVisitAt is timestamp && request.resource.data.nextVisitAt > request.time))
+        && ((request.resource.data.get('shortageText', '').size() == 0 && !('shortageAudioBase64' in request.resource.data))
+          || ('nextVisitAt' in request.resource.data));
+      allow update: if false;
+      allow delete: if owner() || (employee() && resource.data.employeeId == request.auth.uid);
     }
     match /products/{id} {
       allow read: if active();
