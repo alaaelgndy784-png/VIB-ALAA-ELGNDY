@@ -3802,39 +3802,48 @@ class ReceiptVouchers extends StatelessWidget {
             final activeRows = owner ? rows.where((d) => !cancelledIds.contains(d.id)).toList() : rows;
             if (activeRows.isEmpty) return const Center(child: Text('لا توجد سندات قبض نشطة'));
             return ListView.builder(itemCount: activeRows.length, itemBuilder: (context, index) {
-            final row = activeRows[index], data = row.data();
-          if (rows.isEmpty) return const Center(child: Text('لا توجد سندات قبض بعد'));
-          return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
-            final row = rows[index], data = row.data();
-            final rawNumber='${data['receiptNumber'] ?? row.id}';
-            final shortNumber=rawNumber.length>18?'${rawNumber.substring(0,10)}…${rawNumber.substring(rawNumber.length-5)}':rawNumber;
-            return Card(child:Padding(padding:const EdgeInsets.fromLTRB(12,10,12,6),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-              Row(children:[
-                const Icon(Icons.payments_outlined,color:gold,size:21),const SizedBox(width:8),
-                Expanded(child:Text('${data['customerName'] ?? 'عميل غير مسجل'}',maxLines:1,overflow:TextOverflow.ellipsis,
-                  style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold,fontSize:15))),
-                const SizedBox(width:8),Text('${data['amount'] ?? 0} ج.م',style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
-              ]),
-              Padding(padding:const EdgeInsetsDirectional.only(start:29,top:4),child:Text('سند: $shortNumber • ${formatDate(receiptEffectiveTimestamp(data))}',
-                maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12))),
-              Padding(padding:const EdgeInsetsDirectional.only(start:29,top:2),child:Text('الموظف: ${data['actorName'] ?? 'المدير'}',
-                maxLines:1,overflow:TextOverflow.ellipsis,style:const TextStyle(fontSize:12,color:Colors.white70))),
-              Padding(padding:const EdgeInsetsDirectional.only(start:29,top:2),child:Text('الرصيد بعد القبض: ${data['balanceAfter'] ?? 0} ج.م',
-                style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold,fontSize:13))),
-              Wrap(alignment:WrapAlignment.start,spacing:2,runSpacing:0,children:[
-                IconButton(visualDensity:VisualDensity.compact,tooltip:'إرسال سند القبض PDF للعميل',icon:const Icon(Icons.share,color:Colors.greenAccent,size:21),
-                  onPressed:()=>shareReceiptVoucher(context,row.id,data)),
-                IconButton(visualDensity:VisualDensity.compact,tooltip:'طباعة / حفظ PDF',icon:const Icon(Icons.picture_as_pdf,size:21),
-                  onPressed:()=>printReceiptVoucher(context,row.id,data)),
-                if(owner) IconButton(visualDensity:VisualDensity.compact,tooltip:'إلغاء سند القبض وعكس أثره المحاسبي',icon:const Icon(Icons.undo,color:Colors.redAccent,size:21),
-                  onPressed:()=>cancelReceiptVoucher(context,row.id,data)),
-              ]),
-            ])));
+              final row = activeRows[index], data = row.data();
+              final rawNumber = '${data['receiptNumber'] ?? row.id}';
+              final shortNumber = rawNumber.length > 18
+                  ? '${rawNumber.substring(0, 10)}…${rawNumber.substring(rawNumber.length - 5)}'
+                  : rawNumber;
+              return Card(child: Padding(padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  Row(children: [
+                    const Icon(Icons.payments_outlined, color: gold, size: 21), const SizedBox(width: 8),
+                    Expanded(child: Text('${data['customerName'] ?? 'عميل غير مسجل'}', maxLines: 1,
+                      overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.lightBlueAccent,
+                        fontWeight: FontWeight.bold, fontSize: 15))),
+                    const SizedBox(width: 8), Text('${data['amount'] ?? 0} ج.م',
+                      style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+                  ]),
+                  Padding(padding: const EdgeInsetsDirectional.only(start: 29, top: 4),
+                    child: Text('سند: $shortNumber • ${formatDate(receiptEffectiveTimestamp(data))}',
+                      maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12))),
+                  Padding(padding: const EdgeInsetsDirectional.only(start: 29, top: 2),
+                    child: Text('الموظف: ${data['actorName'] ?? 'المدير'}', maxLines: 1,
+                      overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.white70))),
+                  Padding(padding: const EdgeInsetsDirectional.only(start: 29, top: 2),
+                    child: Text('الرصيد بعد القبض: ${data['balanceAfter'] ?? 0} ج.م',
+                      style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 13))),
+                  Wrap(alignment: WrapAlignment.start, spacing: 2, runSpacing: 0, children: [
+                    IconButton(visualDensity: VisualDensity.compact, tooltip: 'إرسال سند القبض PDF للعميل',
+                      icon: const Icon(Icons.share, color: Colors.greenAccent, size: 21),
+                      onPressed: () => shareReceiptVoucher(context, row.id, data)),
+                    IconButton(visualDensity: VisualDensity.compact, tooltip: 'طباعة / حفظ PDF',
+                      icon: const Icon(Icons.picture_as_pdf, size: 21),
+                      onPressed: () => printReceiptVoucher(context, row.id, data)),
+                    if (owner) IconButton(visualDensity: VisualDensity.compact,
+                      tooltip: 'إلغاء سند القبض وعكس أثره المحاسبي',
+                      icon: const Icon(Icons.undo, color: Colors.redAccent, size: 21),
+                      onPressed: () => cancelReceiptVoucher(context, row.id, data)),
+                  ]),
+                ])));
             });
           }
           if (!owner) return renderRows({});
-          return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
-            stream: db.collection('voucherCancellations').where('type',isEqualTo:'receipt').snapshots(),
+          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            stream: db.collection('voucherCancellations').where('type', isEqualTo: 'receipt').snapshots(),
             builder: (context, cancellations) {
               if (cancellations.hasError) return const Center(child: Text('تعذر تحميل حالات إلغاء السندات'));
               if (!cancellations.hasData) return const Center(child: CircularProgressIndicator());
