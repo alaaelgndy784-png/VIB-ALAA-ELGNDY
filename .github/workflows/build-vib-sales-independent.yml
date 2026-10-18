@@ -35,7 +35,7 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        app: [manager, staff]
+        app: [manager]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -158,7 +158,7 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4056 --build-name=0.2.31
+          flutter build apk --release --split-per-abi --build-number=4057 --build-name=0.2.32
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -230,12 +230,6 @@ jobs:
           name: VIB-SALES-MANAGER-APK
           path: manager-files
 
-      - name: Download staff APK
-        uses: actions/download-artifact@v4
-        with:
-          name: VIB-SALES-STAFF-APK
-          path: staff-files
-
       - name: Publish manager APK download
         uses: softprops/action-gh-release@v2
         with:
@@ -244,16 +238,5 @@ jobs:
           target_commitish: ${{ github.sha }}
           body: "آخر نسخة مباشرة من تطبيق VIB Manager."
           files: manager-files/VIB-SALES-MANAGER.apk
-          overwrite_files: true
-          make_latest: false
-
-      - name: Publish staff APK download
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: vib-sales-staff-latest
-          name: VIB Sales Staff
-          target_commitish: ${{ github.sha }}
-          body: "آخر نسخة مباشرة من تطبيق VIB Staff."
-          files: staff-files/VIB-SALES-STAFF.apk
           overwrite_files: true
           make_latest: false
