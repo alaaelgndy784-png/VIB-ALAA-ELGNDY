@@ -235,10 +235,8 @@ class _StoreMovementReportPageState extends State<StoreMovementReportPage> {
   }
   @override Widget build(BuildContext context) => Column(children: [
     Padding(padding: const EdgeInsets.fromLTRB(10, 8, 10, 4), child: Column(children: [
-      MovementPeriodControls(key: ValueKey('${from.toIso8601String()}-${to.toIso8601String()}-$generation'), from: from, to: to, enabled: true,
+      MovementPeriodControls(key: ValueKey('${from.toIso8601String()}-${to.toIso8601String()}-$generation'), from: from, to: to, enabled: true, compact: true,
         onConfirm: (start, end) { setState(() { from = start; to = end; generation++; }); }),
-      Align(alignment: AlignmentDirectional.centerEnd, child: TextButton.icon(
-        onPressed: () => setState(() => generation++), icon: const Icon(Icons.refresh, size: 18), label: const Text('تحديث التقرير'))),
     ])),
     Expanded(child: FutureBuilder<StoreMovementSummary>(key: ValueKey('$generation'), future: load(), builder: (context, snapshot) {
       if (snapshot.hasError) return Center(child: Text('تعذر تحميل حركة المتجر: ${snapshot.error}', textAlign: TextAlign.center));

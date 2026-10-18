@@ -1,7 +1,31 @@
 part of 'main.dart';
 
-class EmployeeCollections extends StatelessWidget {
+class EmployeeCollections extends StatefulWidget {
   const EmployeeCollections({super.key});
+  @override State<EmployeeCollections> createState() => _EmployeeCollectionsState();
+}
+
+class _EmployeeCollectionsState extends State<EmployeeCollections> {
+  late DateTime selectedDay;
+  @override void initState() {
+    super.initState();
+    final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
+    selectedDay = DateTime(now.year, now.month, now.day);
+  }
+  Future<void> _chooseDay() async {
+    final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
+    final date = await showDatePicker(context: context, initialDate: selectedDay,
+      firstDate: DateTime(2000), lastDate: DateTime(now.year, now.month, now.day),
+      helpText: 'اختار يوم التحصيل', confirmText: 'اختيار', cancelText: 'إلغاء');
+    if (date != null && mounted) setState(() => selectedDay = DateTime(date.year, date.month, date.day));
+  }
+  bool _isOnSelectedDay(Map<String,dynamic> data) {
+    final stamp = data['createdAt'];
+    if (stamp is! Timestamp) return false;
+    final date = stamp.toDate();
+    return !date.isBefore(movementReportBoundary(selectedDay)) &&
+      date.isBefore(movementReportBoundary(selectedDay, next: true));
+  }
 
   @override
   Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
@@ -19,7 +43,7 @@ class EmployeeCollections extends StatelessWidget {
           final names={for(final user in userSnapshot.data!.docs)user.id:'${user.data()['name']??''}'};
           final rows=salesSnapshot.data!.docs.where((sale){
             final data=sale.data();
-            return visibleAfterReset(data)&&data['status']=='completed'&&employeeIds.contains('${data['employeeId']??''}')&&
+            return visibleAfterReset(data)&&_isOnSelectedDay(data)&&data['status']=='completed'&&employeeIds.contains('${data['employeeId']??''}')&&
               ((data['paid'] as num?)??0)>0;
           }).toList();
           final grouped=<String,List<QueryDocumentSnapshot<Map<String,dynamic>>>>{};
@@ -33,6 +57,12 @@ class EmployeeCollections extends StatelessWidget {
           }
           final totalPaid=totals.values.fold<int>(0,(a,b)=>a+b);
           return Column(children:[
+            Padding(padding: const EdgeInsets.fromLTRB(12, 10, 12, 4), child: Row(children:[
+              Expanded(child: Text('التحصيلات يوم ${DateFormat('dd/MM/yyyy').format(selectedDay)}',
+                style: const TextStyle(color: vibBlue, fontWeight: FontWeight.bold))),
+              OutlinedButton.icon(onPressed: _chooseDay, icon: const Icon(Icons.calendar_month),
+                label: const Text('اختيار اليوم')),
+            ])),
             Card(margin:const EdgeInsets.all(10),child:Padding(padding:const EdgeInsets.all(12),child:Column(
               crossAxisAlignment:CrossAxisAlignment.stretch,children:[
                 const Text('المبالغ المحصّلة حسب الموظف وطريقة الدفع',style:TextStyle(color:gold,fontWeight:FontWeight.bold)),

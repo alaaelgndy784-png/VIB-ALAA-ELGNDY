@@ -82,51 +82,34 @@ class _MovementPeriodControlsState extends State<MovementPeriodControls> {
             border: OutlineInputBorder(), isDense: true))),
       ]),
       SizedBox(height: widget.compact ? 4 : 8),
-      if (widget.compact) Row(children: [
+      Row(children: [
         Expanded(child: OutlinedButton.icon(onPressed: widget.enabled ? () => pick(true) : null,
           style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
           icon: const Icon(Icons.calendar_month, size: 18), label: const Text('البداية', maxLines: 1, overflow: TextOverflow.ellipsis))),
-        const SizedBox(width: 4),
+        const SizedBox(width: 6),
         Expanded(child: OutlinedButton.icon(onPressed: widget.enabled ? () => pick(false) : null,
           style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
           icon: const Icon(Icons.calendar_month, size: 18), label: const Text('النهاية', maxLines: 1, overflow: TextOverflow.ellipsis))),
-        const SizedBox(width: 4),
-        Expanded(child: FilledButton.icon(key: const ValueKey('period-apply-button'), onPressed: widget.enabled && startInputValid && endInputValid && !end.isBefore(start)
-            ? () => widget.onConfirm(start, end) : null,
-          style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
-          icon: const Icon(Icons.check, size: 18), label: const Text('تطبيق', maxLines: 1, overflow: TextOverflow.ellipsis))),
-        IconButton(tooltip: 'اليوم', visualDensity: VisualDensity.compact, onPressed: widget.enabled ? () {
+      ]),
+      SizedBox(height: widget.compact ? 2 : 6),
+      Row(mainAxisAlignment: MainAxisAlignment.end, children: [
+        if (widget.compact) IconButton(tooltip: 'اليوم', visualDensity: VisualDensity.compact,
+          onPressed: widget.enabled ? () {
+            final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
+            final today = DateTime(now.year, now.month, now.day);
+            setState(() { start = end = today; startText.text = endText.text = _format(today); startInputValid = endInputValid = true; });
+          } : null, icon: const Icon(Icons.today, size: 20))
+        else TextButton.icon(onPressed: widget.enabled ? () {
           final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
           final today = DateTime(now.year, now.month, now.day);
-          setState(() {
-            start = end = today;
-            startText.text = endText.text = _format(today);
-            startInputValid = endInputValid = true;
-          });
-        } : null, icon: const Icon(Icons.today, size: 20)),
-      ]) else Wrap(spacing: 8, runSpacing: 8, children: [
-        OutlinedButton.icon(onPressed: widget.enabled ? () => pick(true) : null,
-          icon: const Icon(Icons.calendar_month), label: const Text('اختيار البداية')),
-        OutlinedButton.icon(onPressed: widget.enabled ? () => pick(false) : null,
-          icon: const Icon(Icons.calendar_month), label: const Text('اختيار النهاية')),
+          setState(() { start = end = today; startText.text = endText.text = _format(today); startInputValid = endInputValid = true; });
+        } : null, icon: const Icon(Icons.today, size: 18), label: const Text('اليوم')),
+        const SizedBox(width: 8),
         FilledButton.icon(key: const ValueKey('period-apply-button'), onPressed: widget.enabled && startInputValid && endInputValid && !end.isBefore(start)
             ? () => widget.onConfirm(start, end) : null,
-          icon: const Icon(Icons.check), label: const Text('تطبيق الفترة')),
-        TextButton.icon(onPressed: widget.enabled ? () {
-          final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
-          final today = DateTime(now.year, now.month, now.day);
-          setState(() {
-            start = end = today;
-            startText.text = endText.text = _format(today);
-            startInputValid = endInputValid = true;
-          });
-        } : null, icon: const Icon(Icons.today), label: const Text('اليوم')),
+          style: FilledButton.styleFrom(visualDensity: widget.compact ? VisualDensity.compact : VisualDensity.standard),
+          icon: const Icon(Icons.check, size: 18), label: const Text('تطبيق')),
       ]),
-      if (!startInputValid || !endInputValid)
-        const Text('اكتب التاريخ بصيغة يوم/شهر/سنة، مثل 05/10/2026.', style: TextStyle(color: Colors.redAccent)),
-      if (startInputValid && endInputValid && end.isBefore(start))
-        const Text('تاريخ النهاية يجب أن يكون بعد البداية أو في نفس اليوم.', style: TextStyle(color: Colors.redAccent)),
-      if (!widget.compact) const Text('اكتب التاريخين أو اخترهما، ثم اضغط تطبيق الفترة لعرض الحركة شاملًا يوم النهاية.'),
     ]));
 }
 

@@ -119,6 +119,7 @@ class _VibBootstrapState extends State<VibBootstrap> {
 
 const gold = Color(0xFFD6AC55);
 const vibBlue = Color(0xFF64B5F6);
+const vibNeonBlue = Color(0xFF00E5FF);
 const vibNeon = Color(0xFFB2FF59);
 const vibRed = Color(0xFFFF6B6B);
 final db = FirebaseFirestore.instance;
@@ -877,7 +878,8 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
       textDirection: TextDirection.rtl,
       child: Theme(data: widget.role == 'owner' ? managerTheme(context) : Theme.of(context),
-        child: Scaffold(appBar: AppBar(title: Text(title)), body: child)),
+        child: Scaffold(appBar: AppBar(title: Text(title,
+          style: title == 'تقرير بيع وشراء المنتج' ? const TextStyle(color: vibNeonBlue) : null)), body: child)),
     )));
   }
 
@@ -2690,17 +2692,7 @@ class _ProfitReportState extends State<ProfitReport> {
   @override Widget build(BuildContext context) {
     final queryEnd = profitQueryEnd(end);
     final validRange = queryEnd.isAfter(start);
-    final presets = const [('day','يومي'),('twoDays','يومين'),('threeDays','٣ أيام'),
-      ('week','أسبوع'),('month','شهر'),('year','سنة')];
     return Column(children: [
-      Padding(padding: const EdgeInsets.fromLTRB(8,10,8,4), child: Wrap(
-        alignment: WrapAlignment.center, spacing: 6, runSpacing: 4,
-        children: [for (final item in presets) FilterChip(label: Text(item.$2),
-          selected: period == item.$1, selectedColor: vibBlue.withValues(alpha:.24),
-          checkmarkColor: vibNeon,
-          side: BorderSide(color: period == item.$1 ? vibNeon : vibBlue.withValues(alpha:.45)),
-          labelStyle: TextStyle(color: period == item.$1 ? vibNeon : vibBlue, fontWeight: FontWeight.w700),
-          onSelected: (_) => chooseProfitPeriod(item.$1))])), 
       Padding(padding: const EdgeInsets.symmetric(horizontal:8), child: Row(children:[
         Expanded(child:OutlinedButton.icon(key:const ValueKey('profit-from-button'),
           style:OutlinedButton.styleFrom(foregroundColor:vibBlue,side:const BorderSide(color:vibBlue)),
@@ -4725,12 +4717,13 @@ class CashBox extends StatelessWidget {
           style: const TextStyle(fontSize: 22, color: gold)),
       ),
     ),
-    Wrap(spacing: 12, children: [
-      FilledButton.icon(onPressed: () => cashDialog(context, true),
-        icon: const Icon(Icons.add), label: const Text('إضافة للصندوق')),
-      OutlinedButton.icon(onPressed: () => cashDialog(context, false),
-        icon: const Icon(Icons.remove), label: const Text('خصم من الصندوق')),
-    ]),
+    Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Row(children: [
+      Expanded(child: FilledButton.icon(onPressed: () => cashDialog(context, true),
+        icon: const Icon(Icons.add), label: const Text('إضافة للصندوق'))),
+      const SizedBox(width: 8),
+      Expanded(child: OutlinedButton.icon(onPressed: () => cashDialog(context, false),
+        icon: const Icon(Icons.remove), label: const Text('خصم من الصندوق'))),
+    ])),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: db.collection('accountMovements').where('accountType', isEqualTo: 'cash').snapshots(),
       builder: (context, snap) {
@@ -6570,16 +6563,19 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
           final q = query.trim().toLowerCase();
           final filtered = products.where((d) =>
             (d.data()['name']?.toString() ?? '').toLowerCase().contains(q)).toList();
-          return AlertDialog(
-            title: const Text('ابحث عن منتج'),
+          return Directionality(textDirection: TextDirection.rtl, child: AlertDialog(
+            title: const Text('ابحث عن منتج', textAlign: TextAlign.right,
+              style: TextStyle(color: vibNeonBlue, fontWeight: FontWeight.bold)),
             content: SizedBox(
-              width: double.maxFinite,
-              height: 420,
+              width: MediaQuery.sizeOf(context).width * .92,
+              height: MediaQuery.sizeOf(context).height * .62,
               child: Column(children: [
                 TextField(
                   autofocus: true,
+                  textDirection: TextDirection.rtl,
+                  textAlign: TextAlign.right,
                   decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search),
+                    prefixIcon: Icon(Icons.search, color: vibNeonBlue),
                     hintText: 'اكتب اسم المنتج',
                   ),
                   onChanged: (value) => setDialogState(() => query = value),
@@ -6593,7 +6589,10 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                         itemBuilder: (context, index) {
                           final product = filtered[index];
                           return ListTile(
-                            title: Text(product.data()['name']?.toString() ?? ''),
+                            minVerticalPadding: 12,
+                            title: Align(alignment: AlignmentDirectional.centerEnd,
+                              child: Text(product.data()['name']?.toString() ?? '', textAlign: TextAlign.right,
+                                style: const TextStyle(color: vibNeonBlue, fontSize: 17, fontWeight: FontWeight.w600))),
                             onTap: () => Navigator.pop(dialogContext, product.id),
                           );
                         },
@@ -6601,7 +6600,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                 ),
               ]),
             ),
-          );
+          ));
         },
       ),
     );
@@ -6644,9 +6643,9 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                 onTap: products.isEmpty ? null : () => _chooseMovementProduct(products),
                 child: InputDecorator(
                   decoration: _vibInvoiceInput('اختر المنتج', icon: Icons.inventory_2_outlined)
-                      .copyWith(suffixIcon: const Icon(Icons.search)),
-                  child: Text(selectedName, maxLines: 1, overflow: TextOverflow.ellipsis,
-                    style: TextStyle(color: selected.isEmpty ? Colors.white54 : null)),
+                      .copyWith(suffixIcon: const Icon(Icons.search, color: vibNeonBlue)),
+                  child: Text(selectedName, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: selected.isEmpty ? Colors.white54 : vibNeonBlue, fontSize: 16, fontWeight: FontWeight.w600)),
                 ),
               );
             }),
