@@ -220,7 +220,7 @@ test('messages are immutable and staff cannot change owner read status',async()=
  await assertFails(setDoc(doc(staff,'staffChats/staff'),{ownerReadAt:serverTimestamp()},{merge:true}));
 });
 
-async function seedEditableSale({receiptId='',latestReceipt=false,linkedOther=false}={}){
+async function seedEditableSale({receiptId='',latestReceipt=false,linkedOther=false,cancelledReceiptId='',cancelledLatestReceipt=false}={}){
  await env.withSecurityRulesDisabled(async ctx=>{
   const db=ctx.firestore();
   await setDoc(doc(db,'sales/editable'),{id:'editable',branchId:'staffbranch',customerId:'customer',status:'completed',total:30,paid:0,due:30,revision:0,createdAt:new Date('2026-01-01'),...(receiptId?{receiptId,receiptPaid:10}:{})});
@@ -228,6 +228,8 @@ async function seedEditableSale({receiptId='',latestReceipt=false,linkedOther=fa
    await setDoc(doc(db,'receipts/prior'),{customerId:'customer',amount:10,createdAt:new Date('2026-01-02'),...(linkedOther?{invoiceId:'other'}:{})});
    await setDoc(doc(db,'customers/customer'),{lastReceiptId:'prior'},{merge:true});
   }
+  for(const id of new Set([cancelledReceiptId,...(cancelledLatestReceipt?['prior']:[])].filter(Boolean)))
+   await setDoc(doc(db,'voucherCancellations/receipt_'+id),{type:'receipt',originalId:id,actorId:'owner'});
  });
 }
 function editSaleBatch(db){
@@ -241,8 +243,14 @@ test('owner can replace unlinked invoice contents on same ID',async()=>{
 test('linked receipt prevents financial invoice edit even for owner',async()=>{
  await seedEditableSale({receiptId:'r'});await assertFails(editSaleBatch(env.authenticatedContext('owner').firestore()));
 });
+test('cancelled linked receipt no longer blocks owner invoice edits',async()=>{
+ await seedEditableSale({receiptId:'r',cancelledReceiptId:'r'});await assertSucceeds(editSaleBatch(env.authenticatedContext('owner').firestore()));
+});
 test('legacy general customer receipt blocks older invoice edits',async()=>{
  await seedEditableSale({latestReceipt:true});await assertFails(editSaleBatch(env.authenticatedContext('owner').firestore()));
+});
+test('cancelled latest general receipt no longer blocks owner invoice edits',async()=>{
+ await seedEditableSale({latestReceipt:true,cancelledLatestReceipt:true});await assertSucceeds(editSaleBatch(env.authenticatedContext('owner').firestore()));
 });
 test('receipt explicitly linked to another invoice does not lock this invoice',async()=>{
  await seedEditableSale({latestReceipt:true,linkedOther:true});await assertSucceeds(editSaleBatch(env.authenticatedContext('owner').firestore()));

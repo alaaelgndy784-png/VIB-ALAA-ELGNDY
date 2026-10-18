@@ -96,12 +96,20 @@ service cloud.firestore {
         && next.get('partialCashRefund', 0) == old.get('partialCashRefund', 0) + r.cashRefund
         && next.get('partialDebtReduction', 0) == old.get('partialDebtReduction', 0) + r.debtReduction;
     }
+    function receiptWasCancelled(id) {
+      let cancelPath = /databases/$(database)/documents/voucherCancellations/$(('receipt_' + id));
+      return id is string && id != '' && exists(cancelPath)
+        && get(cancelPath).data.get('type', '') == 'receipt'
+        && get(cancelPath).data.get('originalId', '') == id;
+    }
     function saleHasNoReceipt(s) {
       let cid = s.get('customerId', '');
       let customer = cid == '' ? {} : get(/databases/$(database)/documents/customers/$(cid)).data;
       let rid = customer.get('lastReceiptId', '');
       let r = rid == '' ? {} : get(/databases/$(database)/documents/receipts/$(rid)).data;
-      return s.get('onlinePaymentEver', false) != true && s.get('receiptId', '') == '' && (rid == '' ||
+      let linkedReceiptId = s.get('receiptId', '');
+      return s.get('onlinePaymentEver', false) != true
+        && (linkedReceiptId == '' || receiptWasCancelled(linkedReceiptId)) && (rid == '' || receiptWasCancelled(rid) ||
         (r.get('invoiceId', '') != '' && r.invoiceId != s.get('id', '')) ||
         (r.get('createdAt', request.time) < s.get('createdAt', request.time)));
     }
