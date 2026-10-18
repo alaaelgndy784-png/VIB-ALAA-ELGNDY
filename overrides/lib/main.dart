@@ -3798,6 +3798,11 @@ class ReceiptVouchers extends StatelessWidget {
           final rows = snapshot.data!.docs.where((d) => visibleAfterReset(d.data())).toList()
             ..sort((a, b) => ((receiptEffectiveTimestamp(b.data()) as Timestamp?)?.millisecondsSinceEpoch ?? 0)
               .compareTo((receiptEffectiveTimestamp(a.data()) as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+          Widget renderRows(Set<String> cancelledIds) {
+            final activeRows = owner ? rows.where((d) => !cancelledIds.contains(d.id)).toList() : rows;
+            if (activeRows.isEmpty) return const Center(child: Text('لا توجد سندات قبض نشطة'));
+            return ListView.builder(itemCount: activeRows.length, itemBuilder: (context, index) {
+            final row = activeRows[index], data = row.data();
           if (rows.isEmpty) return const Center(child: Text('لا توجد سندات قبض بعد'));
           return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
             final row = rows[index], data = row.data();
@@ -3821,15 +3826,23 @@ class ReceiptVouchers extends StatelessWidget {
                   onPressed:()=>shareReceiptVoucher(context,row.id,data)),
                 IconButton(visualDensity:VisualDensity.compact,tooltip:'طباعة / حفظ PDF',icon:const Icon(Icons.picture_as_pdf,size:21),
                   onPressed:()=>printReceiptVoucher(context,row.id,data)),
-                if(owner) StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
-                  stream:db.collection('voucherCancellations').doc('receipt_${row.id}').snapshots(),
-                  builder:(context,cancelSnap)=>cancelSnap.data?.exists==true
-                    ? const Padding(padding:EdgeInsets.all(12),child:Text('ملغي',style:TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold)))
-                    : IconButton(visualDensity:VisualDensity.compact,tooltip:'إلغاء سند القبض وعكس أثره المحاسبي',icon:const Icon(Icons.undo,color:Colors.redAccent,size:21),
-                      onPressed:()=>cancelReceiptVoucher(context,row.id,data))),
+                if(owner) IconButton(visualDensity:VisualDensity.compact,tooltip:'إلغاء سند القبض وعكس أثره المحاسبي',icon:const Icon(Icons.undo,color:Colors.redAccent,size:21),
+                  onPressed:()=>cancelReceiptVoucher(context,row.id,data)),
               ]),
             ])));
-          });
+            });
+          }
+          if (!owner) return renderRows({});
+          return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
+            stream: db.collection('voucherCancellations').where('type',isEqualTo:'receipt').snapshots(),
+            builder: (context, cancellations) {
+              if (cancellations.hasError) return const Center(child: Text('تعذر تحميل حالات إلغاء السندات'));
+              if (!cancellations.hasData) return const Center(child: CircularProgressIndicator());
+              final cancelledIds = cancellations.data!.docs
+                .map((d) => '${d.data()['originalId'] ?? ''}').where((id) => id.isNotEmpty).toSet();
+              return renderRows(cancelledIds);
+            },
+          );
         },
       )),
     ]);
@@ -7268,11 +7281,10 @@ Future<void> assertSaleEditable(Map<String, dynamic> data) async {
   final customerId = '${data['customerId'] ?? ''}';
   if (customerId.isEmpty) return;
   final receipts = await db.collection('receipts').where('customerId', isEqualTo: customerId).get(const GetOptions(source:Source.server));
-  final date = data['createdAt'] as Timestamp?;
+  final cancellations = await db.collection('voucherCancellations').where('type',isEqualTo:'receipt').get(const GetOptions(source:Source.server));
+  final cancelledIds = cancellations.docs.map((d) => '${d.data()['originalId'] ?? ''}').toSet();
   for (final receipt in receipts.docs) {
-    final r = receipt.data(), receiptDate = receipt.data()['createdAt'] as Timestamp?;
-    if (r['invoiceId'] == data['id'] ||
-        ('${r['invoiceId'] ?? ''}'.isEmpty && (date == null || receiptDate == null || receiptDate.compareTo(date) >= 0))) {
+    if (saleReceiptBlocksEdit(data, receipt.id, receipt.data(), cancelledReceiptIds: cancelledIds)) {
       throw Exception('الفاتورة مرتبطة بسند قبض؛ السندات القديمة غير المحددة لفاتورة تحتاج مراجعة المدير');
     }
   }
@@ -7321,9 +7333,11 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
     final latestReceiptId = '${oldCustomer?['lastReceiptId'] ?? ''}';
     if (latestReceiptId.isNotEmpty) {
       final receipt = (await tx.get(db.collection('receipts').doc(latestReceiptId))).data();
-      final at = receipt?['createdAt'] as Timestamp?, created = old['createdAt'] as Timestamp?;
-      if (receipt != null && (receipt['invoiceId'] == id || ('${receipt['invoiceId'] ?? ''}'.isEmpty &&
-          (at == null || created == null || at.compareTo(created) >= 0)))) throw Exception('يوجد سند قبض مرتبط بالفاتورة أو برصيد العميل قبل تحديد الفواتير');
+      final cancellation = await tx.get(db.collection('voucherCancellations').doc('receipt_$latestReceiptId'));
+      if (!cancellation.exists && receipt != null &&
+          saleReceiptBlocksEdit({...old, 'id': id}, latestReceiptId, receipt)) {
+        throw Exception('يوجد سند قبض مرتبط بالفاتورة أو برصيد العميل قبل تحديد الفواتير');
+      }
     }
     final cashRef = db.collection('settings').doc('cash');
     final cash = (await tx.get(cashRef)).data();
@@ -7417,7 +7431,9 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
   final customerId = '${invoice['customerId'] ?? ''}';
   if (customerId.isEmpty) return;
   final receipts = await db.collection('receipts').where('customerId', isEqualTo: customerId).get();
-  if (receipts.docs.any((r) => unallocatedReceiptAfter(invoice, r.data()))) {
+  final cancellations = await db.collection('voucherCancellations').where('type',isEqualTo:'receipt').get();
+  final cancelledIds = cancellations.docs.map((d) => '${d.data()['originalId'] ?? ''}').toSet();
+  if (receipts.docs.any((r) => !cancelledIds.contains(r.id) && unallocatedReceiptAfter(invoice, r.data()))) {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
 }

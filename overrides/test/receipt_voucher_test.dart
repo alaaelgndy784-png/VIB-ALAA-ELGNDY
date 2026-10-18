@@ -35,6 +35,23 @@ void main() {
     expect(receiptRowsForCustomer(rows,'c1').map((r)=>r['amount']),[25,10]);
   });
 
+  group('saleReceiptBlocksEdit', () {
+    final invoice={'id':'sale-1','createdAt':Timestamp.fromDate(DateTime(2026,10,1))};
+    final receiptDate=Timestamp.fromDate(DateTime(2026,10,2));
+    test('an active receipt linked to this invoice blocks editing', () {
+      expect(saleReceiptBlocksEdit(invoice,'r1',{'invoiceId':'sale-1','createdAt':receiptDate}),isTrue);
+    });
+    test('a cancelled linked receipt no longer blocks editing', () {
+      expect(saleReceiptBlocksEdit(invoice,'r1',{'invoiceId':'sale-1','createdAt':receiptDate},cancelledReceiptIds:{'r1'}),isFalse);
+    });
+    test('a cancelled general receipt no longer blocks editing', () {
+      expect(saleReceiptBlocksEdit(invoice,'r2',{'createdAt':receiptDate},cancelledReceiptIds:{'r2'}),isFalse);
+    });
+    test('an active general receipt after the invoice still blocks editing', () {
+      expect(saleReceiptBlocksEdit(invoice,'r3',{'createdAt':receiptDate}),isTrue);
+    });
+  });
+
   test('legacy receipt numbers are shown as readable references', () {
     expect(receiptDisplayNumber({'id':'abcdef123456'}),'VIB-RC--ABCDEF');
   });

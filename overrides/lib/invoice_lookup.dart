@@ -224,6 +224,15 @@ class InvoiceEditResultCard extends StatelessWidget {
 
 bool invoiceHasLinkedVoucher(Map<String,dynamic> data) =>
   ['receiptId','paymentId','supplierPaymentId','voucherId'].any((key)=>'${data[key] ?? ''}'.trim().isNotEmpty) || ((data['receiptPaid'] as num?) ?? 0)>0;
+
+bool saleReceiptBlocksEdit(Map<String,dynamic> invoice,String receiptId,Map<String,dynamic> receipt,
+    {Set<String> cancelledReceiptIds=const {}}) {
+  if(cancelledReceiptIds.contains(receiptId)) return false;
+  final linked='${receipt['invoiceId'] ?? ''}';
+  if(linked.isNotEmpty) return linked=='${invoice['id'] ?? ''}';
+  final created=invoice['createdAt'] as Timestamp?,at=receipt['createdAt'] as Timestamp?;
+  return created==null || at==null || at.compareTo(created)>=0;
+}
 List<Map<String,dynamic>> purchaseItems(Map<String,dynamic> data) => data['items'] is List && (data['items'] as List).isNotEmpty
   ? (data['items'] as List).map((x)=>Map<String,dynamic>.from(x as Map)).toList()
   : [{'productId':data['productId'],'productName':data['productName'],'quantity':data['quantity'],'unitCost':data['unitCost'],'lineTotal':data['total']}];
