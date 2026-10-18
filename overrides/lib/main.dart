@@ -2610,6 +2610,11 @@ class _InventoryAuditState extends State<InventoryAudit> {
                 return InventoryProductCard(number: index + 1, name: '${data['name']}', quantity: qty, unitPrice: data['price'] as num?,
                   detail: 'الفئة: ${data['category'] ?? 'غير مصنف'} • سعر الشراء: ${data['purchasePrice'] ?? 'غير مسجل'} ج.م',
                   actions: [
+                    IconButton(
+                      tooltip: 'تعديل كمية المخزون الرئيسي',
+                      icon: const Icon(Icons.edit_note, color: vibBlue),
+                      onPressed: () => mainStockDialog(context, p.id, '${data['name'] ?? ''}'),
+                    ),
                     IconButton(tooltip: 'حذف المنتج', icon: const Icon(Icons.delete, color: Colors.redAccent), onPressed: () => archiveProduct(context, p.id, '${data['name'] ?? ''}')),
                   ],
                 );
