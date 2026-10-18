@@ -20,12 +20,14 @@ def replace_once(old: str, new: str, label: str) -> None:
 replace_once(
     """                IconButton(visualDensity:VisualDensity.compact,tooltip:'طباعة / حفظ PDF',icon:const Icon(Icons.picture_as_pdf,size:21),
                   onPressed:()=>printReceiptVoucher(context,row.id,data)),
-                if(owner) StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(""",
+                if(owner) IconButton(visualDensity:VisualDensity.compact,tooltip:'إلغاء سند القبض وعكس أثره المحاسبي',icon:const Icon(Icons.undo,color:Colors.redAccent,size:21),
+                  onPressed:()=>cancelReceiptVoucher(context,row.id,data)),""",
     """                IconButton(visualDensity:VisualDensity.compact,tooltip:'طباعة / حفظ PDF',icon:const Icon(Icons.picture_as_pdf,size:21),
                   onPressed:()=>printReceiptVoucher(context,row.id,data)),
                 IconButton(visualDensity:VisualDensity.compact,tooltip:'طباعة سند القبض على طابعة 80 مم',icon:const Icon(Icons.print,size:21),
                   onPressed:()=>printReceiptVoucher(context,row.id,data,thermal:true)),
-                if(owner) StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(""",
+                if(owner) IconButton(visualDensity:VisualDensity.compact,tooltip:'إلغاء سند القبض وعكس أثره المحاسبي',icon:const Icon(Icons.undo,color:Colors.redAccent,size:21),
+                  onPressed:()=>cancelReceiptVoucher(context,row.id,data)),""",
     "customer receipt voucher buttons",
 )
 
