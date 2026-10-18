@@ -60,6 +60,8 @@ part 'voucher_cancellations.dart';
 part 'employee_visits.dart';
 part 'employee_collections.dart';
 
+// Report filters use the existing invoice and movement records.
+
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   initializeChequeTimeZones();
