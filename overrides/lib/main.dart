@@ -140,11 +140,17 @@ bool isTemporaryFirestoreOffline(Object error) => error is TimeoutException || (
 
 Future<QuerySnapshot<Map<String,dynamic>>> _getInvoiceDataWithCacheFallback(
     Query<Map<String,dynamic>> query) async {
+  // An already visited catalogue must open immediately even without mobile data.
   try {
-    return await query.get().timeout(const Duration(seconds:6));
+    final cached = await query.get(const GetOptions(source: Source.cache));
+    if (cached.docs.isNotEmpty) return cached;
+  } catch (_) {}
+  try {
+    return await query.get(const GetOptions(source: Source.server))
+        .timeout(const Duration(seconds: 5));
   } catch (error) {
     if (!isTemporaryFirestoreOffline(error)) rethrow;
-    return query.get(const GetOptions(source:Source.cache));
+    return query.get(const GetOptions(source: Source.cache));
   }
 }
 
