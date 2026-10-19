@@ -5,10 +5,16 @@ typedef SaleEntry = ({String id, String name, int qty, double price, double? cos
 // A second local copy is essential: Firestore's offline write can be rejected
 // later if the backend returns RESOURCE_EXHAUSTED. Never acknowledge a draft as
 // a posted sale until it has a server-confirmed sales document.
+// Only metadata returned by a fresh server read counts as approval evidence.
+// A cached *dialog* is allowed: the save action must fetch the server itself.
+bool pendingInvoiceConfirmedOnServer(bool fromCache,bool hasPendingWrites) =>
+    !fromCache && !hasPendingWrites;
+
 class ManagerOfflineDraftStore {
   ManagerOfflineDraftStore._();
   static final instance=ManagerOfflineDraftStore._();
   final ValueNotifier<int> pendingCount=ValueNotifier<int>(0);
+  final ValueNotifier<String> syncStatus=ValueNotifier<String>('');
   Future<void> _lastMutation=Future<void>.value();
   bool _syncing=false;
   String _key(String uid)=>'vib_manager_offline_drafts_v1_$uid';
@@ -98,7 +104,10 @@ class ManagerOfflineDraftStore {
     final uid=FirebaseAuth.instance.currentUser?.uid;
     if(uid==null||_syncing)return;
     _syncing=true;
+    bool hadFailure=false;
+    var serverConfirmed=0;
     try {
+      syncStatus.value='جارٍ فحص الفواتير المعلقة على Firebase…';
       final docs=await _locked(() => _read(uid));
       pendingCount.value=docs.length;
       for(final row in docs) {
@@ -114,6 +123,7 @@ class ManagerOfflineDraftStore {
               continue;
             }
             await discard(id);
+            serverConfirmed++;
             continue;
           }
           final ref=db.collection('pendingSales').doc(id);
@@ -129,6 +139,7 @@ class ManagerOfflineDraftStore {
             // The server has a durable pending document; its normal approval
             // pipeline will post the sale with the same unique ID.
             await discard(id);
+            serverConfirmed++;
             continue;
           }
           final upload=Map<String,dynamic>.from(row)
@@ -138,13 +149,29 @@ class ManagerOfflineDraftStore {
               DateTime.now().millisecondsSinceEpoch);
           await ref.set(upload).timeout(const Duration(seconds:10));
           await discard(id);
+          serverConfirmed++;
         } catch(error) {
+          hadFailure=true;
           debugPrint('VIB manager draft $id awaits server recovery: $error');
-          if(isTemporaryFirestoreOffline(error)||isFirestoreQuotaExhausted(error))break;
+          if(isFirestoreQuotaExhausted(error)) {
+            syncStatus.value='Firebase رفض المزامنة بسبب حصة الاستخدام. الفاتورة محفوظة على الجهاز ولم تُعتمد.';
+            break;
+          }
+          if(isTemporaryFirestoreOffline(error)) {
+            syncStatus.value='لا يوجد تأكيد من Firebase حتى الآن. الفاتورة محفوظة على الجهاز.';
+            break;
+          }
+          syncStatus.value='فشلت مزامنة إحدى الفواتير؛ لم نحذفها من الجهاز.';
           // Keep the original on device for investigation, never delete it.
         }
       }
+      if(!hadFailure) {
+        syncStatus.value=serverConfirmed>0
+          ? 'تم تأكيد $serverConfirmed طلب على Firebase؛ الاعتماد المالي له حالة مستقلة.'
+          : 'لا توجد فواتير محلية جديدة تحتاج الرفع.';
+      }
     } catch(error) {
+      syncStatus.value='تعذر فحص الفواتير المحلية؛ لم يتم مسحها.';
       debugPrint('VIB manager pending draft storage error: $error');
     } finally {_syncing=false;}
   }
@@ -534,6 +561,13 @@ class ManagerOfflineDraftBanner extends StatelessWidget {
         child:Column(children:[
           Text('$count فاتورة مدير محفوظة بنسخة أمان على هذا الجهاز. لم تُعتمد ماليًا بعد.',
             style:const TextStyle(color:Colors.white)),
+          ValueListenableBuilder<String>(
+            valueListenable:ManagerOfflineDraftStore.instance.syncStatus,
+            builder:(context,status,_)=>status.isEmpty
+              ?const SizedBox.shrink()
+              :Text(status,textAlign:TextAlign.center,
+                style:const TextStyle(color:Colors.orangeAccent,fontSize:12)),
+          ),
           TextButton.icon(
             onPressed:()=>unawaited(retryManagerOfflineInvoices()),
             icon:const Icon(Icons.sync),
@@ -804,7 +838,8 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
             // treating the cached dialog as proof that the server is offline.
             final confirmed=await ref.get(const GetOptions(source:Source.server))
               .timeout(const Duration(seconds:10));
-            if(confirmed.metadata.isFromCache || confirmed.metadata.hasPendingWrites) {
+            if(!pendingInvoiceConfirmedOnServer(
+                confirmed.metadata.isFromCache,confirmed.metadata.hasPendingWrites)) {
               throw StateError('الفاتورة لم تتأكد على Firebase بعد. احتفظ بها معلقة وأعد المحاولة بعد استعادة الخدمة.');
             }
             final latest=confirmed.data();
