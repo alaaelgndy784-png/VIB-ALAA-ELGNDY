@@ -499,6 +499,11 @@ Future<void> submitPendingSale(String id,List<SaleEntry> entries,String customer
   });
 }
 
+Future<void> retryManagerOfflineInvoices() async {
+  await ManagerOfflineDraftStore.instance.syncPending();
+  await ManagerOfflineSaleSync.instance.retryAfterServerRecovery();
+}
+
 Query<Map<String,dynamic>> pendingSalesQuery(bool owner) => owner ? db.collection('pendingSales') :
   db.collection('pendingSales').where('employeeId',isEqualTo:FirebaseAuth.instance.currentUser!.uid);
 
@@ -512,9 +517,9 @@ class PendingSalesShortcut extends StatelessWidget {
       return SizedBox(width:double.infinity,child:OutlinedButton.icon(
         style:compact ? OutlinedButton.styleFrom(visualDensity:VisualDensity.compact,minimumSize:const Size.fromHeight(38),padding:const EdgeInsets.symmetric(horizontal:8)) : null,
         icon:Icon(Icons.pending_actions,color:owner?vibBlue:vibNeon,size:compact?18:null),
-        label:Text('${owner ? 'اعتماد فواتير الموظفين' : 'فواتير الموظف — متابعة الاعتماد'}${count==null ? '' : ' ($count معلقة)'}',maxLines:1,overflow:TextOverflow.ellipsis,style:TextStyle(color:owner?vibBlue:vibNeon)),
+        label:Text('${owner ? 'الفواتير المعلقة والاعتماد' : 'فواتير الموظف — متابعة الاعتماد'}${count==null ? '' : ' ($count معلقة)'}',maxLines:1,overflow:TextOverflow.ellipsis,style:TextStyle(color:owner?vibBlue:vibNeon)),
         onPressed:()=>Navigator.push(context,MaterialPageRoute(builder:(_)=>Directionality(textDirection:TextDirection.rtl,
-          child:Scaffold(appBar:AppBar(title:Text(owner?'اعتماد فواتير الموظفين':'فواتير الموظف')),body:PendingSalesPage(owner:owner)))))));
+          child:Scaffold(appBar:AppBar(title:Text(owner?'الفواتير المعلقة والاعتماد':'فواتير الموظف')),body:PendingSalesPage(owner:owner)))))));
     });
 }
 
@@ -530,10 +535,7 @@ class ManagerOfflineDraftBanner extends StatelessWidget {
           Text('$count فاتورة مدير محفوظة بنسخة أمان على هذا الجهاز. لم تُعتمد ماليًا بعد.',
             style:const TextStyle(color:Colors.white)),
           TextButton.icon(
-            onPressed:() {
-              unawaited(ManagerOfflineDraftStore.instance.syncPending());
-              unawaited(ManagerOfflineSaleSync.instance.retryAfterServerRecovery());
-            },
+            onPressed:()=>unawaited(retryManagerOfflineInvoices()),
             icon:const Icon(Icons.sync),
             label:const Text('إعادة المزامنة بعد عودة Firebase'),
           ),
