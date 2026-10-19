@@ -837,23 +837,44 @@ ThemeData managerTheme(BuildContext context) => Theme.of(context).copyWith(
 
 class OfflineCacheNotice extends StatelessWidget {
   const OfflineCacheNotice({super.key});
-  @override Widget build(BuildContext context)=>StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
-    stream:db.collection('settings').doc('cash').snapshots(includeMetadataChanges:true),
-    builder:(context,snapshot){
-      if(snapshot.hasError)return const SizedBox.shrink();
-      if(!snapshot.hasData||!snapshot.data!.metadata.isFromCache)return const SizedBox.shrink();
-      final pending=snapshot.data!.metadata.hasPendingWrites;
-      return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:pendingSalesQuery(true).snapshots(includeMetadataChanges:true),builder:(context,queue){
-        final queuedSales=queue.data?.docs.where((d)=>d.data()['managerOffline']==true&&d.data()['status']=='pending').length??0;
-        return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(stream:db.collection('managerOfflineVoucherCancellations').snapshots(includeMetadataChanges:true),builder:(context,vouchers){
-          final queuedVouchers=vouchers.data?.docs.where((d)=>d.data()['status']=='pending').length??0;
-          final queued=queuedSales+queuedVouchers;
-          final message=queued>0?'وضع غير متصل • $queued عملية تنتظر المزامنة':pending?'وضع غير متصل • توجد تغييرات تنتظر المزامنة':'وضع غير متصل • المعروض من البيانات المحفوظة على هذا الجهاز';
-          return Container(width:double.infinity,color:(pending||queued>0)?const Color(0xFF5A3B12):const Color(0xFF3B321C),padding:const EdgeInsets.symmetric(horizontal:12,vertical:7),
-            child:Text(message,textAlign:TextAlign.center,style:const TextStyle(color:Colors.white,fontSize:12)));
-        });
-      });
-    });
+  @override Widget build(BuildContext context)=>ValueListenableBuilder<int>(
+    valueListenable: ManagerOfflineDraftStore.instance.pendingCount,
+    builder:(context,localCount,_)=>StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
+      stream:db.collection('settings').doc('cash').snapshots(includeMetadataChanges:true),
+      builder:(context,snapshot){
+        final offline=snapshot.data?.metadata.isFromCache??false;
+        if(!offline && localCount==0)return const SizedBox.shrink();
+        final pending=snapshot.data?.metadata.hasPendingWrites??false;
+        return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
+          stream:pendingSalesQuery(true).where('status',isEqualTo:'pending').snapshots(includeMetadataChanges:true),
+          builder:(context,queue){
+            final queuedSales=queue.data?.docs.where((d)=>
+              d.data()['managerOffline']==true&&d.data()['status']=='pending').length??0;
+            return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
+              stream:db.collection('managerOfflineVoucherCancellations').snapshots(includeMetadataChanges:true),
+              builder:(context,vouchers){
+                final queuedVouchers=vouchers.data?.docs.where((d)=>d.data()['status']=='pending').length??0;
+                final queued=(queuedSales>localCount?queuedSales:localCount)+queuedVouchers;
+                final message=localCount>0
+                  ? '$localCount فاتورة مدير لها نسخة أمان على الجهاز • تنتظر تأكيد السيرفر'
+                  : queued>0?'$queued عملية تنتظر المزامنة'
+                  : pending?'تغييرات تنتظر المزامنة'
+                  : 'وضع غير متصل • عرض بيانات محفوظة على الجهاز';
+                return Container(width:double.infinity,
+                  color:(pending||queued>0)?const Color(0xFF5A3B12):const Color(0xFF3B321C),
+                  padding:const EdgeInsets.symmetric(horizontal:12,vertical:5),
+                  child:Row(children:[
+                    Expanded(child:Text(message,textAlign:TextAlign.center,
+                      style:const TextStyle(color:Colors.white,fontSize:12))),
+                    if(localCount>0) IconButton(
+                      tooltip:'إعادة محاولة مزامنة فواتير المدير (بعد توفر حصة Firebase)',
+                      onPressed:()=>unawaited(ManagerOfflineDraftStore.instance.syncPending()),
+                      icon:const Icon(Icons.sync,color:Colors.white,size:20)),
+                  ]));
+              });
+          });
+      }),
+  );
 }
 
 class Home extends StatefulWidget {
@@ -869,7 +890,25 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   int page = 0;
   Timer? _presenceTimer;
   bool _presenceWriteInFlight = false;
-  @override void initState() { super.initState(); if(widget.role == 'owner') {ChequeReminders.instance.watch(widget.uid);ManagerOfflineSaleSync.instance.start();ManagerOfflineVoucherSync.instance.start();unawaited(_backupAtOwnerLogin());} else { WidgetsBinding.instance.addObserver(this); _writePresence(true); unawaited(EmployeeOfflineSaleSync.instance.syncPending()); _presenceTimer=Timer.periodic(const Duration(seconds:20),(_){_writePresence(true);unawaited(EmployeeOfflineSaleSync.instance.syncPending());}); } ChatAlerts.instance.watch(widget.uid,widget.role == 'owner'); }
+  @override void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    if(widget.role=='owner') {
+      ChequeReminders.instance.watch(widget.uid);
+      ManagerOfflineSaleSync.instance.start();
+      ManagerOfflineVoucherSync.instance.start();
+      unawaited(ManagerOfflineDraftStore.instance.syncPending());
+      unawaited(_backupAtOwnerLogin());
+    } else {
+      _writePresence(true);
+      unawaited(EmployeeOfflineSaleSync.instance.syncPending());
+      _presenceTimer=Timer.periodic(const Duration(seconds:20),(_){
+        _writePresence(true);
+        unawaited(EmployeeOfflineSaleSync.instance.syncPending());
+      });
+    }
+    ChatAlerts.instance.watch(widget.uid,widget.role=='owner');
+  }
   Future<void> _backupAtOwnerLogin() async {
     final prefs = await SharedPreferences.getInstance();
     if (prefs.getBool('vib_backup_after_login') != true) return;
@@ -884,9 +923,27 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     catch (_) { /* A missed heartbeat expires automatically in the manager view. */ }
     finally { _presenceWriteInFlight=false; }
   }
-  @override void didChangeAppLifecycleState(AppLifecycleState state) { _writePresence(state==AppLifecycleState.resumed); if(state==AppLifecycleState.resumed&&widget.role=='employee')unawaited(EmployeeOfflineSaleSync.instance.syncPending()); }
+  @override void didChangeAppLifecycleState(AppLifecycleState state) {
+    _writePresence(state==AppLifecycleState.resumed);
+    if(state==AppLifecycleState.resumed) {
+      if(widget.role=='employee')unawaited(EmployeeOfflineSaleSync.instance.syncPending());
+      if(widget.role=='owner')unawaited(ManagerOfflineDraftStore.instance.syncPending());
+    }
+  }
   Future<void> _signOut() async { await _writePresence(false); await FirebaseAuth.instance.signOut(); }
-  @override void dispose() { ChatAlerts.instance.stop(); if(widget.role == 'owner') {ChequeReminders.instance.stop();ManagerOfflineSaleSync.instance.stop();ManagerOfflineVoucherSync.instance.stop();} else { _presenceTimer?.cancel(); WidgetsBinding.instance.removeObserver(this); _writePresence(false); } super.dispose(); }
+  @override void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    ChatAlerts.instance.stop();
+    if(widget.role=='owner') {
+      ChequeReminders.instance.stop();
+      ManagerOfflineSaleSync.instance.stop();
+      ManagerOfflineVoucherSync.instance.stop();
+    } else {
+      _presenceTimer?.cancel();
+      _writePresence(false);
+    }
+    super.dispose();
+  }
 
   void openPage(String title, Widget child) {
     Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
