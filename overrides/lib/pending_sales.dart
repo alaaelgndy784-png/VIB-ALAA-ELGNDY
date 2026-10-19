@@ -2,6 +2,143 @@ part of 'main.dart';
 
 typedef SaleEntry = ({String id, String name, int qty, double price, double? cost, double discount, double basePrice});
 
+// A second local copy is essential: Firestore's offline write can be rejected
+// later if the backend returns RESOURCE_EXHAUSTED. Never acknowledge a draft as
+// a posted sale until it has a server-confirmed sales document.
+class ManagerOfflineDraftStore {
+  ManagerOfflineDraftStore._();
+  static final instance=ManagerOfflineDraftStore._();
+  final ValueNotifier<int> pendingCount=ValueNotifier<int>(0);
+  Future<void> _lastMutation=Future<void>.value();
+  bool _syncing=false;
+  String _key(String uid)=>'vib_manager_offline_drafts_v1_$uid';
+
+  Future<T> _locked<T>(Future<T> Function() task) {
+    final previous=_lastMutation;
+    final completed=Completer<void>();
+    _lastMutation=completed.future;
+    return () async {
+      await previous;
+      try {return await task();}
+      finally {completed.complete();}
+    }();
+  }
+
+  Future<List<Map<String,dynamic>>> _read(String uid) async {
+    final prefs=await SharedPreferences.getInstance();
+    final raw=prefs.getString(_key(uid));
+    if(raw==null||raw.isEmpty)return <Map<String,dynamic>>[];
+    final decoded=jsonDecode(raw);
+    if(decoded is! List)throw const FormatException('ملف الفواتير المعلقة على الجهاز غير صحيح');
+    return decoded.map((item) {
+      if(item is! Map)throw const FormatException('فاتورة معلقة محلية غير صحيحة');
+      return Map<String,dynamic>.from(item);
+    }).toList();
+  }
+
+  Future<void> _write(String uid,List<Map<String,dynamic>> docs) async {
+    final prefs=await SharedPreferences.getInstance();
+    if(!await prefs.setString(_key(uid),jsonEncode(docs))) {
+      throw StateError('تعذر تأمين نسخة من الفاتورة على الجهاز');
+    }
+    pendingCount.value=docs.length;
+  }
+
+  Future<void> preserve(String id,Map<String,dynamic> payload) async {
+    final uid=FirebaseAuth.instance.currentUser?.uid;
+    if(uid==null)throw StateError('لا يوجد حساب مدير مسجل');
+    final safe=Map<String,dynamic>.from(payload)
+      ..remove('createdAt')..remove('reviewedAt')..remove('reviewedBy');
+    safe['id']=id;
+    safe['draftStoredAtMs'] ??=DateTime.now().millisecondsSinceEpoch;
+    if(safe['managerOffline']!=true||safe['employeeId']!=uid||
+        safe['status']!='pending')throw StateError('هذه ليست فاتورة مدير معلقة');
+    PendingSaleData.parse(safe);
+    await _locked(() async {
+      final docs=await _read(uid);
+      final index=docs.indexWhere((doc)=>doc['id']==id);
+      if(index>=0) {
+        if(docs[index]['employeeId']!=uid ||
+            docs[index]['requestKey']!=safe['requestKey']) {
+          throw StateError('الفاتورة محفوظة محليًا ببيانات مختلفة؛ لا تنشئ نسخة أخرى');
+        }
+        safe['draftStoredAtMs']=docs[index]['draftStoredAtMs'];
+        docs[index]=safe;
+      } else {
+        if(docs.length>=250)throw StateError('الذاكرة بها 250 فاتورة معلقة؛ يلزم إتمام المزامنة');
+        docs.add(safe);
+      }
+      await _write(uid,docs);
+    });
+  }
+
+  Future<void> discard(String id) async {
+    final uid=FirebaseAuth.instance.currentUser?.uid;
+    if(uid==null)return;
+    await _locked(() async {
+      final docs=await _read(uid);
+      docs.removeWhere((doc)=>doc['id']==id);
+      await _write(uid,docs);
+    });
+  }
+
+  // Explicit retry / app resume only, not a continuous quota-consuming loop.
+  Future<void> syncPending() async {
+    final uid=FirebaseAuth.instance.currentUser?.uid;
+    if(uid==null||_syncing)return;
+    _syncing=true;
+    try {
+      final docs=await _locked(() => _read(uid));
+      pendingCount.value=docs.length;
+      for(final row in docs) {
+        final id='${row['id']??''}';
+        if(id.isEmpty)continue;
+        try {
+          final posted=await db.collection('sales').doc(id)
+            .get(const GetOptions(source:Source.server))
+            .timeout(const Duration(seconds:6));
+          if(posted.exists) {
+            if(posted.data()?['employeeId']!=uid) {
+              debugPrint('VIB manager draft ID collision: $id');
+              continue;
+            }
+            await discard(id);
+            continue;
+          }
+          final ref=db.collection('pendingSales').doc(id);
+          final pending=await ref.get(const GetOptions(source:Source.server))
+            .timeout(const Duration(seconds:6));
+          if(pending.exists) {
+            if(pending.data()?['managerOffline']!=true ||
+                pending.data()?['employeeId']!=uid ||
+                pending.data()?['requestKey']!=row['requestKey']) {
+              debugPrint('VIB manager pending draft differs from server: $id');
+              continue;
+            }
+            // The server has a durable pending document; its normal approval
+            // pipeline will post the sale with the same unique ID.
+            await discard(id);
+            continue;
+          }
+          final upload=Map<String,dynamic>.from(row)
+            ..remove('draftStoredAtMs');
+          upload['createdAt']=Timestamp.fromMillisecondsSinceEpoch(
+              (row['draftStoredAtMs'] as num?)?.toInt() ??
+              DateTime.now().millisecondsSinceEpoch);
+          await ref.set(upload).timeout(const Duration(seconds:10));
+          await discard(id);
+        } catch(error) {
+          debugPrint('VIB manager draft $id awaits server recovery: $error');
+          if(isTemporaryFirestoreOffline(error)||isFirestoreQuotaExhausted(error))break;
+          // Keep the original on device for investigation, never delete it.
+        }
+      }
+    } catch(error) {
+      debugPrint('VIB manager pending draft storage error: $error');
+    } finally {_syncing=false;}
+  }
+}
+
 Future<void> submitManagerOfflineSale({required String id,required String branchId,required List<SaleEntry> entries,
   required String customerId,required bool credit,required double paid,required double total,required String note,
   required bool allowShortage,required bool allowBelowCost,required String overrideReason}) async {
