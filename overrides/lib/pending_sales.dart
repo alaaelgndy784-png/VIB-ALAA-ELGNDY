@@ -235,6 +235,14 @@ class ManagerOfflineSaleSync {
       allowShortage:data['allowShortage']==true,allowBelowCost:data['allowBelowCost']==true,
       overrideReason:'${data['overrideReason']??''}',pendingRef:doc.reference);
   }
+  Future<void> retryAfterServerRecovery() async {
+    // Quota errors are not retried in a tight loop. A deliberate refresh or
+    // app foreground event allows one new attempt against confirmed documents.
+    _failedThisSession.clear();
+    await _subscription?.cancel();
+    _subscription=null;
+    start();
+  }
   void stop(){_subscription?.cancel();_subscription=null;_inFlight.clear();_failedThisSession.clear();}
 }
 
@@ -522,7 +530,10 @@ class ManagerOfflineDraftBanner extends StatelessWidget {
           Text('$count فاتورة مدير محفوظة بنسخة أمان على هذا الجهاز. لم تُعتمد ماليًا بعد.',
             style:const TextStyle(color:Colors.white)),
           TextButton.icon(
-            onPressed:()=>unawaited(ManagerOfflineDraftStore.instance.syncPending()),
+            onPressed:() {
+              unawaited(ManagerOfflineDraftStore.instance.syncPending());
+              unawaited(ManagerOfflineSaleSync.instance.retryAfterServerRecovery());
+            },
             icon:const Icon(Icons.sync),
             label:const Text('إعادة المزامنة بعد عودة Firebase'),
           ),
