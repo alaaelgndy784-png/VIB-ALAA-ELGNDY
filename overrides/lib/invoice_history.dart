@@ -8,7 +8,7 @@ class InvoiceHistoryPage extends StatefulWidget {
 
 class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBindingObserver {
   late DateTime from, to;
-  bool numbering=true;String numberError='';
+  bool numbering=false;String numberError='';
   bool _showYesterdayAndToday = true;
   Timer? _dayRolloverTimer;
   late Stream<QuerySnapshot<Map<String, dynamic>>> invoices;
@@ -23,7 +23,10 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
     final now = DateTime.now();
     selectRange(DateTime(now.year, now.month, now.day - 1), DateTime(now.year, now.month, now.day), includeYesterday: true);
     _scheduleDayRollover();
-    prepareInvoiceSerials(widget.type).then((_){if(mounted)setState(()=>numbering=false);}).catchError((Object e){if(mounted)setState((){numbering=false;numberError='تعذر تجهيز أرقام الفواتير: $e';});});
+    // Numbering is a background server task, never a condition for reading cached invoices.
+    unawaited(prepareInvoiceSerials(widget.type).catchError((Object e) {
+      if(mounted && !isTemporaryFirestoreOffline(e))setState(()=>numberError='تعذر تجهيز أرقام الفواتير: $e');
+    }));
   }
 
   @override void dispose() {
@@ -184,8 +187,8 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
     if(numberError.isNotEmpty)Text(numberError,style:const TextStyle(color:Colors.redAccent)),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: invoices, builder: (context, snapshot) {
       if(numbering)return const Center(child:CircularProgressIndicator());
-      if (snapshot.hasError) return const Center(child: Text('تعذر تحميل الفواتير؛ راجع اتصال الإنترنت وحاول مرة أخرى'));
-      if (!snapshot.hasData || snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+      if (snapshot.hasError && !snapshot.hasData) return const Center(child: Text('تعذر تحميل الفواتير؛ راجع اتصال الإنترنت وحاول مرة أخرى'));
+      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
       final rows = snapshot.data!.docs.where((row) => visibleAfterReset(row.data())).toList();
       if (_searchingByParty) {
         rows.sort((a, b) {
@@ -221,7 +224,7 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
               ])),
               subtitle: Text('${formatDate(data['createdAt'])}${sales ? ' • فرع: ${data['branchId'] ?? ''}' : ''}${returned ? '\nفاتورة مرتجعة' : ''}'),
               trailing: Text('$total ج.م', style: TextStyle(color: returned ? Colors.redAccent : dayColor, fontWeight: FontWeight.bold)),
-              onTap: () => invoiceActions(context, widget.type, row.id, data),
+              onTap: () => showInvoiceOverview(context, widget.type, row.id, initialData: data),
             ),
           );
         })),
