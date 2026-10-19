@@ -335,7 +335,9 @@ class _InvoiceLineEditorDialogState extends State<_InvoiceLineEditorDialog> {
 
 Future<String> invoiceDraftNumberPreview(String type) async {
   try {
-    final data=(await db.collection('settings').doc('invoiceCounter_$type').get()).data();
+    // Use the last locally known serial; do not wait on the network to open a bill.
+    final data=(await db.collection('settings').doc('invoiceCounter_$type')
+      .get(const GetOptions(source: Source.cache))).data();
     return '${((data?['lastNumber'] as num?)?.toInt() ?? 0)+1}'.padLeft(6,'0')+' (مبدئي)';
   } catch(_) { return 'يُخصص عند الحفظ'; }
 }
