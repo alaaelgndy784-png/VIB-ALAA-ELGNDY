@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_core/firebase_core.dart' show FirebaseException;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart' show rootBundle, FontLoader;
@@ -9,6 +10,17 @@ import '../lib/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('Firestore quota exhaustion is not misclassified as successful or offline invoice approval', () {
+    final exhausted=FirebaseException(plugin:'cloud_firestore',code:'resource-exhausted');
+    final disconnected=FirebaseException(plugin:'cloud_firestore',code:'unavailable');
+    expect(isFirestoreQuotaExhausted(exhausted),isTrue);
+    expect(isTemporaryFirestoreOffline(exhausted),isFalse);
+    expect(isTemporaryFirestoreOffline(disconnected),isTrue);
+    expect(isFirestoreQuotaExhausted(disconnected),isFalse);
+    expect(invoiceSaveFailureMessage(exhausted),contains('لم تُعتمد'));
+    expect(invoiceSaveFailureMessage(exhausted),contains('Firebase'));
+  });
+
   test('approval alert names the employee, customer and server-calculated total',(){
     final data={'customerName':'مؤسسة النور','customerId':'customer','credit':true,'paid':10.0,
       'items':[{'productId':'p','quantity':2,'unitPrice':30.0,'basePrice':30.0,'discountPercent':0}]};
