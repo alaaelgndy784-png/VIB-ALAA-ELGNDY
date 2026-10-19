@@ -3025,6 +3025,7 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
   final invoice = TextEditingController();
   final paid = TextEditingController(text: '0');
   final markup = TextEditingController();
+  final scannedPurchaseRef = db.collection('purchases').doc();
   bool saving = false;
   await showDialog<void>(context: context, barrierDismissible: false, builder: (outer) => StatefulBuilder(builder: (c, update) => AlertDialog(
     title: const Text('مراجعة فاتورة المشتريات'),
@@ -3079,9 +3080,18 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
       update(() => saving = true);
       try {
         final supplier = addedSuppliers[supplierId] ?? suppliers.docs.firstWhere((e) => e.id == supplierId).data();
-        await prepareInvoiceSerials('purchases');
-        final purchaseRef = db.collection('purchases').doc();
+        final purchaseRef = scannedPurchaseRef;
+        final requestKey=jsonEncode({'supplierId':supplierId,
+          'items':entries.map((e)=>[e.id,e.qty,e.cost]).toList(),
+          'paid':payment,'invoice':invoice.text.trim(),'markup':increase});
         await db.runTransaction((tx) async {
+          final previous=await tx.get(purchaseRef);
+          if(previous.exists) {
+            if(previous.data()?['requestKey']!=requestKey) {
+              throw StateError('فاتورة التصوير محفوظة ببيانات مختلفة؛ راجع قائمة المشتريات');
+            }
+            return;
+          }
           final supplierRef = db.collection('suppliers').doc(supplierId);
           final supplierSnap = await tx.get(supplierRef);
           if (!supplierSnap.exists) throw StateError('المورد غير موجود');
@@ -3151,6 +3161,7 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
                   'internalNumber': invoiceSerial.data['internalNumber'],
                   'invoiceBarcode': invoiceSerial.data['invoiceBarcode'],
             'source': 'camera',
+            'requestKey':requestKey,
             'supplierPreviousBalance': before,
             'supplierBalanceAfter': before + due,
             'supplierId': supplierId,
@@ -3448,6 +3459,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
   final markup = TextEditingController();
   final note = TextEditingController();
   final employeePurchaseRef=db.collection('purchases').doc();
+  final managerPurchaseRef=db.collection('purchases').doc();
   final draftNumber = owner ? await invoiceDraftNumberPreview('purchases') : 'يُخصص رقمها عند المدير';
   bool saving = false, credit = true, checkout = false;
 
@@ -3588,11 +3600,23 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
               return;
             }
             setLocal(() => saving = true);
-            await prepareInvoiceSerials('purchases');
-        final purchaseRef = db.collection('purchases').doc();
+            final purchaseRef = managerPurchaseRef;
+            final requestKey = jsonEncode({
+              'supplierId':supplierId,
+              'items':entries.map((e)=>[e.id,e.qty,e.cost]).toList(),
+              'paid':payment,'invoice':invoice.text.trim(),
+              'note':note.text.trim(),'markup':increase,
+            });
             try {
               final supplier = addedSuppliers[supplierId] ?? suppliers.docs.firstWhere((d) => d.id == supplierId).data();
               final savedInvoice = await db.runTransaction<Map<String, dynamic>>((tx) async {
+                final previous = await tx.get(purchaseRef);
+                if(previous.exists) {
+                  if(previous.data()?['requestKey'] != requestKey) {
+                    throw StateError('هذه الفاتورة سبق حفظها ببيانات مختلفة؛ راجعها من فواتير المشتريات');
+                  }
+                  return previous.data()!;
+                }
                 final supplierRef = db.collection('suppliers').doc(supplierId);
                 final supplierSnap = await tx.get(supplierRef);
                 if (!supplierSnap.exists) throw Exception('المورد غير موجود');
@@ -3675,6 +3699,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
                   'due': due,
                   'status': 'completed',
                   'source': 'manual',
+                  'requestKey':requestKey,
                   'actorId': actor,
                   'createdAt': FieldValue.serverTimestamp(),
                   if (items.length == 1) 'productId': items.first['productId'],
