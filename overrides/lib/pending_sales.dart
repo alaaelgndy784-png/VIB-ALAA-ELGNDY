@@ -72,6 +72,17 @@ class ManagerOfflineDraftStore {
     });
   }
 
+  Future<void> loadPendingCount() async {
+    final uid=FirebaseAuth.instance.currentUser?.uid;
+    if(uid==null)return;
+    try {
+      final docs=await _locked(() => _read(uid));
+      pendingCount.value=docs.length;
+    } catch(error) {
+      debugPrint('VIB manager local draft count unavailable: $error');
+    }
+  }
+
   Future<void> discard(String id) async {
     final uid=FirebaseAuth.instance.currentUser?.uid;
     if(uid==null)return;
@@ -157,6 +168,9 @@ Future<void> submitManagerOfflineSale({required String id,required String branch
     'managerOffline':true,'note':note,'allowShortage':allowShortage,'allowBelowCost':allowBelowCost,
     'overrideReason':overrideReason,'createdAt':FieldValue.serverTimestamp(),
     'requestKey':jsonEncode({'customerId':customerId,'credit':credit,'paid':paid,'items':items})};
+  // A server quota rejection can roll back the Firestore cache. Preserve the
+  // invoice on local device storage before asking Firestore to upload it.
+  await ManagerOfflineDraftStore.instance.preserve(id,payload);
   final write=db.collection('pendingSales').doc(id).set(payload);
   // Firestore persists this local write immediately; its future may remain
   // pending until the server acknowledges it after reconnection.
@@ -172,8 +186,20 @@ class ManagerOfflineSaleSync {
   final Set<String> _inFlight={},_failedThisSession={};
   void start() {
     if(_subscription!=null)return;
-    _subscription=pendingSalesQuery(true).snapshots(includeMetadataChanges:true).listen((snapshot){
-      if(snapshot.metadata.isFromCache||snapshot.metadata.hasPendingWrites)return;
+    unawaited(ManagerOfflineDraftStore.instance.loadPendingCount());
+    _subscription=pendingSalesQuery(true)
+      .where('status',isEqualTo:'pending')
+      .snapshots(includeMetadataChanges:true).listen((snapshot){
+      if(snapshot.metadata.isFromCache||snapshot.metadata.hasPendingWrites) {
+        // Recover pending drafts created by versions before local backup existed.
+        for(final doc in snapshot.docs) {
+          if(doc.data()['managerOffline']==true && doc.data()['status']=='pending') {
+            unawaited(ManagerOfflineDraftStore.instance.preserve(doc.id,doc.data())
+              .catchError((Object e) {debugPrint('VIB local pending invoice backup: $e');}));
+          }
+        }
+        return;
+      }
       for(final doc in snapshot.docs) {
         if(doc.data()['managerOffline']!=true||doc.data()['status']!='pending'||doc.metadata.hasPendingWrites||
           _inFlight.contains(doc.id)||_failedThisSession.contains(doc.id))continue;
@@ -183,7 +209,11 @@ class ManagerOfflineSaleSync {
     },onError:(Object _){});
   }
   Future<void> _process(QueryDocumentSnapshot<Map<String,dynamic>> doc) async {
-    try {await _syncOne(doc);_failedThisSession.remove(doc.id);}
+    try {
+      await _syncOne(doc);
+      await ManagerOfflineDraftStore.instance.discard(doc.id);
+      _failedThisSession.remove(doc.id);
+    }
     catch (error) {
       // Keep the draft intact for manager review; never discard an offline invoice.
       if(!isTemporaryFirestoreOffline(error))_failedThisSession.add(doc.id);
