@@ -435,27 +435,78 @@ class InvoiceOverviewContent extends StatelessWidget {
     ]);
   }
 }
-Future<void> showInvoiceOverview(BuildContext context,String type,String id) async {
+Future<void> showInvoiceOverview(BuildContext context, String type, String id,
+    {Map<String, dynamic>? initialData}) async {
   try {
-    final row=await db.collection(type).doc(id).get(const GetOptions(source:Source.server));
-    if(!row.exists || !visibleAfterReset(row.data()!))throw StateError('الفاتورة غير متاحة');
-    if(row.metadata.hasPendingWrites)throw StateError('انتظر تأكيد الفاتورة من الخادم');
-    final data=await numberedInvoiceData(type,id,row.data()!);
-    if(!context.mounted)return;
-    final choice=await showDialog<String>(context:context,builder:(c)=>Directionality(textDirection:TextDirection.rtl,
-      child:AlertDialog(title:Text(type=='sales' ? 'فاتورة المبيعات' : 'فاتورة المشتريات'),
-        content:SizedBox(width:540,height:MediaQuery.sizeOf(c).height*.64,
-          child:PdfPreview(
-            build:(_)=>createInvoicePdf(type,id,data,paperChoice:'a4'),
-            initialPageFormat:PdfPageFormat.a4,
-            canChangePageFormat:false,canChangeOrientation:false,
-            allowPrinting:false,allowSharing:false,useActions:false,maxPageWidth:600,
-            loadingWidget:const Center(child:CircularProgressIndicator()),
-            onError:(context,error)=>Center(child:Text('تعذر إنشاء معاينة الفاتورة: $error',textAlign:TextAlign.center)),
-          )),
-        actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إغلاق')),
-          FilledButton.icon(onPressed:()=>Navigator.pop(c,'share'),icon:const Icon(Icons.share),label:const Text('إرسال PDF'))])));
-    if(choice=='share' && context.mounted)await exportInvoicePdf(context,type,id,data);
-  } catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'$e',title:'تعذر عرض الفاتورة',button:'رجوع');}
+    Map<String, dynamic> data;
+    if (initialData != null) {
+      data = Map<String, dynamic>.from(initialData);
+    } else {
+      // Prefer locally cached invoices so viewing works during a phone call or outage.
+      final ref = db.collection(type).doc(id);
+      DocumentSnapshot<Map<String, dynamic>>? row;
+      try {
+        row = await ref.get(const GetOptions(source: Source.cache));
+      } catch (_) {}
+      if (row == null || !row.exists) {
+        row = await ref.get(const GetOptions(source: Source.server))
+            .timeout(const Duration(seconds: 7));
+      }
+      if (!row.exists || row.data() == null) throw StateError('الفاتورة غير متاحة');
+      data = row.data()!;
+    }
+    if (!visibleAfterReset(data)) throw StateError('الفاتورة غير متاحة');
+    if (!context.mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute<void>(builder: (page) =>
+      Directionality(textDirection: TextDirection.rtl, child: Scaffold(
+        appBar: AppBar(
+          title: Text(type == 'sales' ? 'فاتورة المبيعات' : 'فاتورة المشتريات'),
+          actions: [
+            IconButton(
+              tooltip: 'إجراءات الفاتورة: تعديل وطباعة ومرتجعات',
+              icon: const Icon(Icons.more_vert),
+              onPressed: () => invoiceActions(page, type, id, data),
+            ),
+          ],
+        ),
+        body: PdfPreview(
+          build: (_) => createInvoicePdf(type, id, data, paperChoice: 'a4'),
+          initialPageFormat: PdfPageFormat.a4,
+          canChangePageFormat: false,
+          canChangeOrientation: false,
+          allowPrinting: false,
+          allowSharing: false,
+          useActions: false,
+          maxPageWidth: 1200,
+          loadingWidget: const Center(child: CircularProgressIndicator()),
+          onError: (context, error) => Center(
+            child: SingleChildScrollView(padding: const EdgeInsets.all(12),
+              child: Column(children: [
+                Text('تعذرت معاينة PDF: $error', textAlign: TextAlign.center),
+                const SizedBox(height: 8),
+                SizedBox(height: MediaQuery.sizeOf(context).height * .7,
+                  child: InvoiceOverviewContent(type: type, id: id, data: data)),
+              ]),
+            ),
+          ),
+        ),
+        bottomNavigationBar: SafeArea(child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(children: [
+            Expanded(child: FilledButton.icon(
+              onPressed: () => exportInvoicePdf(page, type, id, data),
+              icon: const Icon(Icons.share), label: const Text('إرسال PDF'))),
+            const SizedBox(width: 10),
+            Expanded(child: OutlinedButton.icon(
+              onPressed: () => Navigator.pop(page),
+              icon: const Icon(Icons.close), label: const Text('إغلاق'))),
+          ]),
+        )),
+      )),
+    ));
+  } catch (e) {
+    if (context.mounted) {
+      await showInvoiceSaveProblem(context, '$e', title: 'تعذر عرض الفاتورة', button: 'رجوع');
+    }
+  }
 }
-
