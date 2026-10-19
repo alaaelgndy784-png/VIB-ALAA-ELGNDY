@@ -802,8 +802,8 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
             if(data['managerOffline']==true && snapshot.data?.metadata.isFromCache==true) {
               throw StateError('الفاتورة معلقة على الجهاز. اتصل بالإنترنت وانتظر تأكيد Firebase قبل الاعتماد.');
             }
-            final latest=(await ref.get(const GetOptions(source:Source.server)))
-              .timeout(const Duration(seconds:8)).data();
+            final latest=(await ref.get(const GetOptions(source:Source.server))
+              .timeout(const Duration(seconds:8))).data();
             if(latest==null)throw Exception('الطلب غير موجود');
             final parsed=PendingSaleData.parse(latest);
             final entries=parsed.lines.map((x)=>(id:x.id,name:'',qty:x.quantity,price:x.price,cost:null as double?,discount:x.discount,basePrice:x.basePrice)).toList();
