@@ -1042,15 +1042,18 @@ class DashboardMetric extends StatelessWidget {
   final String label, collection, valueField;
   final String? actorId;
   final DateTime selectedDay;
+  final DateTime? fromDate, toDate;
   final bool count;
   final Color accent;
   final IconData icon;
   const DashboardMetric({super.key, required this.label, required this.collection, required this.valueField,
-    required this.accent, required this.icon, required this.selectedDay, this.actorId, this.count = false});
+    required this.accent, required this.icon, required this.selectedDay, this.fromDate, this.toDate,
+    this.actorId, this.count = false});
   @override
   Widget build(BuildContext context) {
-    final start = _dashboardStartOfDay(selectedDay);
-    final end = start.add(const Duration(days: 1));
+    final start = _dashboardStartOfDay(fromDate ?? selectedDay);
+    final lastDay = _dashboardStartOfDay(toDate ?? selectedDay);
+    final end = DateTime(lastDay.year, lastDay.month, lastDay.day + 1);
     Query<Map<String, dynamic>> query = db.collection(collection);
     if (actorId != null) {
       query = query.where('actorId', isEqualTo: actorId);
@@ -1096,42 +1099,52 @@ class DashboardSummaryCard extends StatefulWidget {
 }
 
 class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
-  late DateTime selectedDay;
+  late DateTime selectedFrom, selectedTo;
 
   @override
   void initState() {
     super.initState();
-    selectedDay = _dashboardStartOfDay();
+    selectedFrom = selectedTo = _dashboardStartOfDay();
   }
 
   Widget _divider() => Container(width: 1, height: 54, color: const Color(0xFF35435A));
 
-  Future<void> _selectDay() async {
+  Future<void> _selectDate({required bool from}) async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: selectedDay,
+      initialDate: from ? selectedFrom : selectedTo,
       firstDate: DateTime(2000),
       lastDate: DateTime(2100),
-      helpText: 'اختر تاريخ الملخص',
+      helpText: from ? 'اختر تاريخ بداية ملخص الفواتير' : 'اختر تاريخ نهاية ملخص الفواتير',
     );
-    if (picked != null && mounted) {
-      setState(() => selectedDay = _dashboardStartOfDay(picked));
-    }
+    if (picked == null || !mounted) return;
+    setState(() {
+      if (from) {
+        selectedFrom = _dashboardStartOfDay(picked);
+        if (selectedFrom.isAfter(selectedTo)) selectedTo = selectedFrom;
+      } else {
+        selectedTo = _dashboardStartOfDay(picked);
+        if (selectedTo.isBefore(selectedFrom)) selectedFrom = selectedTo;
+      }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     final owner = widget.owner;
-    final metricDay = owner ? selectedDay : _dashboardStartOfDay();
+    final metricDay = owner ? selectedTo : _dashboardStartOfDay();
     final metrics = owner
         ? <Widget>[
             DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', selectedDay: metricDay,
+              fromDate: selectedFrom, toDate: selectedTo,
               accent: gold, icon: Icons.monetization_on_outlined),
             _divider(),
             DashboardMetric(label: 'إجمالي المشتريات', collection: 'purchases', valueField: 'total', selectedDay: metricDay,
+              fromDate: selectedFrom, toDate: selectedTo,
               accent: const Color(0xFF55B8FF), icon: Icons.shopping_cart_outlined),
             _divider(),
             DashboardMetric(label: 'حركة السداد', collection: 'receipts', valueField: 'amount', selectedDay: metricDay,
+              fromDate: selectedFrom, toDate: selectedTo,
               accent: const Color(0xFF45D483), icon: Icons.volunteer_activism_outlined),
           ]
         : <Widget>[
@@ -1144,7 +1157,7 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
             DashboardMetric(label: 'المحصل اليوم', collection: 'receipts', valueField: 'amount', actorId: widget.actorId, selectedDay: metricDay,
               accent: const Color(0xFF45D483), icon: Icons.volunteer_activism_outlined),
           ];
-    final title = owner ? 'ملخص ${DateFormat('dd/MM/yyyy').format(selectedDay)}' : 'ملخص اليوم';
+    final title = owner ? 'ملخص الفواتير' : 'ملخص اليوم';
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 8, 16, 12),
       decoration: BoxDecoration(color: const Color(0xFF081526), borderRadius: BorderRadius.circular(20),
@@ -1152,23 +1165,35 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         Padding(padding: const EdgeInsetsDirectional.fromSTEB(14, 10, 14, 0),
           child: Row(children: [
-            if (owner)
-              IconButton(
-                tooltip: 'اختيار تاريخ الملخص',
-                onPressed: _selectDay,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints.tightFor(width: 31, height: 31),
-                icon: const Icon(Icons.calendar_month_outlined, color: gold, size: 19),
-              )
-            else
-              Container(width: 31, height: 31,
-                decoration: BoxDecoration(color: const Color(0xFF0D1C30), borderRadius: BorderRadius.circular(9),
-                  border: Border.all(color: const Color(0xFF35435A))),
-                child: const Icon(Icons.calendar_month_outlined, color: gold, size: 19)),
+            Container(width: 31, height: 31,
+              decoration: BoxDecoration(color: const Color(0xFF0D1C30), borderRadius: BorderRadius.circular(9),
+                border: Border.all(color: const Color(0xFF35435A))),
+              child: const Icon(Icons.calendar_month_outlined, color: gold, size: 19)),
             const SizedBox(width: 8),
-            Text(title, style: TextStyle(color: owner ? gold : Colors.white,
-              fontWeight: FontWeight.bold, fontSize: 16)),
+            Expanded(child: Text(title, style: TextStyle(color: owner ? gold : Colors.white,
+              fontWeight: FontWeight.bold, fontSize: 16))),
+            if (owner) TextButton(onPressed: () => setState(() {
+              selectedFrom = selectedTo = _dashboardStartOfDay();
+            }), child: const Text('اليوم')),
           ])),
+        if (owner) Padding(
+          padding: const EdgeInsetsDirectional.fromSTEB(12, 6, 12, 2),
+          child: Row(children: [
+            Expanded(child: OutlinedButton.icon(
+              onPressed: () => _selectDate(from: true),
+              icon: const Icon(Icons.event, size: 16),
+              label: FittedBox(fit: BoxFit.scaleDown,
+                child: Text('من تاريخ: ${DateFormat('dd/MM/yyyy').format(selectedFrom)}')),
+            )),
+            const SizedBox(width: 8),
+            Expanded(child: OutlinedButton.icon(
+              onPressed: () => _selectDate(from: false),
+              icon: const Icon(Icons.event_available, size: 16),
+              label: FittedBox(fit: BoxFit.scaleDown,
+                child: Text('إلى تاريخ: ${DateFormat('dd/MM/yyyy').format(selectedTo)}')),
+            )),
+          ]),
+        ),
         Row(children: metrics),
       ]),
     );
