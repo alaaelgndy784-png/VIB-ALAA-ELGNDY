@@ -6303,7 +6303,10 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
       'sourceInvoiceId': id, 'returnType': 'partial', 'sourceItemIndex': sourceItemIndex,
       'items': [{'sourceItemIndex': sourceItemIndex, 'productId': productId,
         'productName': item['productName'], 'quantity': quantity,
-        'unitPrice': item['unitPrice'] ?? 0, 'lineTotal': amountCents / 100}],
+        'unitPrice': item['unitPrice'] ?? 0,
+        if (item['purchasePriceAtSale'] is num)
+          'purchasePriceAtSale': item['purchasePriceAtSale'],
+        'lineTotal': amountCents / 100}],
       'total': amountCents / 100, 'cashRefund': cashRefundCents / 100,
       'debtReduction': debtReductionCents / 100, 'branchId': branchId,
       'customerId': customerId, 'customerName': d['customerName'],
