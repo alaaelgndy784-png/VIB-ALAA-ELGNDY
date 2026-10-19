@@ -1095,6 +1095,74 @@ class DashboardMetric extends StatelessWidget {
   }
 }
 
+// The dashboard must use the *same* effective receipt date, cancellation
+// exclusions, and Cairo date boundaries as CustomerPaymentReport.  Never
+// sum receipts by createdAt: old backdated vouchers can be entered today.
+ReceiptDayReport summarizeActiveCustomerReceipts(
+    List<Map<String, dynamic>> rows, Set<String> cancelledIds,
+    DateTime from, DateTime to) {
+  return summarizeReceiptPeriod(
+    rows.where((row) => visibleAfterReset(row) &&
+      !cancelledIds.contains('${row['id'] ?? ''}')).toList(),
+    from, to,
+  );
+}
+
+class DashboardCustomerPaymentsMetric extends StatelessWidget {
+  final DateTime from, to;
+  const DashboardCustomerPaymentsMetric({super.key, required this.from, required this.to});
+
+  @override Widget build(BuildContext context) => Expanded(
+    child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: db.collection('voucherCancellations')
+        .where('type', isEqualTo: 'receipt')
+        .snapshots(includeMetadataChanges: true),
+      builder: (context, cancellations) =>
+        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: db.collection('receipts').snapshots(includeMetadataChanges: true),
+          builder: (context, receipts) {
+            String amount = '—';
+            String? warning;
+            if(cancellations.hasData && receipts.hasData) {
+              try {
+                final cancelledIds = cancellations.data!.docs
+                  .map((d) => '${d.data()['originalId'] ?? ''}').toSet();
+                final rows = receipts.data!.docs.map((d) =>
+                  <String, dynamic>{...d.data(), 'id': d.id}).toList();
+                final report = summarizeActiveCustomerReceipts(rows, cancelledIds, from, to);
+                amount = (report.totalCents / 100).toStringAsFixed(2);
+                if(cancellations.data!.metadata.isFromCache ||
+                   receipts.data!.metadata.isFromCache ||
+                   cancellations.data!.metadata.hasPendingWrites ||
+                   receipts.data!.metadata.hasPendingWrites) {
+                  warning = 'بيانات السداد من الذاكرة أو تنتظر المزامنة';
+                }
+              } catch (e) {
+                warning = 'تعذر مراجعة بيانات السداد: $e';
+              }
+            } else if(cancellations.hasError || receipts.hasError) {
+              warning = 'تعذر تحميل السداد أو الإلغاءات';
+            }
+            return Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.volunteer_activism_outlined,
+                  color: Color(0xFF45D483), size: 25),
+                const SizedBox(height: 5),
+                const Text('حركة السداد', maxLines: 2, textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
+                const SizedBox(height: 4),
+                FittedBox(fit: BoxFit.scaleDown, child: Text(amount,
+                  style: const TextStyle(color: Color(0xFF45D483),
+                    fontSize: 17, fontWeight: FontWeight.w800))),
+                if(warning != null) Tooltip(message: warning,
+                  child: const Icon(Icons.info_outline, size: 12, color: Colors.orangeAccent)),
+              ]));
+          },
+        ),
+    ),
+  );
+}
+
 class DashboardSummaryCard extends StatefulWidget {
   final bool owner;
   final String? actorId;
@@ -1149,9 +1217,7 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
               fromDate: selectedFrom, toDate: selectedTo,
               accent: const Color(0xFF55B8FF), icon: Icons.shopping_cart_outlined),
             _divider(),
-            DashboardMetric(label: 'حركة السداد', collection: 'receipts', valueField: 'amount', selectedDay: metricDay,
-              fromDate: selectedFrom, toDate: selectedTo,
-              accent: const Color(0xFF45D483), icon: Icons.volunteer_activism_outlined),
+            DashboardCustomerPaymentsMetric(from: selectedFrom, to: selectedTo),
           ]
         : <Widget>[
             DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', actorId: widget.actorId, selectedDay: metricDay,
