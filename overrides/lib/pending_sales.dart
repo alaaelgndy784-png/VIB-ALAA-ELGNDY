@@ -98,14 +98,22 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                 final requestKey = jsonEncode({'customerId': customerId, 'credit': credit, 'paid': payment,'paymentBreakdown':tender,
                   if(owner) 'note':invoiceNote,
                   'items': entries.map((e) => {'id': e.id, 'qty': e.qty, 'price': e.price}).toList()});
+                final managerOffline=pending?['managerOffline']==true && owner && pending?['employeeId']==actor;
                 final priorSale = (await tx.get(saleRef)).data();
                 if (priorSale != null) {
-                  if (priorSale['employeeId'] != seller || priorSale['requestKey'] != requestKey || (pendingRef != null && priorSale['sourceRequestId'] != pendingRef.id)) {
+                  // A transaction that timed out on the phone may have completed when
+                  // the network returned. The same sale ID must never debit stock twice.
+                  final reconciledOffline = managerOffline && priorSale['sourceRequestId'] == null;
+                  if (priorSale['employeeId'] != seller || priorSale['requestKey'] != requestKey ||
+                      (pendingRef != null && priorSale['sourceRequestId'] != pendingRef.id && !reconciledOffline)) {
                     throw Exception('الفاتورة محفوظة بالفعل ببيانات مختلفة');
+                  }
+                  if (reconciledOffline && pendingRef != null) {
+                    tx.update(pendingRef, {'status':'approved','saleId':saleRef.id,
+                      'reviewedBy':actor,'reviewedAt':FieldValue.serverTimestamp()});
                   }
                   return priorSale;
                 }
-                final managerOffline=pending?['managerOffline']==true && owner && pending?['employeeId']==actor;
                 if (pendingRef != null && (pending == null || pending['status'] != 'pending' ||
                     sellerProfile?['active'] != true || (managerOffline ? (sellerProfile?['role']!='owner') : (sellerProfile?['role']!='employee')) ||
                     (!managerOffline && sellerProfile?['branchId'] != actualBranch))) {
