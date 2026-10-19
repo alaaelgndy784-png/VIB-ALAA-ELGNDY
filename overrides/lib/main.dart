@@ -138,6 +138,12 @@ bool visibleAfterReset(Map<String, dynamic> data) {
 bool isTemporaryFirestoreOffline(Object error) => error is TimeoutException || (error is FirebaseException &&
     (error.code=='unavailable'||error.code=='deadline-exceeded'||error.code=='network-request-failed'));
 
+// A full Firestore quota is not an internet problem and cannot be solved by
+// retrying every second. Keep the draft pending until the project's capacity
+// is restored. It is important NOT to report this as a completed sale.
+bool isFirestoreQuotaExhausted(Object error) => error is FirebaseException &&
+    error.code=='resource-exhausted';
+
 Future<QuerySnapshot<Map<String,dynamic>>> _getInvoiceDataWithCacheFallback(
     Query<Map<String,dynamic>> query) async {
   // An already visited catalogue must open immediately even without mobile data.
@@ -149,7 +155,7 @@ Future<QuerySnapshot<Map<String,dynamic>>> _getInvoiceDataWithCacheFallback(
     return await query.get(const GetOptions(source: Source.server))
         .timeout(const Duration(seconds: 5));
   } catch (error) {
-    if (!isTemporaryFirestoreOffline(error)) rethrow;
+    if (!isTemporaryFirestoreOffline(error) && !isFirestoreQuotaExhausted(error)) rethrow;
     return query.get(const GetOptions(source: Source.cache));
   }
 }
@@ -2298,13 +2304,15 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                   invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
                 savedInvoice=await commit.timeout(Duration(seconds: owner ? 12 : 8));
               } catch(e) {
-                if(!owner||!isTemporaryFirestoreOffline(e)) rethrow;
+                if(!owner||(!isTemporaryFirestoreOffline(e) && !isFirestoreQuotaExhausted(e))) rethrow;
                 await submitManagerOfflineSale(id:saleRef.id,branchId:branchId,entries:entries,customerId:customerId,
                   credit:credit,paid:payment,total:total,note:note.text.trim(),allowShortage:allowShortage,
                   allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
                 if(c.mounted)Navigator.pop(c);
                 if(context.mounted)await showInvoiceSaveProblem(context,
-                  'حُفظت الفاتورة محليًا في قائمة المزامنة. سيُخصم المخزون ويتحدث الحساب والصندوق بعد رجوع الإنترنت واعتماد العملية على الخادم.',
+                  isFirestoreQuotaExhausted(e)
+                    ? 'الخادم رفض العملية بسبب حصة الاستخدام أو ضغط الخدمة. احتفظنا بنسخة محلية من الفاتورة، وستبقى معلقة دون خصم المخزون أو تسجيل الدين حتى عودة الخدمة والمزامنة. راجع استهلاك Firestore في Firebase.'
+                    : 'حُفظت نسخة من الفاتورة على الجهاز في قائمة المزامنة. لن يتغير المخزون أو الحساب أو الصندوق إلا بعد تأكيد الخادم.',
                   title:'الفاتورة تنتظر المزامنة',button:'تمام',success:true);
                 return;
               }
@@ -5925,6 +5933,11 @@ class InvoiceSaveButtonLabel extends StatelessWidget {
 }
 
 String invoiceSaveFailureMessage(Object error) {
+  if (isFirestoreQuotaExhausted(error)) {
+    return 'خدمة Firestore رفضت العملية بسبب استنفاد حصة الاستخدام أو ضغط الخدمة (resource-exhausted). '
+      'الفاتورة لم تُعتمد حتى الآن؛ لا تُنشئ نسخة ثانية منها. '
+      'اتركها معلقة وراجع Firebase Console ← Firestore ← Usage / Billing، ثم أعد المحاولة من نفس الفاتورة بعد عودة الخدمة.';
+  }
   if (error is FirebaseException) {
     if (error.code == 'permission-denied') {
       return 'تعذر حفظ الفاتورة: الخادم رفض صلاحيات العملية. راجع تفعيل الحساب وقواعد حفظ الفواتير.\nرمز الخطأ: permission-denied';
