@@ -510,13 +510,41 @@ class PendingSalesShortcut extends StatelessWidget {
     });
 }
 
+class ManagerOfflineDraftBanner extends StatelessWidget {
+  const ManagerOfflineDraftBanner({super.key});
+  @override Widget build(BuildContext context)=>ValueListenableBuilder<int>(
+    valueListenable:ManagerOfflineDraftStore.instance.pendingCount,
+    builder:(context,count,_) {
+      if(count==0)return const SizedBox.shrink();
+      return Card(color:const Color(0xFF3B321C),child:Padding(
+        padding:const EdgeInsets.symmetric(horizontal:10,vertical:8),
+        child:Column(children:[
+          Text('$count فاتورة مدير محفوظة بنسخة أمان على هذا الجهاز. لم تُعتمد ماليًا بعد.',
+            style:const TextStyle(color:Colors.white)),
+          TextButton.icon(
+            onPressed:()=>unawaited(ManagerOfflineDraftStore.instance.syncPending()),
+            icon:const Icon(Icons.sync),
+            label:const Text('إعادة المزامنة بعد عودة Firebase'),
+          ),
+        ]),
+      ));
+    },
+  );
+}
+
 class PendingSalesPage extends StatelessWidget {
   final bool owner;
   const PendingSalesPage({super.key,required this.owner});
   @override Widget build(BuildContext context)=>StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
     stream:pendingSalesQuery(owner).snapshots(),builder:(context,snapshot) {
-      if(snapshot.hasError) return const Center(child:Text('تعذر تحميل الطلبات. تأكد من الاتصال وتحديث قواعد الحماية.'));
-      if(!snapshot.hasData) return const Center(child:CircularProgressIndicator());
+      if(snapshot.hasError)return Column(children:[
+        if(owner)const ManagerOfflineDraftBanner(),
+        const Expanded(child:Center(child:Text('تعذر تحميل الطلبات من السيرفر. الفواتير المحفوظة على الجهاز لا تُحذف.'))),
+      ]);
+      if(!snapshot.hasData)return Column(children:[
+        if(owner)const ManagerOfflineDraftBanner(),
+        const Expanded(child:Center(child:CircularProgressIndicator())),
+      ]);
       final rows=snapshot.data!.docs.where((d)=>visibleAfterReset(d.data()) && pendingSaleIsVisible(d.data())).toList()
         ..sort((a,b) {
           final pendingA=a.data()['status']=='pending',pendingB=b.data()['status']=='pending';
@@ -524,7 +552,8 @@ class PendingSalesPage extends StatelessWidget {
           return ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0);
         });
       return Column(children:[
-        const Padding(padding:EdgeInsets.all(12),child:Text('فواتير الموظف الكبيرة تنتظر اعتماد المدير. فواتير المدير التي سُجلت دون اتصال تُراجع وتُزامن تلقائيًا عند رجوع الإنترنت.',textAlign:TextAlign.center)),
+        const Padding(padding:EdgeInsets.all(12),child:Text('فواتير الموظف تنتظر الاعتماد، وفواتير المدير دون إنترنت تنتظر تأكيد Firebase. لا يُخصم المخزون أو يُسجل الدين قبل نجاح الحفظ على السيرفر.',textAlign:TextAlign.center)),
+        if(owner)const ManagerOfflineDraftBanner(),
         if(snapshot.data!.metadata.isFromCache)const Text('بيانات محفوظة على الجهاز؛ الحالة تتأكد عند الاتصال'),
         Expanded(child:rows.isEmpty?const Center(child:Text('لا توجد طلبات')):ListView(children:[for(final row in rows)
           Card(child:ListTile(leading:Icon(row.data()['status']=='approved'?Icons.check_circle:row.data()['status']=='rejected'?Icons.cancel:Icons.hourglass_top,color:gold),
@@ -613,11 +642,18 @@ class _PendingSaleInvoiceDialogState extends State<PendingSaleInvoiceDialog> {
       backgroundColor:const Color(0xFF080808),insetPadding:const EdgeInsets.symmetric(horizontal:6,vertical:12),
       shape:RoundedRectangleBorder(borderRadius:BorderRadius.circular(16),side:const BorderSide(color:gold)),
       child:SizedBox(width:650,height:double.infinity,child:Padding(padding:const EdgeInsets.all(8),child:Column(children:[
-        const Padding(padding:EdgeInsets.only(bottom:8),child:Text('فاتورة مبيعات الموظف',textAlign:TextAlign.center,style:TextStyle(fontSize:20,fontWeight:FontWeight.bold,color:gold))),
+        Padding(padding:const EdgeInsets.only(bottom:8),child:Text(
+          data['managerOffline']==true?'فاتورة المدير المعلقة':'فاتورة مبيعات الموظف',
+          textAlign:TextAlign.center,
+          style:const TextStyle(fontSize:20,fontWeight:FontWeight.bold,color:gold))),
         Expanded(child:SingleChildScrollView(child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
           Container(color:const Color(0xFF282215),padding:const EdgeInsets.all(8),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
             Text(pendingSaleStatus(data['status']),style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
-            Text('العميل: ${data['customerName'] ?? ''}'),Text('الموظف: ${data['employeeName'] ?? ''}'),
+            Text('العميل: ${data['customerName'] ?? ''}'),
+            Text(data['managerOffline']==true?'المسؤول: المدير':'الموظف: ${data['employeeName'] ?? ''}'),
+            if(data['managerOffline']==true && data['status']=='pending')
+              const Text('محفوظة كطلب فقط؛ الحساب والمخزون والصندوق لم يتغيروا بعد',
+                style:TextStyle(color:Colors.orangeAccent)),
             Text('التاريخ: ${formatDate(data['createdAt'])}'),
             if(data['status']!='approved')const Text('رقم الفاتورة: يُخصص عند الاعتماد'),
             Text(data['credit']==true?'طريقة الدفع: آجل':'طريقة الدفع: نقدي'),
@@ -750,7 +786,11 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
         if(owner && pending)FilledButton(onPressed:busy?null:()async {
           update(()=>busy=true);
           try {
-            final latest=(await ref.get(const GetOptions(source:Source.server))).data();
+            if(data['managerOffline']==true && snapshot.data?.metadata.isFromCache==true) {
+              throw StateError('الفاتورة معلقة على الجهاز. اتصل بالإنترنت وانتظر تأكيد Firebase قبل الاعتماد.');
+            }
+            final latest=(await ref.get(const GetOptions(source:Source.server)))
+              .timeout(const Duration(seconds:8)).data();
             if(latest==null)throw Exception('الطلب غير موجود');
             final parsed=PendingSaleData.parse(latest);
             final entries=parsed.lines.map((x)=>(id:x.id,name:'',qty:x.quantity,price:x.price,cost:null as double?,discount:x.discount,basePrice:x.basePrice)).toList();
@@ -758,8 +798,19 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
               paymentBreakdown:parsed.paymentBreakdown,credit:parsed.credit,customerId:parsed.customerId,saleRef:db.collection('sales').doc(ref.id),pendingRef:ref);
             if(c.mounted)Navigator.pop(c);
             if(context.mounted)await showInvoiceSavedActions(context,'sales',ref.id,saved);
-          }catch(e){if(c.mounted){update(()=>busy=false);await showInvoiceSaveProblem(c,invoiceSaveFailureMessage(e));}}
-        },child:Text(busy?'جارٍ الاعتماد…':'اعتماد وحفظ')),
+          }catch(e){
+            if(data['managerOffline']==true && isFirestoreQuotaExhausted(e)) {
+              try {await ManagerOfflineDraftStore.instance.preserve(ref.id,data);}
+              catch(backupError) {debugPrint('VIB manager backup after quota error: $backupError');}
+            }
+            if(c.mounted){
+              update(()=>busy=false);
+              await showInvoiceSaveProblem(c,invoiceSaveFailureMessage(e),
+                title:data['managerOffline']==true?'الفاتورة ما زالت معلقة':'تعذر الاعتماد',
+                button:'الرجوع للفاتورة المعلقة');
+            }
+          }
+        },child:Text(busy?'جارٍ الاعتماد…':data['managerOffline']==true?'اعتماد الفاتورة المعلقة':'اعتماد وحفظ')),
         if(data['status']=='approved')FilledButton(onPressed:busy?null:()async {
           update(()=>busy=true);
           try {final sale=(await db.collection('sales').doc(ref.id).get(const GetOptions(source:Source.server))).data();
