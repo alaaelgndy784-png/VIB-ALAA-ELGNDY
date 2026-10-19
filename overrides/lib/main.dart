@@ -6121,6 +6121,19 @@ List<Map<String, dynamic>> _saleReturnInvoiceItems(Map<String, dynamic> invoice)
   return result;
 }
 
+// Allocate each partial return from the cumulative cent value. This guarantees
+// that multiple returns of the same row refund exactly the original row amount,
+// including when one piastre is split across three or more units.
+int allocatedPartialReturnCents(int lineCents, int lineQuantity,
+    int alreadyReturned, int returningNow) {
+  if(lineCents < 0 || lineQuantity <= 0 || alreadyReturned < 0 ||
+      returningNow <= 0 || alreadyReturned + returningNow > lineQuantity) {
+    throw StateError('قيمة أو كمية المرتجع غير صحيحة');
+  }
+  int upTo(int qty) => (lineCents * qty / lineQuantity).round();
+  return upTo(alreadyReturned + returningNow) - upTo(alreadyReturned);
+}
+
 Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
   try {
     final invoice = (await db.collection('sales').doc(id).get(const GetOptions(source: Source.server))).data();
@@ -6190,7 +6203,10 @@ Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
     final lineQty = (row['quantity'] as num?)?.toInt() ?? 0;
     final lineTotal = (row['lineTotal'] as num?)?.toDouble() ??
         lineQty * ((row['unitPrice'] as num?)?.toDouble() ?? 0);
-    final returnValue = lineQty > 0 ? ((lineTotal * 100).round() * qty / lineQty).round() / 100 : 0.0;
+    final alreadyReturned = returnedByLine[index] ?? 0;
+    final returnValue = lineQty > 0
+      ? allocatedPartialReturnCents((lineTotal * 100).round(),lineQty,alreadyReturned,qty)/100
+      : 0.0;
     final yes = await showDialog<bool>(context: context, builder: (c) => AlertDialog(
       title: const Text('تأكيد إرجاع الصنف'),
       content: Text('الصنف: ${row['productName'] ?? ''}\nالكمية: $qty\nقيمة الصنف: ${returnValue.toStringAsFixed(2)} ج.م\nسيُحدّث المخزون والذمة والصندوق حسب تسوية الفاتورة.'),
@@ -6257,7 +6273,8 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
     final debtAvailable = ((settlement.debt * 100).round() - priorDebt).clamp(0, 1000000000000).toInt();
     final sourceLineCents = ((item['lineTotal'] as num?)?.toDouble() ??
         sourceQty * ((item['unitPrice'] as num?)?.toDouble() ?? 0)) * 100;
-    final amountCents = (sourceLineCents.round() * quantity / sourceQty).round();
+    final amountCents = allocatedPartialReturnCents(
+      sourceLineCents.round(),sourceQty,alreadyReturned,quantity);
     final totalAvailable = cashAvailable + debtAvailable;
     final cashRefundCents = partialReturnCashCents(valueCents: amountCents,
       cashAvailableCents: cashAvailable, debtAvailableCents: debtAvailable);
@@ -6357,7 +6374,8 @@ Future<void> confirmPartialPurchaseReturn(BuildContext context, String id) async
     quantity.dispose();if(choice==null||!context.mounted)return;
     final index=choice['sourceItemIndex']!,qty=choice['quantity']!,row=items[index];
     final lineQty=(row['quantity'] as num?)?.toInt()??0;final lineTotal=(row['lineTotal'] as num?)?.toDouble()??lineQty*((row['unitCost'] as num?)?.toDouble()??0);
-    final value=lineQty>0?((lineTotal*100).round()*qty/lineQty).round()/100:0.0;
+    final value=lineQty>0?allocatedPartialReturnCents(
+      (lineTotal*100).round(),lineQty,returnedByLine[index]??0,qty)/100:0.0;
     final yes=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('تأكيد إرجاع الصنف'),content:Text('الصنف: ${row['productName']??''}\nالكمية: $qty\nقيمة الصنف: ${value.toStringAsFixed(2)} ج.م\nسيُخصم من المخزون الرئيسي ويُحدّث حساب المورد والصندوق.'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('رجوع')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('تأكيد الإرجاع'))]))??false;
     if(!yes||!context.mounted)return;await returnPurchaseInvoiceItem(id,index,qty);
     if(context.mounted)await showInvoiceSaveProblem(context,'تم إرجاع الصنف وتحديث المخزون وحساب المورد والصندوق مع حفظ الفاتورة الأصلية.',title:'تم تسجيل مرتجع الصنف',button:'تمام',success:true);
@@ -6388,7 +6406,8 @@ Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantit
     final cashAvailable=((settlement.cash*100).round()-(priorCash*100).round()).clamp(0,1000000000000).toInt();
     final debtAvailable=((settlement.debt*100).round()-(priorDebt*100).round()).clamp(0,1000000000000).toInt();
     final lineValue=(item['lineTotal'] as num?)?.toDouble()??qty*((item['unitCost'] as num?)?.toDouble()??0);
-    final amount=((lineValue*100).round()*quantity/qty).round();
+    final amount=allocatedPartialReturnCents(
+      (lineValue*100).round(),qty,already,quantity);
     final cashRefund=partialReturnCashCents(valueCents:amount,cashAvailableCents:cashAvailable,debtAvailableCents:debtAvailable),debtReduction=amount-cashRefund;
     final returnRef=db.collection('purchaseReturns').doc(),now=FieldValue.serverTimestamp();
     tx.set(stockRef,{'branchId':'main','productId':productId,'quantity':before-quantity},SetOptions(merge:true));
