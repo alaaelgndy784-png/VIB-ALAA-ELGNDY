@@ -5990,6 +5990,8 @@ class InvoiceSaveButtonLabel extends StatelessWidget {
 }
 
 String invoiceSaveFailureMessage(Object error) {
+  if(error is StateError) return '${error.message}';
+  if(error is TimeoutException) return 'تعذر الوصول إلى Firebase في الوقت المحدد. الفاتورة ما زالت معلقة؛ حاول بعد رجوع الخدمة من نفس الفاتورة.';
   if (isFirestoreQuotaExhausted(error)) {
     return 'خدمة Firestore رفضت العملية بسبب استنفاد حصة الاستخدام أو ضغط الخدمة (resource-exhausted). '
       'الفاتورة لم تُعتمد حتى الآن؛ لا تُنشئ نسخة ثانية منها. '
