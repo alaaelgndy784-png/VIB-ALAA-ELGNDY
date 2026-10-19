@@ -799,12 +799,22 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
         if(owner && pending)FilledButton(onPressed:busy?null:()async {
           update(()=>busy=true);
           try {
-            if(data['managerOffline']==true && snapshot.data?.metadata.isFromCache==true) {
-              throw StateError('الفاتورة معلقة على الجهاز. اتصل بالإنترنت وانتظر تأكيد Firebase قبل الاعتماد.');
+            // The dialog may still display a cached snapshot even while online.
+            // Require a fresh server fetch *on click* instead of incorrectly
+            // treating the cached dialog as proof that the server is offline.
+            final confirmed=await ref.get(const GetOptions(source:Source.server))
+              .timeout(const Duration(seconds:10));
+            if(confirmed.metadata.isFromCache || confirmed.metadata.hasPendingWrites) {
+              throw StateError('الفاتورة لم تتأكد على Firebase بعد. احتفظ بها معلقة وأعد المحاولة بعد استعادة الخدمة.');
             }
-            final latest=(await ref.get(const GetOptions(source:Source.server))
-              .timeout(const Duration(seconds:8))).data();
-            if(latest==null)throw Exception('الطلب غير موجود');
+            final latest=confirmed.data();
+            if(latest==null) {
+              throw StateError('الفاتورة لم تصل إلى Firebase بعد؛ النسخة المحلية ما زالت محفوظة. استخدم إعادة المزامنة ثم اعتمد نفس الفاتورة.');
+            }
+            if(data['managerOffline']==true && (latest['managerOffline']!=true ||
+                latest['employeeId']!=FirebaseAuth.instance.currentUser?.uid)) {
+              throw StateError('بيانات فاتورة المدير غير متطابقة مع الخادم؛ أوقف الاعتماد وراجع البيانات.');
+            }
             final parsed=PendingSaleData.parse(latest);
             final entries=parsed.lines.map((x)=>(id:x.id,name:'',qty:x.quantity,price:x.price,cost:null as double?,discount:x.discount,basePrice:x.basePrice)).toList();
             final saved=await commitGroupedSale(owner:true,branchId:'${latest['branchId']}',entries:entries,total:parsed.total,payment:parsed.paid,
