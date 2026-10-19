@@ -3,6 +3,28 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../lib/main.dart';
 
 void main() {
+  test('partial returns allocate all piastres across repeated small batches', () {
+    // A single piastre across three units must never disappear.
+    final first=allocatedPartialReturnCents(1,3,0,1);
+    final second=allocatedPartialReturnCents(1,3,1,1);
+    final third=allocatedPartialReturnCents(1,3,2,1);
+    expect(first+second+third,1);
+    expect(allocatedPartialReturnCents(1,3,0,3),1);
+    // Split 100.01 pounds across 7 units and return them separately.
+    var sum=0;
+    for(var i=0;i<7;i++) {sum+=allocatedPartialReturnCents(10001,7,i,1);}
+    expect(sum,10001);
+    expect(allocatedPartialReturnCents(10001,7,0,2)+
+      allocatedPartialReturnCents(10001,7,2,5),10001);
+  });
+
+  test('partial return cent allocator rejects impossible negative or extra quantities', () {
+    expect(()=>allocatedPartialReturnCents(200,2,2,1),throwsStateError);
+    expect(()=>allocatedPartialReturnCents(200,2,-1,1),throwsStateError);
+    expect(()=>allocatedPartialReturnCents(200,2,0,0),throwsStateError);
+    expect(()=>allocatedPartialReturnCents(-1,2,0,1),throwsStateError);
+  });
+
   test('supplier payment updates both balances in cents and rejects insufficient balances', () {
     final result = supplierPaymentBalances(30000, 5000, 1000.50);
     expect(result.supplierAfter, 28999.50);
