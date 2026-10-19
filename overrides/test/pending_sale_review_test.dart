@@ -10,6 +10,13 @@ import '../lib/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('cached invoice dialog must fetch server proof before financial approval', () {
+    expect(pendingInvoiceConfirmedOnServer(true,false),isFalse);
+    expect(pendingInvoiceConfirmedOnServer(true,true),isFalse);
+    expect(pendingInvoiceConfirmedOnServer(false,true),isFalse);
+    expect(pendingInvoiceConfirmedOnServer(false,false),isTrue);
+  });
+
   test('Firestore quota exhaustion is not misclassified as successful or offline invoice approval', () {
     final exhausted=FirebaseException(plugin:'cloud_firestore',code:'resource-exhausted');
     final disconnected=FirebaseException(plugin:'cloud_firestore',code:'unavailable');
