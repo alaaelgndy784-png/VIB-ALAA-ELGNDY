@@ -6203,7 +6203,7 @@ Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
     final lineQty = (row['quantity'] as num?)?.toInt() ?? 0;
     final lineTotal = (row['lineTotal'] as num?)?.toDouble() ??
         lineQty * ((row['unitPrice'] as num?)?.toDouble() ?? 0);
-    final alreadyReturned = returnedByLine[index] ?? 0;
+    final alreadyReturned = priorLines[index] ?? 0;
     final returnValue = lineQty > 0
       ? allocatedPartialReturnCents((lineTotal * 100).round(),lineQty,alreadyReturned,qty)/100
       : 0.0;
