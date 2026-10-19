@@ -17,6 +17,32 @@ void main() {
     expect(pendingInvoiceConfirmedOnServer(false,false),isTrue);
   });
 
+  test('manager offline approval preserves the original invoice note and approved overrides', () {
+    final settings=managerPendingApprovalOptions({
+      'managerOffline':true,
+      'note':'فاتورة محفوظة بدون اتصال',
+      'allowShortage':true,
+      'allowBelowCost':true,
+      'overrideReason':'إذن المدير',
+    });
+    expect(settings.note,'فاتورة محفوظة بدون اتصال');
+    expect(settings.allowShortage,isTrue);
+    expect(settings.allowBelowCost,isTrue);
+    expect(settings.overrideReason,'إذن المدير');
+
+    final staff=managerPendingApprovalOptions({
+      'managerOffline':false,
+      'note':'نص الموظف',
+      'allowShortage':true,
+      'allowBelowCost':true,
+      'overrideReason':'غير مصرح',
+    });
+    expect(staff.note,isEmpty);
+    expect(staff.allowShortage,isFalse);
+    expect(staff.allowBelowCost,isFalse);
+    expect(staff.overrideReason,isEmpty);
+  });
+
   test('Firestore quota exhaustion is not misclassified as successful or offline invoice approval', () {
     final exhausted=FirebaseException(plugin:'cloud_firestore',code:'resource-exhausted');
     final disconnected=FirebaseException(plugin:'cloud_firestore',code:'unavailable');

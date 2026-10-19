@@ -10,6 +10,21 @@ typedef SaleEntry = ({String id, String name, int qty, double price, double? cos
 bool pendingInvoiceConfirmedOnServer(bool fromCache,bool hasPendingWrites) =>
     !fromCache && !hasPendingWrites;
 
+// Manual and automatic approval must use the same manager-authored invoice
+// details. Never inherit shortage/below-cost permissions from staff requests.
+({String note, bool allowShortage, bool allowBelowCost, String overrideReason})
+managerPendingApprovalOptions(Map<String,dynamic> data) {
+  if (data['managerOffline'] != true) {
+    return (note:'', allowShortage:false, allowBelowCost:false, overrideReason:'');
+  }
+  return (
+    note:'${data['note'] ?? ''}',
+    allowShortage:data['allowShortage'] == true,
+    allowBelowCost:data['allowBelowCost'] == true,
+    overrideReason:'${data['overrideReason'] ?? ''}',
+  );
+}
+
 class ManagerOfflineDraftStore {
   ManagerOfflineDraftStore._();
   static final instance=ManagerOfflineDraftStore._();
@@ -852,8 +867,11 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
             }
             final parsed=PendingSaleData.parse(latest);
             final entries=parsed.lines.map((x)=>(id:x.id,name:'',qty:x.quantity,price:x.price,cost:null as double?,discount:x.discount,basePrice:x.basePrice)).toList();
+            final approvalOptions=managerPendingApprovalOptions(latest);
             final saved=await commitGroupedSale(owner:true,branchId:'${latest['branchId']}',entries:entries,total:parsed.total,payment:parsed.paid,
-              paymentBreakdown:parsed.paymentBreakdown,credit:parsed.credit,customerId:parsed.customerId,saleRef:db.collection('sales').doc(ref.id),pendingRef:ref);
+              paymentBreakdown:parsed.paymentBreakdown,credit:parsed.credit,customerId:parsed.customerId,saleRef:db.collection('sales').doc(ref.id),
+              pendingRef:ref,invoiceNote:approvalOptions.note,allowShortage:approvalOptions.allowShortage,
+              allowBelowCost:approvalOptions.allowBelowCost,overrideReason:approvalOptions.overrideReason);
             if(c.mounted)Navigator.pop(c);
             if(context.mounted)await showInvoiceSavedActions(context,'sales',ref.id,saved);
           }catch(e){
