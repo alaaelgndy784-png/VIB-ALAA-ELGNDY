@@ -868,7 +868,7 @@ class OfflineCacheNotice extends StatelessWidget {
                       style:const TextStyle(color:Colors.white,fontSize:12))),
                     if(localCount>0) IconButton(
                       tooltip:'إعادة محاولة مزامنة فواتير المدير (بعد توفر حصة Firebase)',
-                      onPressed:()=>unawaited(ManagerOfflineDraftStore.instance.syncPending()),
+                      onPressed:()=>unawaited(retryManagerOfflineInvoices()),
                       icon:const Icon(Icons.sync,color:Colors.white,size:20)),
                   ]));
               });
@@ -927,7 +927,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     _writePresence(state==AppLifecycleState.resumed);
     if(state==AppLifecycleState.resumed) {
       if(widget.role=='employee')unawaited(EmployeeOfflineSaleSync.instance.syncPending());
-      if(widget.role=='owner')unawaited(ManagerOfflineDraftStore.instance.syncPending());
+      if(widget.role=='owner')unawaited(retryManagerOfflineInvoices());
     }
   }
   Future<void> _signOut() async { await _writePresence(false); await FirebaseAuth.instance.signOut(); }
