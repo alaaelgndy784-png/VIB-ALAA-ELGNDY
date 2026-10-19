@@ -87,6 +87,42 @@ void main() {
     expect(()=>summarizeReceiptPeriod([],to,from),throwsStateError);
     expect(summarizeReceiptPeriod([],from,to).totalCents,0);
   });
+  test('manager card agrees exactly with customer payment report on backdated and cancelled receipts', () {
+    final today=DateTime(2026,10,19), yesterday=DateTime(2026,10,18);
+    Map<String,dynamic> receipt(String id, double amount, DateTime chosen, DateTime posted)=> {
+      'id':id,'customerId':'customer-$id','customerName':'عميل $id',
+      'amount':amount,'receiptDate':Timestamp.fromDate(movementReportBoundary(chosen).add(const Duration(hours:14))),
+      'createdAt':Timestamp.fromDate(movementReportBoundary(posted).add(const Duration(hours:17))),
+    };
+    final rows=<Map<String,dynamic>>[
+      receipt('r19',4245, today,today),
+      // Older collections entered today must not count in today's total.
+      receipt('r18a',17110,yesterday,today),
+      receipt('r18b',14000,yesterday,yesterday),
+      receipt('cancelled19',500,today,today),
+    ];
+    final cancelled={'cancelled19'};
+    final todayCard=summarizeActiveCustomerReceipts(rows,cancelled,today,today);
+    final twoDayCard=summarizeActiveCustomerReceipts(rows,cancelled,yesterday,today);
+    final active=rows.where((r)=>!cancelled.contains(r['id'])).toList();
+    expect(todayCard.totalCents,424500);
+    expect(todayCard.receiptCount,1);
+    expect(twoDayCard.totalCents,3535500);
+    expect(twoDayCard.receiptCount,3);
+    expect(todayCard.totalCents,summarizeReceiptPeriod(active,today,today).totalCents);
+    expect(twoDayCard.totalCents,summarizeReceiptPeriod(active,yesterday,today).totalCents);
+  });
+
+  test('cancelled voucher is excluded regardless of its amount or backdating', () {
+    final today=DateTime(2026,10,19);
+    final row=<String,dynamic>{
+      'id':'cancelled','customerId':'a','amount':99999,
+      'createdAt':Timestamp.fromDate(movementReportBoundary(today)),
+    };
+    expect(summarizeActiveCustomerReceipts([row],{'cancelled'},today,today).totalCents,0);
+    expect(summarizeActiveCustomerReceipts([row],{},today,today).totalCents,9999900);
+  });
+
   test('chosen receipt date drives reports and statements instead of audit timestamp',(){
     final chosen=Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,2)));
     final audit=Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,5)));
