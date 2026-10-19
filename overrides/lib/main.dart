@@ -2023,7 +2023,7 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
 }
 
 Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, required String branchId, String? initialProductId}) async {
-  if(owner)await prepareInvoiceSerials('sales');
+  // Invoice serial numbers are allocated in the save transaction; do not block offline entry.
   final productsSnap = await _getInvoiceDataWithCacheFallback(
     db.collection('products').where('active', isEqualTo: true));
   var customersSnap = await _getInvoiceDataWithCacheFallback(db.collection('customers'));
@@ -2214,10 +2214,17 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               }
               Map<String,dynamic> savedInvoice;
               try {
+                // Check the server once before starting a transaction. Offline transactions
+                // can otherwise wait indefinitely; use the durable local queue instead.
+                if (owner) {
+                  await db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid)
+                    .get(const GetOptions(source: Source.server))
+                    .timeout(const Duration(seconds: 4));
+                }
                 final commit=commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
                   total:total,payment:payment,paymentBreakdown:paymentBreakdown,credit:credit,customerId:customerId,saleRef:saleRef,
                   invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
-                savedInvoice=await (owner ? commit : commit.timeout(const Duration(seconds:8)));
+                savedInvoice=await commit.timeout(Duration(seconds: owner ? 12 : 8));
               } catch(e) {
                 if(!owner||!isTemporaryFirestoreOffline(e)) rethrow;
                 await submitManagerOfflineSale(id:saleRef.id,branchId:branchId,entries:entries,customerId:customerId,
@@ -2362,7 +2369,7 @@ class _SalesState extends State<Sales> {
             _sellerLabel(sale),
           ]),
           trailing: Text('${sale['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
-          onTap: () => invoiceActions(context, 'sales', d.id, sale, canReturn: owner),
+          onTap: () => showInvoiceOverview(context, 'sales', d.id, initialData: sale),
         ));
       }).toList())),
     ]);
@@ -2881,7 +2888,7 @@ class _PurchasesState extends State<Purchases>{
             ]),
             subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),
             trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
-            onTap: () => invoiceActions(context, 'purchases', d.id, p, canReturn: owner),
+            onTap: () => showInvoiceOverview(context, 'purchases', d.id, initialData: p),
           ));
         });
       },
@@ -5907,7 +5914,15 @@ Future<void> selectInvoicePaper(BuildContext context, String type, String id, Ma
 
 Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> data,
     {String? paperChoice, Map<String, dynamic>? settingsOverride}) async {
-  if(settingsOverride==null)data=await numberedInvoiceData(type,id,data);
+  if (settingsOverride == null && data['internalNumber'] is! int) {
+    try {
+      data = await numberedInvoiceData(type,id,data)
+          .timeout(const Duration(seconds: 4));
+    } catch (error) {
+      if (!isTemporaryFirestoreOffline(error)) rethrow;
+      // Preserve the locally available invoice number for offline viewing.
+    }
+  }
   Map<String, dynamic> settings = settingsOverride ?? {};
   if (settingsOverride == null) {
     try {
