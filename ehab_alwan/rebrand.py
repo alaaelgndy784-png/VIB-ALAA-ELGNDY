@@ -42,7 +42,7 @@ def rebrand(root: Path):
             ("com.alaa.vibsales.staffscan", "com.ehabalwan.sales.staff"),
             ("package:vib_sales/", "package:ehab_alwan_sales/"),
             ("'vib_", "'ehab_alwan_"),
-            ('"vib_', '"ehab_alwan_"),
+            ('"vib_', '"ehab_alwan_'),
         ]:
             s = s.replace(a,b)
         s = re.sub(r"(?<![\w])VIB(?![\w])", BRAND, s)
