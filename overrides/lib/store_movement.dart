@@ -20,7 +20,9 @@ int _storeCents(dynamic value) {
 }
 
 bool _storeInPeriod(Map<String, dynamic> row, DateTime from, DateTime to, {String dateKey = 'createdAt'}) {
-  final stamp = row[dateKey];
+  // Legacy receipts do not have receiptDate; use their creation date, as the
+  // customer payment report and dashboard already do.
+  final stamp = row[dateKey] ?? (dateKey == 'receiptDate' ? row['createdAt'] : null);
   if (stamp is! Timestamp) return false;
   final date = stamp.toDate();
   return !date.isBefore(movementReportBoundary(from)) &&
