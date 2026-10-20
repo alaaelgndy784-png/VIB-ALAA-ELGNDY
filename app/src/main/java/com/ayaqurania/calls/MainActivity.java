@@ -207,21 +207,52 @@ public class MainActivity extends Activity {
     }
     private void internetDialer(){
         LinearLayout form=linear(1);pad(form,18);
-        TextView intro=txt("مكالمة إلى رقم عادي عن طريق الإنترنت، حتى بدون شريحة في موبايلك.",15,GREEN,true);
-        form.addView(intro,lp());space(form,10);
+        form.addView(txt("اتصال إنترنت لرقم موبايل عادي - بدون استخدام شريحتك",15,GREEN,true),lp());
+        space(form,9);
         EditText dest=new EditText(this);
-        dest.setHint("رقم الشخص المطلوب، مثل 01xxxxxxxxx");
+        dest.setHint("رقم العميل 01xxxxxxxxx");
         dest.setSingleLine(true);dest.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
-        dest.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);form.addView(dest,lp());space(form,12);
-        TextView caller=txt("الرقم اللي هيظهر للمتلقي:",15,GREEN,true);form.addView(caller,lp());
-        TextView none=txt("لا يوجد رقم معتمد. الأرقام اللي تضيفها بتفضل «بانتظار التوثيق» لحين تأكيد شركة الاتصالات.",13,0xff986e36,false);
-        form.addView(none,lp());space(form,9);
-        Button setup=button("إدارة الأرقام والتحقق من حالتها",0xffe4eee8,GREEN);
-        form.addView(setup,lp());setup.setOnClickListener(v->manageCallerIds());space(form,10);
-        TextView warn=txt("المكالمة غير متاحة الآن: لم يتم ربط مزود اتصالات معتمد ولا خادم اتصال آمن. التطبيق لن يتصل بشريحة هاتفك بدل الإنترنت.",12,0xff8b6450,false);
-        form.addView(warn,lp());
-        new AlertDialog.Builder(this).setTitle("اتصال إنترنت لرقم عادي")
-            .setView(form).setPositiveButton("متى يعمل الاتصال؟",(d,w)->requirements())
+        dest.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+        form.addView(dest,lp());space(form,14);
+        form.addView(txt("اختار الرقم اللي هتطلب توثيقه علشان يظهر للعميل:",14,GREEN,true),lp());
+        space(form,7);
+        android.widget.RadioGroup lines=new android.widget.RadioGroup(this);
+        lines.setOrientation(android.widget.RadioGroup.VERTICAL);
+        lines.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+        final String[] picked={prefs.getString("preferred_caller_id","")};
+        if(callerCandidates.length()==0){
+            form.addView(txt("مفيش أرقام مضافة. اضغط إدارة الأرقام وأضف خطوطك الثلاثة.",13,0xff956c30,false),lp());
+        }
+        for(int i=0;i<callerCandidates.length();i++){
+            JSONObject obj=callerCandidates.optJSONObject(i);
+            if(obj==null)continue;
+            String phone=obj.optString("number"),label=obj.optString("name");
+            RadioButton item=new RadioButton(this);
+            item.setId(View.generateViewId());
+            item.setText(label+"  •  "+formatEgyptCallerId(phone)+"  [بانتظار موافقة المزود]");
+            item.setTextColor(GREEN);item.setTextSize(14);
+            item.setPadding(dp(6),dp(8),dp(6),dp(8));
+            item.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+            if(phone.equals(picked[0]))item.setChecked(true);
+            item.setOnClickListener(v->{
+                picked[0]=phone;
+                prefs.edit().putString("preferred_caller_id",phone).apply();
+                Toast.makeText(this,"تم حفظ الرقم المفضل؛ لم يتم تفعيل الاتصال",Toast.LENGTH_SHORT).show();
+            });
+            lines.addView(item,new LinearLayout.LayoutParams(-1,-2));
+        }
+        form.addView(lines,lp());
+        space(form,10);
+        Button manage=button("إضافة أو مراجعة أرقامك",0xffe4eee8,GREEN);
+        form.addView(manage,lp());manage.setOnClickListener(v->manageCallerIds());
+        space(form,12);
+        TextView warning=txt("الخطوط الموجودة هنا مش موثقة عند شركة الاتصال لسه. ميزة المكالمة الحقيقية مش هتشتغل غير بعد موافقة المزود وربط السيرفر والتحقق من ملكية كل خط. اختيار الرقم في الموبايل لا يغيّر Caller ID وحده.",12,0xff8b6450,false);
+        form.addView(warning,lp());
+        ScrollView scroller=new ScrollView(this);scroller.addView(form);
+        new AlertDialog.Builder(this)
+            .setTitle("الاتصال بأرقام العملاء")
+            .setView(scroller)
+            .setPositiveButton("متطلبات التفعيل",(d,w)->requirements())
             .setNegativeButton("إغلاق",null).show();
     }
     private void requirements(){
@@ -271,6 +302,7 @@ public class MainActivity extends Activity {
         EditText name=new EditText(this);name.setSingleLine(true);name.setHint("اسم الخط: شغل، معرض، شخصي...");form.addView(name,lp());
         TextView formatNote=txt("مثال: 01012345678 هيظهر 201012345678 (بإضافة 2 أول الرقم)",13,GREEN,false);
         form.addView(formatNote,lp());space(form,6);
+        if(callerCandidates.length()>=3){new AlertDialog.Builder(this).setMessage("مسموح بتسجيل 3 أرقام في النسخة دي. احذف رقم قديم لو عايز تغيّره.").setPositiveButton("تمام",null).show();return;}
         EditText number=new EditText(this);number.setSingleLine(true);
         number.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
         number.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);number.setHint("01xxxxxxxxx");
