@@ -1,0 +1,44 @@
+name: Package Ehab Alwan Sales Source
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - ehab-alwan-sales
+    paths:
+      - 'ehab_alwan/**'
+      - '.github/workflows/build-ehab-alwan-source.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-ehab-source:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout isolated source branch
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install image dependency
+        run: python -m pip install pillow
+      - name: Prepare full independently branded source
+        run: bash ehab_alwan/build_source.sh
+      - name: Validate original VIB Firebase configuration is absent
+        run: |
+          test -s ehab_dist/Ehab_Alwan_Sales_Source.zip
+          test ! -e ehab_dist/Ehab_Alwan_Sales_Source/firebase/google-services.json
+          test ! -e ehab_dist/Ehab_Alwan_Sales_Source/android/app/google-services.json
+          if grep -R -E 'vib-sales.firebasestorage.app|200962643703|com.alaa.vibsales.managerscan|com.alaa.vibsales.staffscan' ehab_dist/Ehab_Alwan_Sales_Source/lib ehab_dist/Ehab_Alwan_Sales_Source/ehab_backend; then
+            echo 'FAIL: old VIB Firebase settings detected'
+            exit 1
+          fi
+      - name: Upload Ehab Alwan full source ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: EHAB-ALWAN-SALES-FULL-SOURCE
+          path: ehab_dist/Ehab_Alwan_Sales_Source.zip
+          if-no-files-found: error
+          retention-days: 90
