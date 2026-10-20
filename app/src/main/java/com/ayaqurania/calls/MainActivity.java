@@ -192,6 +192,12 @@ public class MainActivity extends Activity {
     }
     // Local records are unverified candidates only. Never accept a caller ID
     // as authorized without confirmation from the trusted provider backend.
+    private String formatEgyptCallerId(String canonical){
+        // Keep the actual E.164 number for eventual provider verification.
+        // Display it without the plus sign so the local 01... becomes 201...
+        if(canonical != null && canonical.startsWith("+20") && canonical.length()==13) return canonical.substring(1);
+        return canonical;
+    }
     private String egyptMobile(String raw){
         String s=raw.trim().replace(" ","").replace("-","").replace("(","").replace(")","");
         if(s.matches("01[0125][0-9]{8}"))return "+20"+s.substring(1);
@@ -239,7 +245,7 @@ public class MainActivity extends Activity {
             String id=o.optString("id"),name=o.optString("name"),num=o.optString("number");
             LinearLayout row=linear(1);
             row.setBackground(bg(0xfff3f6f1,12));pad(row,9);
-            row.addView(txt(name+"  "+num,15,GREEN,true),lp());
+            row.addView(txt(name+"  "+formatEgyptCallerId(num),15,GREEN,true),lp());
             row.addView(txt("الحالة: غير موثق — ليس جاهزًا للاتصال",12,0xff8d6d30,false),lp());
             Button rm=button("حذف الرقم",0xfffcebe8,0xff9b3333);
             row.addView(rm,lp());rm.setOnClickListener(v->{
@@ -263,6 +269,8 @@ public class MainActivity extends Activity {
     private void addCallerCandidate(){
         LinearLayout form=linear(1);pad(form,18);
         EditText name=new EditText(this);name.setSingleLine(true);name.setHint("اسم الخط: شغل، معرض، شخصي...");form.addView(name,lp());
+        TextView formatNote=txt("مثال: 01012345678 هيظهر 201012345678 (بإضافة 2 أول الرقم)",13,GREEN,false);
+        form.addView(formatNote,lp());space(form,6);
         EditText number=new EditText(this);number.setSingleLine(true);
         number.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
         number.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);number.setHint("01xxxxxxxxx");
