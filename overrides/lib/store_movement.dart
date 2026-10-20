@@ -20,7 +20,9 @@ int _storeCents(dynamic value) {
 }
 
 bool _storeInPeriod(Map<String, dynamic> row, DateTime from, DateTime to, {String dateKey = 'createdAt'}) {
-  final stamp = row[dateKey];
+  // Legacy receipts do not have receiptDate; use their creation date, as the
+  // customer payment report and dashboard already do.
+  final stamp = row[dateKey] ?? (dateKey == 'receiptDate' ? row['createdAt'] : null);
   if (stamp is! Timestamp) return false;
   final date = stamp.toDate();
   return !date.isBefore(movementReportBoundary(from)) &&
@@ -40,6 +42,8 @@ StoreMovementSummary summarizeStoreMovement({
   required List<Map<String, dynamic>> customers,
   required List<Map<String, dynamic>> suppliers,
   required double cashBalance,
+  Set<String> cancelledReceiptIds = const {},
+  Set<String> cancelledSupplierPaymentIds = const {},
 }) {
   if (!movementReportBoundary(to, next: true).isAfter(movementReportBoundary(from))) {
     throw StateError('تاريخ النهاية يجب أن يكون بعد البداية أو في نفس اليوم');
@@ -50,7 +54,8 @@ StoreMovementSummary summarizeStoreMovement({
   final periodPurchaseReturns = purchaseReturns.where((r) => _storeInPeriod(r, from, to)).toList();
   final periodExpenses = expenses.where((r) => _storeInPeriod(r, from, to)).toList();
   final periodMovements = movements.where((r) => _storeInPeriod(r, from, to)).toList();
-  final periodReceipts = receipts.where((r) => _storeInPeriod(r, from, to, dateKey: 'receiptDate')).toList();
+  final periodReceipts = receipts.where((r) => _storeInPeriod(r, from, to, dateKey: 'receiptDate') &&
+      !cancelledReceiptIds.contains('${r['id'] ?? ''}')).toList();
   int sum(List<Map<String, dynamic>> rows, String key) => rows.fold(0, (value, row) => value + _storeCents(row[key]));
   int positiveBalances(List<Map<String, dynamic>> rows, String key) => rows.fold(0, (value, row) {
     final cents = _storeCents(row[key]);
@@ -78,7 +83,8 @@ StoreMovementSummary summarizeStoreMovement({
   final salesDue = sum(periodSales, 'due');
   final salesCash = (salesPaid - salesOnline).clamp(0, salesPaid).toInt();
   final salesCheque = sum(periodSales, 'chequePaid') + sum(periodSales, 'checkAmount');
-  final supplierPayments = periodMovements.where((r) => r['accountType'] == 'suppliers' && r['kind'] == 'payment').toList();
+  final supplierPayments = periodMovements.where((r) => r['accountType'] == 'suppliers' && r['kind'] == 'payment' &&
+      !cancelledSupplierPaymentIds.contains('${r['id'] ?? ''}')).toList();
   final supplierVoucherPaid = sum(supplierPayments, 'amount');
   final supplierBalance = positiveBalances(suppliers, 'balance');
   final supplierOpening = remainingOpening(suppliers);
@@ -194,6 +200,7 @@ class _StoreMovementReportPageState extends State<StoreMovementReportPage> {
       periodQuery('purchaseReturns').get(), periodQuery('accountMovements').get(),
       periodQuery('receipts', field: 'receiptDate').get(), periodQuery('receipts').get(),
       db.collection('customers').get(), db.collection('suppliers').get(), db.collection('settings').doc('cash').get(),
+      db.collection('voucherCancellations').get(),
     ]);
     List<Map<String, dynamic>> data(int index) => (snapshots[index] as QuerySnapshot<Map<String, dynamic>>).docs
       .where((doc) => visibleAfterReset(doc.data())).map((doc) => <String, dynamic>{...doc.data(), 'id': doc.id}).toList();
@@ -205,11 +212,24 @@ class _StoreMovementReportPageState extends State<StoreMovementReportPage> {
         if (visibleAfterReset(doc.data())) receiptRows[doc.id] = <String, dynamic>{...doc.data(), 'id': doc.id};
       }
     }
+    // Original vouchers remain in Firestore for audit. Exclude fully cancelled
+    // vouchers from paid totals, matching the dashboard's customer payments.
+    final cancellations = (snapshots[10] as QuerySnapshot<Map<String, dynamic>>).docs
+      .where((doc) => visibleAfterReset(doc.data())).map((doc) => doc.data());
+    final cancelledReceipts = <String>{}, cancelledPayments = <String>{};
+    for (final cancellation in cancellations) {
+      final originalId = '${cancellation['originalId'] ?? ''}';
+      if (originalId.isEmpty) continue;
+      if (cancellation['type'] == 'receipt') cancelledReceipts.add(originalId);
+      if (cancellation['type'] == 'supplierPayment') cancelledPayments.add(originalId);
+    }
     final cash = (snapshots[9] as DocumentSnapshot<Map<String, dynamic>>).data()?['balance'];
     return summarizeStoreMovement(from: from, to: to, sales: data(0), purchases: data(1), salesReturns: data(2),
       purchaseReturns: data(3), movements: movementRows, receipts: receiptRows.values.toList(),
       expenses: movementRows.where((row) => row['accountType'] == 'expenses').toList(),
-      customers: data(7), suppliers: data(8), cashBalance: cash is num ? cash.toDouble() : 0);
+      customers: data(7), suppliers: data(8), cashBalance: cash is num ? cash.toDouble() : 0,
+      cancelledReceiptIds: cancelledReceipts,
+      cancelledSupplierPaymentIds: cancelledPayments);
   }
   void showDetails(StoreMovementRow row) {
     showModalBottomSheet<void>(context: context, isScrollControlled: true, builder: (sheet) => Directionality(
