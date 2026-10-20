@@ -14,7 +14,7 @@ import java.security.SecureRandom;
 public class MainActivity extends Activity {
     private final int GREEN=Color.rgb(9,66,53), GOLD=Color.rgb(205,166,83), TEXT=Color.rgb(30,53,45), BG=Color.rgb(245,248,245);
     private SharedPreferences prefs;
-    private JSONArray people,groups;
+    private JSONArray people,groups,callerCandidates;
     private LinearLayout content;
     private final SecureRandom rng=new SecureRandom();
 
@@ -23,10 +23,10 @@ public class MainActivity extends Activity {
         getWindow().setStatusBarColor(GREEN);
         getWindow().setNavigationBarColor(BG);
         prefs=getSharedPreferences("aya_qurania_local",MODE_PRIVATE);
-        people=readArray("people"); groups=readArray("groups"); render();
+        people=readArray("people"); groups=readArray("groups"); callerCandidates=readArray("caller_candidates"); render();
     }
     private JSONArray readArray(String key) {try{return new JSONArray(prefs.getString(key,"[]"));}catch(Exception e){return new JSONArray();}}
-    private void save(){prefs.edit().putString("people",people.toString()).putString("groups",groups.toString()).apply();}
+    private void save(){prefs.edit().putString("people",people.toString()).putString("groups",groups.toString()).putString("caller_candidates",callerCandidates.toString()).apply();}
     private int dp(float n){return Math.round(n*getResources().getDisplayMetrics().density);}
     private GradientDrawable bg(int color,int radius) {GradientDrawable g=new GradientDrawable(); g.setColor(color);g.setCornerRadius(dp(radius));return g;}
     private TextView txt(String value,int size,int color,boolean bold) {
@@ -99,6 +99,12 @@ public class MainActivity extends Activity {
         addBtn(start,"☎ اتصال صوت",GREEN,Color.WHITE,()->call("مكالمة صوتية",room(),true));
         addBtn(start,"▣ فيديو",GOLD,GREEN,()->call("مكالمة فيديو",room(),false));
         content.addView(start,lp());space(content,8);
+        Button pstn=button("☎  الاتصال بأرقام الموبايل العادية (الإنترنت)",0xffe4eadf,GREEN);
+        content.addView(pstn,lp());pstn.setOnClickListener(v->internetDialer());space(content,7);
+        Button linesButton=button("⚙  إدارة أرقامي المملوكة للتوثيق",0xfff6ebcd,GREEN);
+        content.addView(linesButton,lp());linesButton.setOnClickListener(v->manageCallerIds());space(content,8);
+        TextView carrierNote=txt("تنبيه: الاتصال بالأرقام العادية غير مفعل بعد. يلزم توثيق الأرقام وربط شركة اتصالات مرخص لها أولاً.",12,0xff866b32,false);
+        content.addView(carrierNote,lp());space(content,8);
         Button join=button("🔗 الانضمام من رابط",0xffe1eee7,GREEN);
         content.addView(join,lp());join.setOnClickListener(v->join());
         space(content,24);
@@ -183,6 +189,101 @@ public class MainActivity extends Activity {
                 JSONArray next=new JSONArray();for(int i=0;i<groups.length();i++){JSONObject o=groups.optJSONObject(i);if(o!=null&&!id.equals(o.optString("id")))next.put(o);}
                 groups=next;save();render();
             }).show();
+    }
+    // Local records are unverified candidates only. Never accept a caller ID
+    // as authorized without confirmation from the trusted provider backend.
+    private String egyptMobile(String raw){
+        String s=raw.trim().replace(" ","").replace("-","").replace("(","").replace(")","");
+        if(s.matches("01[0125][0-9]{8}"))return "+20"+s.substring(1);
+        if(s.matches("201[0125][0-9]{8}"))return "+"+s;
+        if(s.matches("\\+201[0125][0-9]{8}"))return s;
+        return null;
+    }
+    private void internetDialer(){
+        LinearLayout form=linear(1);pad(form,18);
+        TextView intro=txt("مكالمة إلى رقم عادي عن طريق الإنترنت، حتى بدون شريحة في موبايلك.",15,GREEN,true);
+        form.addView(intro,lp());space(form,10);
+        EditText dest=new EditText(this);
+        dest.setHint("رقم الشخص المطلوب، مثل 01xxxxxxxxx");
+        dest.setSingleLine(true);dest.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        dest.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);form.addView(dest,lp());space(form,12);
+        TextView caller=txt("الرقم اللي هيظهر للمتلقي:",15,GREEN,true);form.addView(caller,lp());
+        TextView none=txt("لا يوجد رقم معتمد. الأرقام اللي تضيفها بتفضل «بانتظار التوثيق» لحين تأكيد شركة الاتصالات.",13,0xff986e36,false);
+        form.addView(none,lp());space(form,9);
+        Button setup=button("إدارة الأرقام والتحقق من حالتها",0xffe4eee8,GREEN);
+        form.addView(setup,lp());setup.setOnClickListener(v->manageCallerIds());space(form,10);
+        TextView warn=txt("المكالمة غير متاحة الآن: لم يتم ربط مزود اتصالات معتمد ولا خادم اتصال آمن. التطبيق لن يتصل بشريحة هاتفك بدل الإنترنت.",12,0xff8b6450,false);
+        form.addView(warn,lp());
+        new AlertDialog.Builder(this).setTitle("اتصال إنترنت لرقم عادي")
+            .setView(form).setPositiveButton("متى يعمل الاتصال؟",(d,w)->requirements())
+            .setNegativeButton("إغلاق",null).show();
+    }
+    private void requirements(){
+        new AlertDialog.Builder(this).setTitle("متطلبات الاتصال الحقيقي")
+            .setMessage("1) اختيار مزود VoIP يدعم وجهة الاتصال وإظهار أرقامك المصرية بشكل قانوني.\n\n"+
+                "2) توثيق ملكية كل رقم برمز من المزود، وليس بمجرد كتابته هنا.\n\n"+
+                "3) ربط خدمة اتصالات آمنة على سيرفر وعدم وضع مفاتيح الدفع في التطبيق.\n\n"+
+                "4) اختبار ظهور Caller ID على شبكات مصر قبل التفعيل.\n\n"+
+                "الرد على أرقامك الموجودة يظل عبر شركة الشريحة الحالية ما لم يُفعّل تحويل أو ربط مستقل.")
+            .setPositiveButton("تمام",null).show();
+    }
+    private void manageCallerIds(){
+        LinearLayout layout=linear(1);pad(layout,16);
+        TextView header=txt("أرقامك المُضافة للتوثيق (غير مفعلة للاتصال)",15,GREEN,true);
+        layout.addView(header,lp());space(layout,10);
+        if(callerCandidates.length()==0){
+            layout.addView(txt("لم تُضف أي رقم بعد.",13,0xff7a877e,false),lp());space(layout,10);
+        }
+        for(int i=0;i<callerCandidates.length();i++){
+            JSONObject o=callerCandidates.optJSONObject(i);if(o==null)continue;
+            String id=o.optString("id"),name=o.optString("name"),num=o.optString("number");
+            LinearLayout row=linear(1);
+            row.setBackground(bg(0xfff3f6f1,12));pad(row,9);
+            row.addView(txt(name+"  "+num,15,GREEN,true),lp());
+            row.addView(txt("الحالة: غير موثق — ليس جاهزًا للاتصال",12,0xff8d6d30,false),lp());
+            Button rm=button("حذف الرقم",0xfffcebe8,0xff9b3333);
+            row.addView(rm,lp());rm.setOnClickListener(v->{
+                JSONArray next=new JSONArray();
+                for(int j=0;j<callerCandidates.length();j++){
+                    JSONObject c=callerCandidates.optJSONObject(j);
+                    if(c!=null&&!id.equals(c.optString("id")))next.put(c);
+                }
+                callerCandidates=next;save();manageCallerIds();
+            });
+            layout.addView(row,lp());space(layout,8);
+        }
+        Button add=button("+ إضافة رقم أملكه",GREEN,Color.WHITE);
+        layout.addView(add,lp());add.setOnClickListener(v->addCallerCandidate());space(layout,9);
+        TextView note=txt("إضافة الرقم هنا لا تثبت الملكية. لا يمكن اختيار أي رقم للاتصال إلا بعد التحقق من الشركة وربط الخادم.",12,0xff7d755e,false);
+        layout.addView(note,lp());
+        ScrollView scroll=new ScrollView(this);scroll.addView(layout);
+        new AlertDialog.Builder(this).setTitle("إدارة أرقام المتصل").setView(scroll)
+           .setNegativeButton("إغلاق",null).show();
+    }
+    private void addCallerCandidate(){
+        LinearLayout form=linear(1);pad(form,18);
+        EditText name=new EditText(this);name.setSingleLine(true);name.setHint("اسم الخط: شغل، معرض، شخصي...");form.addView(name,lp());
+        EditText number=new EditText(this);number.setSingleLine(true);
+        number.setInputType(android.text.InputType.TYPE_CLASS_PHONE);
+        number.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);number.setHint("01xxxxxxxxx");
+        form.addView(number,lp());
+        AlertDialog d=new AlertDialog.Builder(this).setTitle("إضافة رقم تملكه للتوثيق")
+            .setView(form).setPositiveButton("حفظ للمتابعة",null)
+            .setNegativeButton("إلغاء",null).create();
+        d.setOnShowListener(v->d.getButton(-1).setOnClickListener(v2->{
+            String label=name.getText().toString().trim(),num=egyptMobile(number.getText().toString());
+            if(label.isEmpty()){name.setError("اكتب اسم الخط");return;}
+            if(num==null){number.setError("اكتب رقم موبايل مصري صحيح");return;}
+            for(int i=0;i<callerCandidates.length();i++){
+                JSONObject p=callerCandidates.optJSONObject(i);
+                if(p!=null&&num.equals(p.optString("number"))){number.setError("الرقم موجود بالفعل");return;}
+            }
+            try{JSONObject obj=new JSONObject();obj.put("id",room());obj.put("name",label);obj.put("number",num);
+                obj.put("status","pending");callerCandidates.put(obj);save();d.dismiss();
+                Toast.makeText(this,"اتحفظ كرقم غير موثق",Toast.LENGTH_LONG).show();manageCallerIds();
+            }catch(Exception e){Toast.makeText(this,"تعذر حفظ الرقم",Toast.LENGTH_SHORT).show();}
+        }));
+        d.show();
     }
     private void join(){
         EditText input=new EditText(this);input.setHint("رابط المكالمة");input.setSingleLine(true);input.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
