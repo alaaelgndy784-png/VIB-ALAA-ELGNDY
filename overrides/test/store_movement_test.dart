@@ -69,13 +69,16 @@ void main() {
       from: day, to: day, sales: const [], purchases: const [],
       salesReturns: const [], purchaseReturns: const [], expenses: const [],
       movements: [movement('active-payment', 200), movement('cancelled-payment', 700)],
-      receipts: [receipt('active-receipt', 4245), receipt('cancelled-receipt', 17110)],
+      receipts: [
+        receipt('active-receipt', 4245), receipt('cancelled-receipt', 17110),
+        {'id': 'legacy-receipt', 'createdAt': at, 'amount': 25.50},
+      ],
       customers: const [], suppliers: const [], cashBalance: 0,
       cancelledReceiptIds: {'cancelled-receipt'},
       cancelledSupplierPaymentIds: {'cancelled-payment'},
     );
-    expect(report['إجمالي السداد من العملاء'].amountCents, 424500);
-    expect(report['إجمالي السداد من العملاء'].entries, hasLength(1));
+    expect(report['إجمالي السداد من العملاء'].amountCents, 427050);
+    expect(report['إجمالي السداد من العملاء'].entries, hasLength(2));
     expect(report['إجمالي السداد للموردين'].amountCents, 20000);
     expect(report['إجمالي السداد للموردين'].entries, hasLength(1));
   });
