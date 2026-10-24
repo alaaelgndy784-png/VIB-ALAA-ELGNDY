@@ -1899,6 +1899,94 @@ Future<void> productDialog(BuildContext context, {String? id, Map<String, dynami
   ]));
 }
 
+// Edit only the catalog display name and selling price. Stock and historical
+// invoices must stay unchanged: their Firestore documents are not written here.
+Future<void> editInventoryProductNameAndPrice(
+  BuildContext context,
+  String productId,
+  Map<String, dynamic> current,
+) async {
+  final nameController = TextEditingController(text: '${current['name'] ?? ''}');
+  final priceController = TextEditingController(text: '${current['price'] ?? ''}');
+  var saving = false;
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, updateDialog) => AlertDialog(
+        title: const Text('تعديل اسم الصنف وسعر البيع'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            TextField(
+              controller: nameController,
+              enabled: !saving,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(labelText: 'اسم الصنف *'),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: priceController,
+              enabled: !saving,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'سعر البيع الجديد *',
+                suffixText: 'ج.م',
+              ),
+            ),
+            const SizedBox(height: 8),
+            const Text('تغيير الاسم والسعر لا يغيّر الكمية أو سعر الشراء أو الفواتير السابقة.'),
+          ]),
+        ),
+        actions: [
+          TextButton(
+            onPressed: saving ? null : () => Navigator.pop(dialogContext),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton.icon(
+            onPressed: saving ? null : () async {
+              final updatedName = nameController.text.trim();
+              final updatedPrice = double.tryParse(
+                priceController.text.trim().replaceAll(',', '.'),
+              );
+              if (updatedName.isEmpty || updatedPrice == null ||
+                  !updatedPrice.isFinite || updatedPrice < 0) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(content: Text('اكتب اسم الصنف وسعر بيع صحيح')),
+                );
+                return;
+              }
+              updateDialog(() => saving = true);
+              try {
+                await db.collection('products').doc(productId).update({
+                  'name': updatedName,
+                  'price': updatedPrice,
+                  'updatedAt': FieldValue.serverTimestamp(),
+                });
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('تم حفظ اسم الصنف وسعر البيع')),
+                  );
+                }
+              } catch (e) {
+                if (dialogContext.mounted) {
+                  updateDialog(() => saving = false);
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    SnackBar(content: Text('تعذر حفظ تعديل الصنف: $e')),
+                  );
+                }
+              }
+            },
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('حفظ التعديل'),
+          ),
+        ],
+      ),
+    ),
+  );
+  nameController.dispose();
+  priceController.dispose();
+}
+
 Future<DocumentSnapshot<Map<String, dynamic>>?> _createPurchaseProduct(BuildContext context) async {
   final name = TextEditingController();
   final category = TextEditingController();
@@ -2779,6 +2867,11 @@ class _InventoryAuditState extends State<InventoryAudit> {
                 return InventoryProductCard(number: index + 1, name: '${data['name']}', quantity: qty, unitPrice: data['price'] as num?,
                   detail: 'الفئة: ${data['category'] ?? 'غير مصنف'} • سعر الشراء: ${data['purchasePrice'] ?? 'غير مسجل'} ج.م',
                   actions: [
+                    IconButton(
+                      tooltip: 'تعديل اسم الصنف وسعر البيع',
+                      icon: const Icon(Icons.edit, color: gold),
+                      onPressed: () => editInventoryProductNameAndPrice(context, p.id, data),
+                    ),
                     IconButton(
                       tooltip: 'تعديل كمية المخزون الرئيسي',
                       icon: const Icon(Icons.edit_note, color: vibBlue),
