@@ -492,12 +492,46 @@ class _LoginPageState extends State<LoginPage> {
   bool busy = false;
   bool backupAfterLogin = false;
   bool playLoginChime = true;
+  bool showManualLogin = staffApp, biometricBusy = false;
   final AudioPlayer _loginPlayer = AudioPlayer();
 
   @override
   void initState() {
     super.initState();
     unawaited(_loadLoginPreferences());
+    if (!staffApp) WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_loginByBiometric());
+    });
+  }
+
+  Future<void> _loginByBiometric() async {
+    if (busy || biometricBusy || staffApp || !mounted) return;
+    setState(() { biometricBusy = true; error = null; });
+    try {
+      final enabled = await _secure.read(key: 'vib_owner_biometric_ready');
+      final savedPhone = await _secure.read(key: 'vib_saved_phone');
+      final savedPin = await _secure.read(key: 'vib_saved_pin');
+      if (enabled != 'yes' || savedPhone == null || savedPin == null) {
+        if (mounted) setState(() => showManualLogin = true);
+        return;
+      }
+      final localAuth = LocalAuthentication();
+      if (!await localAuth.canCheckBiometrics || !await localAuth.isDeviceSupported())
+        throw StateError('البصمة غير متاحة');
+      final verified = await localAuth.authenticate(
+        localizedReason: 'استخدم بصمتك للدخول إلى VIB Manager',
+        options: const AuthenticationOptions(biometricOnly: true, stickyAuth: true));
+      if (!verified) throw StateError('لم يتم التحقق من البصمة');
+      _managerBiometricVerifiedForSignIn = true;
+      try {
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: emailFor(savedPhone), password: savedPin);
+      } catch (_) { _managerBiometricVerifiedForSignIn = false; rethrow; }
+    } catch (e) {
+      _managerBiometricVerifiedForSignIn = false;
+      if (mounted) setState(() { showManualLogin = true;
+        error = 'تعذر الدخول بالبصمة؛ استخدم رقم الهاتف والرقم السري'; });
+    } finally { if (mounted) setState(() => biometricBusy = false); }
   }
 
   Future<void> _loadLoginPreferences() async {
@@ -552,7 +586,7 @@ class _LoginPageState extends State<LoginPage> {
       }
       await _secure.write(key: 'vib_saved_phone', value: number);
       await _secure.write(key: 'vib_saved_pin', value: password);
-      if (!create && playLoginChime) {
+      if (!create && staffApp && playLoginChime) {
         try {
           await _loginPlayer.play(AssetSource('login-chime.wav'), volume: .58);
         } catch (soundError) {
@@ -768,7 +802,21 @@ class _LoginPageState extends State<LoginPage> {
                   const Text('VIB Manager', style: TextStyle(color: gold, fontWeight: FontWeight.w900, fontSize: 25)),
                   const SizedBox(height: 3),
                   const Text('إدارة متجرك بسهولة', style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 15)),
-                  const SizedBox(height: 22),
+                  const SizedBox(height: 12),
+                  if (!staffApp) ...[
+                    SizedBox(width: double.infinity, height: 50,
+                      child: FilledButton.icon(
+                        onPressed: biometricBusy || busy ? null : _loginByBiometric,
+                        icon: const Icon(Icons.fingerprint, size: 24),
+                        label: Text(biometricBusy ? 'جاري التحقق من البصمة' : 'الدخول بالبصمة'),
+                      )),
+                    TextButton(
+                      onPressed: () => setState(() => showManualLogin = !showManualLogin),
+                      child: Text(showManualLogin ? 'إخفاء كلمة السر' : 'الدخول برقم الهاتف وكلمة السر'),
+                    ),
+                  ],
+                  if (showManualLogin || staffApp) ...[
+                  const SizedBox(height: 6),
                   TextField(
                     controller: phone,
                     keyboardType: TextInputType.phone,
@@ -827,6 +875,7 @@ class _LoginPageState extends State<LoginPage> {
                           : const Text('تسجيل الدخول'),
                     ),
                   ),
+                  ],
                   const SizedBox(height: 8),
                   CheckboxListTile(
                     value: backupAfterLogin,
