@@ -1987,6 +1987,142 @@ Future<void> editInventoryProductNameAndPrice(
   priceController.dispose();
 }
 
+// Manager-only, explicit correction of today's product purchasing cost.
+// Do not edit historical invoice snapshots, stock quantities or selling prices.
+Future<void> correctInventoryPurchaseCost(
+  BuildContext context,
+  String productId,
+  Map<String, dynamic> initial,
+) async {
+  final oldCost = (initial['purchasePrice'] as num?)?.toDouble();
+  final productName = '${initial['name'] ?? ''}';
+  final controller = TextEditingController(
+    text: oldCost == null ? '' : oldCost.toStringAsFixed(2),
+  );
+  var saving = false;
+  await showDialog<void>(
+    context: context,
+    barrierDismissible: false,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, updateDialog) => AlertDialog(
+        title: const Text('تصحيح تكلفة شراء الصنف'),
+        content: SingleChildScrollView(
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text(productName, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 12),
+            Text('التكلفة المسجلة حاليًا: ${oldCost == null ? 'غير مسجلة' : '${oldCost.toStringAsFixed(2)} ج.م'}'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              enabled: !saving,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'تكلفة الشراء الصحيحة للوحدة *',
+                suffixText: 'ج.م',
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'التصحيح لسعر شراء الصنف الحالي فقط، ولن يغيّر سعر البيع أو الكمية أو الفواتير القديمة. فاتورة مشتريات جديدة قد تحدّث التكلفة مرة أخرى.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ]),
+        ),
+        actions: [
+          TextButton(
+            onPressed: saving ? null : () => Navigator.pop(dialogContext),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton.icon(
+            onPressed: saving ? null : () async {
+              final correctedCost = double.tryParse(
+                controller.text.trim().replaceAll(',', '.'),
+              );
+              if (correctedCost == null || !correctedCost.isFinite ||
+                  correctedCost < 0 || correctedCost > 1000000000) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                  const SnackBar(content: Text('اكتب تكلفة شراء صحيحة للوحدة')),
+                );
+                return;
+              }
+              if (oldCost != null && (oldCost - correctedCost).abs() < 0.000001) {
+                Navigator.pop(dialogContext);
+                return;
+              }
+              final confirmed = await showDialog<bool>(
+                context: dialogContext,
+                builder: (confirmContext) => AlertDialog(
+                  title: const Text('تأكيد تصحيح التكلفة'),
+                  content: Text(
+                    'الصنف: $productName\n'
+                    'التكلفة السابقة: ${oldCost == null ? 'غير مسجلة' : '${oldCost.toStringAsFixed(2)} ج.م'}\n'
+                    'التكلفة الجديدة: ${correctedCost.toStringAsFixed(2)} ج.م\n\n'
+                    'سيُحدّث سعر الشراء الحالي فقط دون تغيير أسعار البيع أو الفواتير السابقة.',
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(confirmContext, false),
+                      child: const Text('تراجع'),
+                    ),
+                    FilledButton(
+                      onPressed: () => Navigator.pop(confirmContext, true),
+                      child: const Text('تأكيد الحفظ'),
+                    ),
+                  ],
+                ),
+              );
+              if (confirmed != true || !dialogContext.mounted) return;
+              updateDialog(() => saving = true);
+              try {
+                final uid = FirebaseAuth.instance.currentUser?.uid;
+                if (uid == null) throw StateError('سجّل الدخول كمدير أولًا');
+                final ref = db.collection('products').doc(productId);
+                await db.runTransaction((tx) async {
+                  final snapshot = await tx.get(ref);
+                  final current = snapshot.data();
+                  if (current == null || current['active'] == false) {
+                    throw StateError('الصنف غير متاح');
+                  }
+                  final latest = (current['purchasePrice'] as num?)?.toDouble();
+                  if ((latest == null) != (oldCost == null) ||
+                      (latest != null && oldCost != null &&
+                          (latest - oldCost).abs() >= 0.000001)) {
+                    throw StateError('تكلفة الصنف اتغيرت أثناء التعديل؛ افتح الصنف من جديد');
+                  }
+                  tx.update(ref, {
+                    'purchasePrice': correctedCost,
+                    'updatedAt': FieldValue.serverTimestamp(),
+                    'purchasePriceCorrectedAt': FieldValue.serverTimestamp(),
+                    'purchasePriceCorrectedBy': uid,
+                    if (latest != null) 'purchasePriceBeforeCorrection': latest,
+                  });
+                });
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                if (context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('تم تصحيح تكلفة الشراء؛ راجع الصنف قبل البيع')),
+                  );
+                }
+              } catch (e) {
+                if (dialogContext.mounted) {
+                  updateDialog(() => saving = false);
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    SnackBar(content: Text('تعذر تعديل التكلفة: $e')),
+                  );
+                }
+              }
+            },
+            icon: const Icon(Icons.save_outlined),
+            label: const Text('حفظ التكلفة'),
+          ),
+        ],
+      ),
+    ),
+  );
+  controller.dispose();
+}
+
 Future<DocumentSnapshot<Map<String, dynamic>>?> _createPurchaseProduct(BuildContext context) async {
   final name = TextEditingController();
   final category = TextEditingController();
@@ -2871,6 +3007,11 @@ class _InventoryAuditState extends State<InventoryAudit> {
                       tooltip: 'تعديل اسم الصنف وسعر البيع',
                       icon: const Icon(Icons.edit, color: gold),
                       onPressed: () => editInventoryProductNameAndPrice(context, p.id, data),
+                    ),
+                    IconButton(
+                      tooltip: 'تصحيح سعر شراء الصنف',
+                      icon: const Icon(Icons.price_check, color: Color(0xFF66DE91)),
+                      onPressed: () => correctInventoryPurchaseCost(context, p.id, data),
                     ),
                     IconButton(
                       tooltip: 'تعديل كمية المخزون الرئيسي',
