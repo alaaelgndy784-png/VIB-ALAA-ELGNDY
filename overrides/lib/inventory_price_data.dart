@@ -104,3 +104,35 @@ bool inventoryPriceMismatch(num? recorded, num? expected) {
       recorded < 0 || expected < 0) return true;
   return (recorded * 100).round() != (expected * 100).round();
 }
+
+ 
+/// Editing an old purchase may update the product's *current* purchase cost
+/// only if it is still the latest purchase, and no later correction supersedes
+/// it. The current value must still match the original invoice cost, avoiding
+/// accidental overwrites of an untracked manual change.
+bool shouldSyncEditedPurchaseCost({
+  required String invoiceId,
+  required String? latestInvoiceId,
+  required num? previousInvoiceCost,
+  required num correctedInvoiceCost,
+  required num? currentProductCost,
+  String? productLastPurchaseId,
+  DateTime? manualCorrectionAt,
+  DateTime? lastPurchaseRecordedAt,
+  DateTime? originalInvoiceAt,
+}) {
+  if (invoiceId.isEmpty || latestInvoiceId != invoiceId ||
+      previousInvoiceCost == null ||
+      !previousInvoiceCost.isFinite || previousInvoiceCost < 0 ||
+      !correctedInvoiceCost.isFinite || correctedInvoiceCost < 0 ||
+      currentProductCost == null || !currentProductCost.isFinite ||
+      currentProductCost < 0 ||
+      !inventoryPriceMismatch(previousInvoiceCost, correctedInvoiceCost) ||
+      inventoryPriceMismatch(currentProductCost, previousInvoiceCost)) return false;
+  if (productLastPurchaseId != null && productLastPurchaseId.isNotEmpty &&
+      productLastPurchaseId != invoiceId) return false;
+  final cutoff = lastPurchaseRecordedAt ?? originalInvoiceAt;
+  if (manualCorrectionAt != null &&
+      (cutoff == null || manualCorrectionAt.isAfter(cutoff))) return false;
+  return true;
+}
