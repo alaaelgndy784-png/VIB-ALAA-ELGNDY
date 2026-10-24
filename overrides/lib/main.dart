@@ -76,6 +76,8 @@ const _managerFirebaseAppId = '1:200962643703:android:04784682cd1d95b22c65f2';
 const _staffFirebaseAppId = '1:200962643703:android:fd5ac8ff4a1fae7c2c65f2';
 
 bool staffApp = false;
+// Set only after a local biometric success, consumed by OwnerSecurity once.
+bool _managerBiometricVerifiedForSignIn = false;
 final saleCostVisible = ValueNotifier<bool>(false);
 final salePriceEditable = ValueNotifier<bool>(false);
 Future<FirebaseOptions> _firebaseOptionsForThisApp() async {
@@ -387,39 +389,94 @@ class OwnerSecurity extends StatefulWidget {
 class _OwnerSecurityState extends State<OwnerSecurity> {
   final auth = LocalAuthentication();
   final password = TextEditingController();
-  bool unlocked = false, checking = true, busy = false;
+  final AudioPlayer _chime = AudioPlayer();
+  bool unlocked = false, checking = true, busy = false, showFallback = false;
   String message = '';
-  @override void initState() { super.initState(); WidgetsBinding.instance.addPostFrameCallback((_) => biometric()); }
+  @override void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_managerBiometricVerifiedForSignIn) {
+        _managerBiometricVerifiedForSignIn = false;
+        unawaited(_unlockManager());
+      } else {
+        unawaited(biometric());
+      }
+    });
+  }
+  @override void dispose() {
+    password.dispose();
+    unawaited(_chime.dispose());
+    super.dispose();
+  }
+  Future<void> _unlockManager() async {
+    if (!mounted) return;
+    setState(() { unlocked = true; checking = false; message = ''; });
+    try {
+      await const FlutterSecureStorage().write(key: 'vib_owner_biometric_ready', value: 'yes');
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('vib_login_chime') ?? true) {
+        await _chime.play(AssetSource('login-chime.wav'), volume: 1.0);
+      }
+    } catch (e) {
+      debugPrint('VIB manager chime or biometric preference failed: $e');
+    }
+  }
   Future<void> biometric() async {
+    if (!mounted) return;
     setState(() { checking = true; message = ''; });
     try {
       final available = await auth.canCheckBiometrics && await auth.isDeviceSupported();
-      if (!available) throw Exception('البصمة غير متاحة على الجهاز');
-      final ok = await auth.authenticate(localizedReason: 'استخدم بصمتك لفتح VIB MANAGER', options: const AuthenticationOptions(biometricOnly: true, stickyAuth: true));
-      if (mounted) setState(() { unlocked = ok; checking = false; if (!ok) message = 'لم يتم التحقق من البصمة'; });
-    } catch (_) { if (mounted) setState(() { checking = false; message = 'استخدم الرقم السري كبديل'; }); }
+      if (!available) throw StateError('البصمة غير متاحة على الجهاز');
+      final ok = await auth.authenticate(localizedReason: 'استخدم بصمتك لفتح VIB MANAGER',
+        options: const AuthenticationOptions(biometricOnly: true, stickyAuth: true));
+      if (!mounted) return;
+      if (ok) { await _unlockManager(); }
+      else { setState(() { checking = false; showFallback = true; message = 'لم يتم التحقق من البصمة'; }); }
+    } catch (_) {
+      if (mounted) setState(() {
+        checking = false; showFallback = true; message = 'يمكنك استخدام الرقم السري كبديل';
+      });
+    }
   }
   Future<void> verifyPassword() async {
-    if (password.text.length < 6) return;
+    if (password.text.length < 6 || busy) return;
     setState(() { busy = true; message = ''; });
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user?.email == null) throw Exception();
+      if (user?.email == null) throw StateError('لا يوجد حساب مدير');
       await user!.reauthenticateWithCredential(EmailAuthProvider.credential(email: user.email!, password: password.text));
-      if (mounted) setState(() => unlocked = true);
+      if (mounted) await _unlockManager();
     } catch (_) { if (mounted) setState(() => message = 'الرقم السري غير صحيح'); }
     finally { if (mounted) setState(() => busy = false); }
   }
   @override Widget build(BuildContext context) {
     if (unlocked) return widget.child;
-    return Scaffold(body: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420), child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [
-      const Icon(Icons.fingerprint, size: 86, color: gold), const Text('حماية VIB MANAGER', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)), const SizedBox(height: 18),
-      if (checking) const CircularProgressIndicator() else FilledButton.icon(onPressed: biometric, icon: const Icon(Icons.fingerprint), label: const Text('فتح بالبصمة')),
-      const SizedBox(height: 18), TextField(controller: password, obscureText: true, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الرقم السري البديل')),
-      const SizedBox(height: 10), FilledButton(onPressed: busy ? null : verifyPassword, child: const Text('فتح بالرقم السري')),
-      if (message.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: Text(message, style: const TextStyle(color: Colors.redAccent))),
-      TextButton(onPressed: () => FirebaseAuth.instance.signOut(), child: const Text('تسجيل الخروج')),
-    ])))));
+    return Scaffold(body: Center(child: SingleChildScrollView(child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 420),
+      child: Padding(padding: const EdgeInsets.all(22), child: Column(
+        mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.fingerprint, size: 86, color: gold),
+          const Text('حماية VIB MANAGER', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          if (checking) const CircularProgressIndicator() else
+            FilledButton.icon(onPressed: biometric, icon: const Icon(Icons.fingerprint),
+              label: const Text('فتح بالبصمة')),
+          if (!showFallback && !checking) TextButton(
+            onPressed: () => setState(() => showFallback = true),
+            child: const Text('استخدام الرقم السري بدل البصمة')),
+          if (showFallback) ...[
+            const SizedBox(height: 10),
+            TextField(controller: password, obscureText: true, keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'الرقم السري البديل')),
+            const SizedBox(height: 8),
+            FilledButton(onPressed: busy ? null : verifyPassword,
+              child: const Text('فتح بالرقم السري')),
+          ],
+          if (message.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10),
+            child: Text(message, style: const TextStyle(color: Colors.redAccent))),
+          TextButton(onPressed: () => FirebaseAuth.instance.signOut(), child: const Text('تسجيل الخروج')),
+        ]))))));
   }
 }
 
@@ -435,12 +492,46 @@ class _LoginPageState extends State<LoginPage> {
   bool busy = false;
   bool backupAfterLogin = false;
   bool playLoginChime = true;
+  bool showManualLogin = staffApp, biometricBusy = false;
   final AudioPlayer _loginPlayer = AudioPlayer();
 
   @override
   void initState() {
     super.initState();
     unawaited(_loadLoginPreferences());
+    if (!staffApp) WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_loginByBiometric());
+    });
+  }
+
+  Future<void> _loginByBiometric() async {
+    if (busy || biometricBusy || staffApp || !mounted) return;
+    setState(() { biometricBusy = true; error = null; });
+    try {
+      final enabled = await _secure.read(key: 'vib_owner_biometric_ready');
+      final savedPhone = await _secure.read(key: 'vib_saved_phone');
+      final savedPin = await _secure.read(key: 'vib_saved_pin');
+      if (enabled != 'yes' || savedPhone == null || savedPin == null) {
+        if (mounted) setState(() => showManualLogin = true);
+        return;
+      }
+      final localAuth = LocalAuthentication();
+      if (!await localAuth.canCheckBiometrics || !await localAuth.isDeviceSupported())
+        throw StateError('البصمة غير متاحة');
+      final verified = await localAuth.authenticate(
+        localizedReason: 'استخدم بصمتك للدخول إلى VIB Manager',
+        options: const AuthenticationOptions(biometricOnly: true, stickyAuth: true));
+      if (!verified) throw StateError('لم يتم التحقق من البصمة');
+      _managerBiometricVerifiedForSignIn = true;
+      try {
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: emailFor(savedPhone), password: savedPin);
+      } catch (_) { _managerBiometricVerifiedForSignIn = false; rethrow; }
+    } catch (e) {
+      _managerBiometricVerifiedForSignIn = false;
+      if (mounted) setState(() { showManualLogin = true;
+        error = 'تعذر الدخول بالبصمة؛ استخدم رقم الهاتف والرقم السري'; });
+    } finally { if (mounted) setState(() => biometricBusy = false); }
   }
 
   Future<void> _loadLoginPreferences() async {
@@ -495,7 +586,7 @@ class _LoginPageState extends State<LoginPage> {
       }
       await _secure.write(key: 'vib_saved_phone', value: number);
       await _secure.write(key: 'vib_saved_pin', value: password);
-      if (!create && playLoginChime) {
+      if (!create && staffApp && playLoginChime) {
         try {
           await _loginPlayer.play(AssetSource('login-chime.wav'), volume: .58);
         } catch (soundError) {
@@ -711,7 +802,21 @@ class _LoginPageState extends State<LoginPage> {
                   const Text('VIB Manager', style: TextStyle(color: gold, fontWeight: FontWeight.w900, fontSize: 25)),
                   const SizedBox(height: 3),
                   const Text('إدارة متجرك بسهولة', style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 15)),
-                  const SizedBox(height: 22),
+                  const SizedBox(height: 12),
+                  if (!staffApp) ...[
+                    SizedBox(width: double.infinity, height: 50,
+                      child: FilledButton.icon(
+                        onPressed: biometricBusy || busy ? null : _loginByBiometric,
+                        icon: const Icon(Icons.fingerprint, size: 24),
+                        label: Text(biometricBusy ? 'جاري التحقق من البصمة' : 'الدخول بالبصمة'),
+                      )),
+                    TextButton(
+                      onPressed: () => setState(() => showManualLogin = !showManualLogin),
+                      child: Text(showManualLogin ? 'إخفاء كلمة السر' : 'الدخول برقم الهاتف وكلمة السر'),
+                    ),
+                  ],
+                  if (showManualLogin || staffApp) ...[
+                  const SizedBox(height: 6),
                   TextField(
                     controller: phone,
                     keyboardType: TextInputType.phone,
@@ -770,6 +875,7 @@ class _LoginPageState extends State<LoginPage> {
                           : const Text('تسجيل الدخول'),
                     ),
                   ),
+                  ],
                   const SizedBox(height: 8),
                   CheckboxListTile(
                     value: backupAfterLogin,
@@ -859,7 +965,7 @@ class OfflineCacheNotice extends StatelessWidget {
                   ? '$localCount فاتورة مدير لها نسخة أمان على الجهاز • تنتظر تأكيد السيرفر'
                   : queued>0?'$queued عملية تنتظر المزامنة'
                   : pending?'تغييرات تنتظر المزامنة'
-                  : 'وضع غير متصل • عرض بيانات محفوظة على الجهاز';
+                  : 'غير متصل • بيانات محلية';
                 return Container(width:double.infinity,
                   color:(pending||queued>0)?const Color(0xFF5A3B12):const Color(0xFF3B321C),
                   padding:const EdgeInsets.symmetric(horizontal:12,vertical:5),
@@ -2700,10 +2806,20 @@ class _SalesState extends State<Sales> {
         .toList()
       ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
     return Column(children: [
-      Padding(padding: const EdgeInsets.fromLTRB(10,8,10,2), child: Row(children: [
-        Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.add_shopping_cart, size: 18), label: const Text('فاتورة جديدة', maxLines: 1, overflow: TextOverflow.ellipsis), onPressed: () => newSaleDialog(context, owner, branchId))),
-        const SizedBox(width: 6),
-        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.payments_outlined, size: 18), label: const Text('سند قبض', maxLines: 1, overflow: TextOverflow.ellipsis), onPressed:()=>createReceiptVoucher(context,branchId,owner:owner))),
+      Padding(padding: const EdgeInsets.fromLTRB(8,3,8,2), child: Row(children: [
+        Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact,
+          minimumSize: const Size(0, 34), textStyle: const TextStyle(fontSize: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 4)),
+          icon: const Icon(Icons.add_shopping_cart, size: 15),
+          label: const Text('فاتورة جديدة', maxLines: 1, overflow: TextOverflow.ellipsis),
+          onPressed: () => newSaleDialog(context, owner, branchId))),
+        const SizedBox(width: 5),
+        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+          minimumSize: const Size(0, 34), textStyle: const TextStyle(fontSize: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 4)),
+          icon: const Icon(Icons.payments_outlined, size: 15),
+          label: const Text('سند قبض', maxLines: 1, overflow: TextOverflow.ellipsis),
+          onPressed:()=>createReceiptVoucher(context,branchId,owner:owner))),
       ])),
       Padding(padding:const EdgeInsets.symmetric(horizontal:10),child: PendingSalesShortcut(owner:owner, compact:true)),
       if(!owner) const EmployeeOfflineSaleNotice(),
@@ -2714,7 +2830,10 @@ class _SalesState extends State<Sales> {
         const SizedBox(width:6),
         Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.edit_note, size:18), label: const Text('تعديل فاتورة', maxLines:1, overflow:TextOverflow.ellipsis), onPressed: () => editSaleByNumber(context))),
       ])),
-      Padding(padding: const EdgeInsets.all(8), child: Text('فواتير المبيعات • من ${DateFormat('dd/MM/yyyy').format(selectedFrom)} إلى ${DateFormat('dd/MM/yyyy').format(selectedTo)} • العدد: ${rows.length} • الإجمالي: ${movementReportMoney(rows.fold<int>(0,(sum,row){final value=row.data()['total'];return value is num && value.isFinite ? sum+(value*100).round() : sum;}))}',textAlign:TextAlign.center,style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+        child: Text('الفواتير: ${rows.length} • الإجمالي: ${movementReportMoney(rows.fold<int>(0,(sum,row){final value=row.data()['total'];return value is num && value.isFinite ? sum+(value*100).round() : sum;}))}',
+          maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
+          style: const TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.bold))),
       Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد فواتير في هذا التاريخ')) : ListView(children: rows.map((d) {
         final sale = d.data();
         final paymentText = sale.containsKey('paid') ? ' • مدفوع ${sale['paid'] ?? 0} • باقي ${sale['due'] ?? 0}' : '';
@@ -2966,38 +3085,72 @@ class _InventoryAuditState extends State<InventoryAudit> {
 
           return Column(children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+              padding: const EdgeInsets.fromLTRB(8, 3, 8, 0),
               child: TextField(
-                decoration: const InputDecoration(labelText: 'بحث في جرد المخزون', prefixIcon: Icon(Icons.search)),
+                decoration: const InputDecoration(hintText: 'بحث عن صنف',
+                  isDense: true, prefixIcon: Icon(Icons.search, size: 20),
+                  contentPadding: EdgeInsets.symmetric(vertical: 8)),
                 onChanged: (value) => setState(() => nameQuery = value),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 1),
               child: DropdownButtonFormField<String>(
-                value: selected,
-                decoration: const InputDecoration(labelText: 'الفئة'),
+                value: selected, isDense: true,
+                decoration: const InputDecoration(labelText: 'الفئة',
+                  isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
                 items: categories.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
                 onChanged: (v) => setState(() => category = v ?? 'الكل'),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Card(child: Padding(padding: const EdgeInsets.all(10), child: Column(children: [
-                Text('عدد الأصناف: ${filtered.length}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                Text('إجمالي المخزون بسعر التكلفة: ${totalCost.toStringAsFixed(2)} ج.م'),
-                Text('إجمالي المخزون بسعر البيع: ${totalSale.toStringAsFixed(2)} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Wrap(spacing: 8, children: [
-                  OutlinedButton.icon(onPressed: () => openInventoryPrices(context), icon: const Icon(Icons.price_change), label: const Text('زيادة / تخفيض الأسعار')),
-                  OutlinedButton.icon(onPressed:() => Navigator.push(context,
-                    MaterialPageRoute(builder:(_) => const PurchaseSalePriceAudit())),
-                    icon: const Icon(Icons.fact_check_outlined),
-                    label: const Text('مراجعة أسعار الشراء والبيع')),
-                  OutlinedButton.icon(onPressed: auditRows.isEmpty ? null : () => printInventoryAudit(context, selected, auditRows, 'a4'), icon: const Icon(Icons.picture_as_pdf), label: const Text('PDF A4')),
-                  OutlinedButton.icon(onPressed: auditRows.isEmpty ? null : () => printInventoryAudit(context, selected, auditRows, '80'), icon: const Icon(Icons.print), label: const Text('طباعة 80 مم')),
-                ]),
-              ]))),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              child: Card(child: Padding(padding: const EdgeInsets.all(6),
+                child: Column(children: [
+                  Text('الأصناف: ${filtered.length}  •  التكلفة: ${totalCost.toStringAsFixed(2)}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  Text('البيع: ${totalSale.toStringAsFixed(2)} ج.م', maxLines: 1,
+                    style: const TextStyle(color: gold, fontSize: 12)),
+                  const SizedBox(height: 3),
+                  Row(children: [
+                    Expanded(child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+                        minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 3),
+                        textStyle: const TextStyle(fontSize: 11)),
+                      onPressed: () => openInventoryPrices(context),
+                      icon: const Icon(Icons.price_change, size: 15),
+                      label: const Text('تغيير أسعار', maxLines: 1, overflow: TextOverflow.ellipsis))),
+                    const SizedBox(width: 4),
+                    Expanded(child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+                        minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 3),
+                        textStyle: const TextStyle(fontSize: 11)),
+                      onPressed: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const PurchaseSalePriceAudit())),
+                      icon: const Icon(Icons.fact_check_outlined, size: 15),
+                      label: const Text('مراجعة الأسعار', maxLines: 1, overflow: TextOverflow.ellipsis))),
+                  ]),
+                  Row(children: [
+                    Expanded(child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+                        minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 3),
+                        textStyle: const TextStyle(fontSize: 11)),
+                      onPressed: auditRows.isEmpty ? null :
+                        () => printInventoryAudit(context, selected, auditRows, 'a4'),
+                      icon: const Icon(Icons.picture_as_pdf, size: 15),
+                      label: const Text('PDF A4'))),
+                    const SizedBox(width: 4),
+                    Expanded(child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+                        minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 3),
+                        textStyle: const TextStyle(fontSize: 11)),
+                      onPressed: auditRows.isEmpty ? null :
+                        () => printInventoryAudit(context, selected, auditRows, '80'),
+                      icon: const Icon(Icons.print, size: 15),
+                      label: const Text('80 مم'))),
+                  ]),
+                ]))),
             ),
             Expanded(
               child: ListView.builder(itemCount: filtered.length, itemBuilder: (context, index) {
@@ -4461,6 +4614,15 @@ ReceiptDayReport summarizeReceiptBetween(List<Map<String,dynamic>> receipts,Date
   return ReceiptDayReport(customers, count, totalCents);
 }
 
+ReceiptDayReport filterReceiptReportByCustomer(ReceiptDayReport report, String query) {
+  final needle = invoiceSearchText(query);
+  if (needle.isEmpty) return report;
+  final matches = report.customers.where((c) =>
+    invoiceSearchText(c.name).contains(needle) || invoiceSearchText(c.id).contains(needle)).toList();
+  return ReceiptDayReport(matches, matches.fold<int>(0, (sum, c) => sum + c.receipts.length),
+    matches.fold<int>(0, (sum, c) => sum + c.amountCents));
+}
+
 List<Map<String,dynamic>> receiptRowsForCustomer(List<Map<String,dynamic>> rows,String customerId)=>
   rows.where((row)=>'${row['customerId']??''}'==customerId).toList();
 
@@ -4502,6 +4664,7 @@ class CustomerPaymentReport extends StatefulWidget {
 }
 
 class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
+  final customerSearch = TextEditingController();
   late DateTime day, endDay, draftDay, draftEndDay;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> receipts;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> cancellations;
@@ -4519,6 +4682,11 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
     cancellations = widget.owner
         ? db.collection('voucherCancellations').snapshots(includeMetadataChanges: true)
         : const Stream<QuerySnapshot<Map<String, dynamic>>>.empty();
+  }
+
+  @override void dispose() {
+    customerSearch.dispose();
+    super.dispose();
   }
 
   Future<void> _pickReportDate({required bool end}) async {
@@ -4579,6 +4747,19 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
             const SizedBox(width: 6),
             _compactDateButton('إلى', draftEndDay, () => _pickReportDate(end: true)),
           ]),
+          TextField(
+            key: const ValueKey('receipt-customer-search'),
+            controller: customerSearch,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              isDense: true, hintText: widget.suppliers ? 'بحث عن مورد' : 'بحث عن عميل',
+              prefixIcon: const Icon(Icons.search, size: 19),
+              suffixIcon: customerSearch.text.trim().isEmpty ? null : IconButton(
+                icon: const Icon(Icons.close, size: 18), tooltip: 'مسح البحث',
+                onPressed: () { customerSearch.clear(); setState(() {}); }),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+            ),
+          ),
           Row(children: [
             TextButton.icon(
               onPressed: _setReportPeriodToday,
@@ -4620,7 +4801,8 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                   if(!widget.suppliers)return <String,dynamic>{...source,'id':d.id};
                   return supplierPaymentReportRow(d.id,source);
                 }).toList();
-              final report = summarizeReceiptPeriod(rows, day, endDay);
+              final report = filterReceiptReportByCustomer(
+                summarizeReceiptPeriod(rows, day, endDay), customerSearch.text);
               final pending = snapshot.data!.metadata.hasPendingWrites || (widget.owner && cancelSnapshot.data!.metadata.hasPendingWrites);
               final cached = snapshot.data!.metadata.isFromCache || (widget.owner && cancelSnapshot.data!.metadata.isFromCache);
               return Column(children: [
@@ -6200,9 +6382,20 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
           (int.tryParse(line.quantity.text) ?? 0) * (double.tryParse(line.price.text.replaceAll(',', '.')) ?? 0));
         final extraPaid = cash ? addedTotal : (double.tryParse(paid.text.replaceAll(',', '.')) ?? 0);
         return AlertDialog(
-          title: Text(replacing ? purchase ? 'تعديل فاتورة المشتريات' : 'تعديل فاتورة المبيعات' : 'إضافة بنود لنفس فاتورة ${purchase ? 'المشتريات' : 'المبيعات'}'),
-          content: SizedBox(width: 620, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text('رقم الفاتورة: ${invoiceDisplayNumber(type,id,data)}'),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
+          titlePadding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          actionsPadding: const EdgeInsets.fromLTRB(7, 5, 7, 7),
+          title: Text(replacing ? purchase ? 'تعديل المشتريات' : 'تعديل المبيعات'
+            : 'إضافة بنود للفاتورة', textAlign: TextAlign.center,
+            style: const TextStyle(color: vibBlue, fontSize: 19, fontWeight: FontWeight.bold)),
+          content: SizedBox(
+            width: MediaQuery.sizeOf(c).width,
+            height: (MediaQuery.sizeOf(c).height -
+              MediaQuery.viewInsetsOf(c).bottom - 170).clamp(185.0, 700.0).toDouble(),
+            child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('فاتورة ${invoiceDisplayNumber(type,id,data)}',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
             if(replaceSale) OutlinedButton.icon(icon:const Icon(Icons.person_search),
               label:Text(selectedCustomerName.isEmpty ? 'اختيار العميل الصحيح' : 'العميل: $selectedCustomerName — تغيير العميل',softWrap:true),
               onPressed:saving ? null : () async {
@@ -6215,11 +6408,11 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
                 } catch(e) {if(c.mounted) await showInvoiceSaveProblem(c,'تعذر اختيار العميل: $e');}
               }) else Text('${purchase ? 'المورد' : 'العميل'}: ${data[purchase ? 'supplierName' : 'customerName'] ?? 'غير محدد'}'),
             if(replaceSale && selectedCustomerId!='${data['customerId'] ?? ''}')
-              const Text('عند الحفظ ينتقل باقي هذه الفاتورة من حساب العميل القديم إلى العميل المختار.',style:TextStyle(color:Colors.greenAccent)),
-            Text('الإجمالي السابق: ${data['total'] ?? 0} • المدفوع: ${data['paid'] ?? 0} • الباقي: ${data['due'] ?? 0}'),
-            const SizedBox(height: 10),
-            Text(replacing ? 'عدّل الأصناف والكميات والأسعار والمدفوع. يحفظ سجل التعديل وتُحدّث فروق المخزون والحسابات.' : 'البنود السابقة محفوظة؛ أضف البنود أو الكميات الإضافية هنا.'),
-            const Text('لتغيير الصنف اضغط على اسمه، ولزيادة الفاتورة اضغط إضافة بند.'),
+              const Text('سيُنقل باقي الفاتورة للعميل الجديد عند الحفظ',
+                style: TextStyle(color:Colors.greenAccent,fontSize:11)),
+            Text('السابق: ${data['total'] ?? 0}  •  مدفوع: ${data['paid'] ?? 0}  •  باقي: ${data['due'] ?? 0}',
+              style: const TextStyle(fontSize: 11)),
+            const SizedBox(height: 3),
             for (var i = 0; i < lines.length; i++)
               if (purchase) PurchaseInvoiceLine(
                 key: ObjectKey(lines[i]), number: i + 1, name: '${products.firstWhere((p) => p.id == lines[i].productId).data()['name']}',

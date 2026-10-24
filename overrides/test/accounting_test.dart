@@ -3,6 +3,20 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../lib/main.dart';
 
 void main() {
+  test('customer payment search filters visible customers and totals consistently', () {
+    final report = ReceiptDayReport([
+      const ReceiptCustomerTotal('a','حمادة قر قش', [{'amount':600}],60000),
+      const ReceiptCustomerTotal('b','زبون طياري', [{'amount':852.5}],85250),
+    ],2,145250);
+    final searched = filterReceiptReportByCustomer(report,'حمادة');
+    expect(searched.customers.length,1);
+    expect(searched.totalCents,60000);
+    expect(searched.receiptCount,1);
+    final byId = filterReceiptReportByCustomer(report,'b');
+    expect(byId.customers.single.name,'زبون طياري');
+    expect(filterReceiptReportByCustomer(report,'غير موجود').totalCents,0);
+    expect(filterReceiptReportByCustomer(report,'').totalCents,145250);
+  });
   test('partial returns allocate all piastres across repeated small batches', () {
     // A single piastre across three units must never disappear.
     final first=allocatedPartialReturnCents(1,3,0,1);
