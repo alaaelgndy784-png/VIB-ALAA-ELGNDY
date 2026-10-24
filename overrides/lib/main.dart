@@ -3079,7 +3079,9 @@ class _PurchaseSalePriceAuditState extends State<PurchaseSalePriceAudit> {
           sale==null || !sale.isFinite || sale<0 || last==null)noPrice++;
         if(diff)costDiff++;
         if(below)loss++;
-        if(diff || below || last==null || sale==null || currentCost==null) {
+        final invalidPrice = currentCost==null || !currentCost.isFinite || currentCost<0 ||
+          sale==null || !sale.isFinite || sale<0;
+        if(diff || below || last==null || invalidPrice) {
           list.add({'id':product.id,'data':data,'latest':last,'diff':diff,'below':below});
         }
       }
