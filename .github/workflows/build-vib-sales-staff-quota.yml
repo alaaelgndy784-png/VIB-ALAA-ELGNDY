@@ -1,0 +1,255 @@
+name: Build VIB Staff Quota-Safe APK
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'VIB-SALES-INDEPENDENT-SOURCE.zip'
+      - '.github/workflows/build-vib-sales-staff-quota.yml'
+      - 'overrides/**'
+
+jobs:
+  verify-rules:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: overrides/firebase/rules-tests/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - run: node --test overrides/firebase/functions/*.test.js
+      - run: npm ci && npm test
+        working-directory: overrides/firebase/rules-tests
+  build:
+    needs: verify-rules
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        app: [staff]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Pin Java; ubuntu-latest can ship a newer JDK (e.g. 25)
+      # that older Gradle/Android tooling cannot parse.
+      - name: Set up supported Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.38.5'
+          channel: stable
+          cache: true
+
+      - name: Restore stable Android signing key
+        uses: actions/cache@v4
+        with:
+          path: ~/.config/.android/debug.keystore
+          key: vib-sales-stable-android-signing-v1
+
+      - name: Extract independent sales project
+        run: |
+          mkdir VIB-SALES-INDEPENDENT
+          unzip -q VIB-SALES-INDEPENDENT-SOURCE.zip -d VIB-SALES-INDEPENDENT
+          cp overrides/lib/*.dart VIB-SALES-INDEPENDENT/lib/
+          mkdir -p VIB-SALES-INDEPENDENT/vib_overrides
+          cp overrides/android/prepare_cheque_notifications.py VIB-SALES-INDEPENDENT/vib_overrides/
+          cp overrides/android/apply_store_movement.py VIB-SALES-INDEPENDENT/vib_overrides/
+          cp overrides/android/apply_manager_thermal_printing.py VIB-SALES-INDEPENDENT/vib_overrides/
+          cp overrides/android/apply_manager_offline_presentation.py VIB-SALES-INDEPENDENT/vib_overrides/
+          cp overrides/pubspec.yaml VIB-SALES-INDEPENDENT/pubspec.yaml
+          cp overrides/assets/vip-logo.png VIB-SALES-INDEPENDENT/assets/vip-logo.png
+          cp overrides/assets/login-chime.wav VIB-SALES-INDEPENDENT/assets/login-chime.wav
+          mkdir -p VIB-SALES-INDEPENDENT/test
+          cp overrides/test/*.dart VIB-SALES-INDEPENDENT/test/
+          mkdir -p VIB-SALES-INDEPENDENT/assets/tessdata
+          printf '%s\n' '{"files":["ara.traineddata","eng.traineddata"]}' > VIB-SALES-INDEPENDENT/assets/tessdata_config.json
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/ara.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/ara.traineddata
+          curl --fail --location --retry 3 https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/main/eng.traineddata --output VIB-SALES-INDEPENDENT/assets/tessdata/eng.traineddata
+          mkdir -p VIB-SALES-INDEPENDENT/assets/fonts
+          cp /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf VIB-SALES-INDEPENDENT/assets/fonts/DejaVuSans.ttf
+
+      - name: Create independent Android platform
+        env:
+          APP: ${{ matrix.app }}
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          flutter create --platforms=android --org com.alaa.vibsales --project-name "$APP" .
+          python3 vib_overrides/apply_store_movement.py lib/main.dart
+          python3 vib_overrides/apply_manager_thermal_printing.py lib/main.dart
+          if [ "$APP" = manager ]; then python3 vib_overrides/apply_manager_offline_presentation.py lib/main.dart; fi
+          python3 vib_overrides/prepare_cheque_notifications.py
+
+      - name: Prepare ${{ matrix.app }} app
+        env:
+          APP: ${{ matrix.app }}
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          APP_ID='com.alaa.vibsales.staffscan'
+          LABEL='VIB Staff'
+          if [ "$APP" = manager ]; then
+            APP_ID='com.alaa.vibsales.managerscan'
+            LABEL='VIB Manager'
+          fi
+          printf '%s\n' 'android.newDsl=false' 'android.builtInKotlin=false' >> android/gradle.properties
+          sed -i 's/^name: .*/name: vib_sales/' pubspec.yaml
+          python3 - "$APP" "$LABEL" "$APP_ID" <<'PY'
+          from pathlib import Path
+          import re, sys
+          app, label, app_id = sys.argv[1:]
+          manifest = Path('android/app/src/main/AndroidManifest.xml')
+          text = manifest.read_text()
+          text = re.sub(r'android:label="[^"]+"', f'android:label="{label}"', text, count=1)
+          permissions = '''    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+              <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+              <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+              <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+              <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />'''
+          root = re.search(r'<manifest\b[^>]*>', text)
+          if root is None: raise SystemExit('Android manifest root missing')
+          text = text[:root.end()] + '\n' + permissions + text[root.end():]
+          manifest.write_text(text)
+          gradle = Path('android/app/build.gradle.kts')
+          text = gradle.read_text()
+          text = re.sub(r'applicationId = "[^"]+"', f'applicationId = "{app_id}"', text, count=1)
+          gradle.write_text(text)
+          activity = Path(f'android/app/src/main/kotlin/com/alaa/vibsales/{app}/MainActivity.kt')
+          text = activity.read_text().replace('FlutterActivity', 'FlutterFragmentActivity')
+          activity.write_text(text)
+          source = Path('lib/main.dart')
+          text = source.read_text()
+          if app == 'manager':
+              text = re.sub(r"'role':\s*'pending',\s*'active':\s*false", "'role': 'owner', 'active': true", text)
+          source.write_text(text)
+          PY
+          if [ -d "assets/icons/$APP" ]; then cp -r "assets/icons/$APP"/mipmap-* android/app/src/main/res/; fi
+          base64 -d ../overrides/assets/vib-launcher.png.b64 > /tmp/vib-launcher.png
+          for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do cp /tmp/vib-launcher.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"; done
+          cp firebase/google-services.json android/app/google-services.json
+          if [ "$APP" = manager ]; then python3 ../overrides/android/configure_manager_ringtone.py "$APP"; fi
+          flutter pub get
+
+      - name: Verify invoice PDF rendering
+        if: matrix.app == 'manager'
+        working-directory: VIB-SALES-INDEPENDENT
+        run: flutter test test/store_movement_test.dart test/receipt_voucher_test.dart test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart test/chat_alerts_test.dart test/product_import_test.dart test/inventory_tools_test.dart test/inventory_rows_test.dart test/invoice_serial_core_test.dart test/invoice_parties_test.dart test/reports_test.dart test/pending_sale_data_test.dart test/pending_sale_review_test.dart
+
+      - name: Upload invoice PDF previews
+        if: matrix.app == 'manager'
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-INVOICE-PDF-PREVIEWS
+          path: |
+            VIB-SALES-INDEPENDENT/dist/*.pdf
+            VIB-SALES-INDEPENDENT/dist/*.png
+          if-no-files-found: error
+
+      - name: Test staff quota safeguards
+        working-directory: VIB-SALES-INDEPENDENT
+        run: flutter test test/accounting_test.dart test/pending_sale_data_test.dart
+
+      - name: Build ${{ matrix.app }} APK
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          flutter clean
+          flutter pub get
+          flutter build apk --release --split-per-abi --build-number=4072 --build-name=0.2.47
+          mkdir -p dist
+          if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
+
+      - name: Export Android signing fingerprints
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          mkdir -p dist
+          KEYSTORE=""
+          for candidate in \
+            "$HOME/.config/.android/debug.keystore" \
+            "$HOME/.android/debug.keystore"; do
+            if [ -f "$candidate" ]; then
+              KEYSTORE="$candidate"
+              break
+            fi
+          done
+
+          if [ -z "$KEYSTORE" ]; then
+            KEYSTORE="$(find "$HOME" -maxdepth 5 -type f -name "debug.keystore" -print -quit 2>/dev/null || true)"
+          fi
+
+          if [ -z "$KEYSTORE" ]; then
+            echo "Android signing keystore not found" | tee dist/VIB-SALES-SHA.txt
+            exit 1
+          fi
+
+          {
+            echo "VIB SALES ANDROID SIGNING FINGERPRINTS"
+            echo "Keystore: $KEYSTORE"
+            keytool -list -v \
+              -keystore "$KEYSTORE" \
+              -alias androiddebugkey \
+              -storepass android \
+              -keypass android
+          } | tee dist/VIB-SALES-SHA.txt
+
+      - name: Upload Android signing fingerprints
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-SALES-SHA-FINGERPRINTS-${{ matrix.app }}
+          # Both builds use the same restored signing key.
+          path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-SHA.txt
+          if-no-files-found: error
+
+      - name: Upload manager APK
+        if: matrix.app == 'manager'
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-MANAGER.apk
+          if-no-files-found: error
+
+      - name: Upload staff APK
+        if: matrix.app == 'staff'
+        uses: actions/upload-artifact@v4
+        with:
+          name: VIB-SALES-STAFF-APK
+          path: VIB-SALES-INDEPENDENT/dist/VIB-SALES-STAFF.apk
+          if-no-files-found: error
+
+  publish-direct-apks:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download staff APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-STAFF-APK
+          path: staff-files
+
+      - name: Publish staff APK download
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-sales-staff-latest
+          name: VIB Sales Staff
+          target_commitish: ${{ github.sha }}
+          body: "نسخة موظف لتقليل استهلاك Firebase وحفظ الفواتير محليًا عند امتلاء الحصة لحين المزامنة. لا ترحل فاتورة دون تأكيد السيرفر."
+          files: staff-files/VIB-SALES-STAFF.apk
+          overwrite_files: true
+          make_latest: false

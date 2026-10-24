@@ -172,6 +172,11 @@ bool isTemporaryFirestoreOffline(Object error) => error is TimeoutException || (
 bool isFirestoreQuotaExhausted(Object error) => error is FirebaseException &&
     error.code=='resource-exhausted';
 
+// Store failed employee invoices locally even when Firestore is out of quota.
+// A local invoice must NEVER be presented as posted/paid until server confirmation.
+bool shouldQueueEmployeeSaleFailure(Object error) =>
+    isTemporaryFirestoreOffline(error) || isFirestoreQuotaExhausted(error);
+
 Future<QuerySnapshot<Map<String,dynamic>>> _getInvoiceDataWithCacheFallback(
     Query<Map<String,dynamic>> query) async {
   // An already visited catalogue must open immediately even without mobile data.
@@ -193,6 +198,7 @@ class EmployeeOfflineSaleSync {
   static final instance=EmployeeOfflineSaleSync._();
   final ValueNotifier<int> pendingCount=ValueNotifier<int>(0);
   bool _running=false;
+  DateTime? _quotaPausedUntil;
   String _key(String uid)=>'vib_employee_offline_sales_v1_$uid';
 
   Future<List<OfflineEmployeeSaleData>> _read(String uid) async {
@@ -241,6 +247,9 @@ class EmployeeOfflineSaleSync {
   Future<void> syncPending({bool retryBlocked=false}) async {
     final user=FirebaseAuth.instance.currentUser;
     if(user==null||_running)return;
+    // A refused quota must not be hammered every time the home timer fires.
+    if(!retryBlocked && _quotaPausedUntil!=null &&
+        DateTime.now().isBefore(_quotaPausedUntil!)) return;
     _running=true;
     try {
       final uid=user.uid;
@@ -265,15 +274,19 @@ class EmployeeOfflineSaleSync {
               saleRef:db.collection('sales').doc(sale.id)).timeout(const Duration(seconds:8));
           }
         } catch (error) {
-          if(isTemporaryFirestoreOffline(error)) {
+          if(isTemporaryFirestoreOffline(error) || isFirestoreQuotaExhausted(error)) {
             remaining.add(sale);
             remaining.addAll(work.skip(index+1));
+            if(isFirestoreQuotaExhausted(error)) {
+              _quotaPausedUntil=DateTime.now().add(const Duration(hours:1));
+            }
             break;
           }
           remaining.add(sale.copyWith(lastError:'تعذرت المزامنة؛ اضغط إعادة المحاولة أو راجع المدير.'));
         }
       }
       await _write(uid,remaining);
+      if(remaining.isEmpty) _quotaPausedUntil=null;
     } catch(error) {
       debugPrint('VIB employee offline sale queue error: $error');
     } finally {
@@ -292,7 +305,7 @@ class EmployeeOfflineSaleNotice extends StatelessWidget {
         padding:const EdgeInsets.symmetric(horizontal:10,vertical:5),
         decoration:BoxDecoration(color:const Color(0xFF5A3B12),borderRadius:BorderRadius.circular(12)),
         child:Row(children:[
-          Expanded(child:Text('$count فاتورة محفوظة على الجهاز وتنتظر المزامنة',
+          Expanded(child:Text('$count فاتورة محفوظة على الجهاز فقط. لم تتسجل عند المدير ولم تخصم المخزون. جرب المزامنة بعد عودة Firebase.',
             textAlign:TextAlign.center,style:const TextStyle(color:Colors.white,fontSize:12))),
           IconButton(visualDensity:VisualDensity.compact,tooltip:'إعادة محاولة المزامنة',
             onPressed:()=>unawaited(EmployeeOfflineSaleSync.instance.syncPending(retryBlocked:true)),
@@ -1051,7 +1064,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     } else {
       _writePresence(true);
       unawaited(EmployeeOfflineSaleSync.instance.syncPending());
-      _presenceTimer=Timer.periodic(const Duration(seconds:20),(_){
+      _presenceTimer=Timer.periodic(const Duration(minutes:3),(_){
         _writePresence(true);
         unawaited(EmployeeOfflineSaleSync.instance.syncPending());
       });
@@ -2750,14 +2763,16 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               if (c.mounted) Navigator.pop(c);
               if (context.mounted) await showInvoiceSavedActions(context, 'sales', saleRef.id, savedInvoice);
             } catch (e) {
-              if(!owner && isTemporaryFirestoreOffline(e)) {
+              if(!owner && shouldQueueEmployeeSaleFailure(e)) {
                 await EmployeeOfflineSaleSync.instance.enqueue(id:saleRef.id,branchId:branchId,
                   entries:entries,customerId:customerId,credit:credit,paid:payment,total:total,
                   paymentBreakdown:paymentBreakdown);
                 if(c.mounted)Navigator.pop(c);
                 if(context.mounted)await showInvoiceSaveProblem(context,
-                  'تم حفظ الفاتورة على الجهاز. ستُرسل تلقائيًا عند رجوع الإنترنت. لن يُخصم المخزون أو يُسجل الحساب قبل المزامنة.',
-                  title:'الفاتورة محفوظة دون إنترنت',button:'تمام',success:true);
+                  isFirestoreQuotaExhausted(e)
+                    ? 'حُفظت الفاتورة على جهاز الموظف فقط لأن Firebase رفض الحفظ (resource-exhausted). لم تصل للمدير ولم يُخصم المخزون أو تُسجل مديونية أو تحصيل. احتفظ بها في قائمة المزامنة، وراجع حصة Firebase، ثم أعد المحاولة بعد عودة الخدمة.'
+                    : 'حُفظت الفاتورة على جهاز الموظف فقط. لم تصل للمدير ولم يُخصم المخزون أو تُسجل حسابات. يمكن مزامنتها بعد رجوع الإنترنت.',
+                  title:'فاتورة محلية — لم تُرحّل بعد',button:'تمام',success:true);
                 return;
               }
               if (c.mounted) {
@@ -2941,7 +2956,7 @@ bool staffPresenceIsOnline(Map<String,dynamic>? presence,DateTime now) {
   final lastSeen=presence?['lastSeen'];
   if(presence?['online']!=true || lastSeen is! Timestamp) return false;
   final age=now.difference(lastSeen.toDate());
-  return !age.isNegative && age<=const Duration(seconds:75);
+  return !age.isNegative && age<=const Duration(minutes:4);
 }
 
 class Staff extends StatefulWidget {

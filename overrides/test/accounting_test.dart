@@ -147,4 +147,22 @@ void main() {
   managerArchivedExpensesBefore = null;
   expect(visibleAfterReset(sale), true);
   });
+  test('employee quota failure is locally queued and never treated as posted', () {
+    expect(shouldQueueEmployeeSaleFailure(FirebaseException(
+      plugin:'cloud_firestore', code:'resource-exhausted')), isTrue);
+    expect(shouldQueueEmployeeSaleFailure(
+      TimeoutException('server not responding')), isTrue);
+    expect(shouldQueueEmployeeSaleFailure(FirebaseException(
+      plugin:'cloud_firestore', code:'permission-denied')), isFalse);
+  });
+  test('employee online indicator follows reduced heartbeat cadence', () {
+    final now=DateTime(2026,10,24,20,0);
+    expect(staffPresenceIsOnline({
+      'online':true,'lastSeen':Timestamp.fromDate(
+        now.subtract(const Duration(minutes:3)))},now),isTrue);
+    expect(staffPresenceIsOnline({
+      'online':true,'lastSeen':Timestamp.fromDate(
+        now.subtract(const Duration(minutes:5)))},now),isFalse);
+  });
+
 }
