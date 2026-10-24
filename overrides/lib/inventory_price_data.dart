@@ -55,3 +55,52 @@ Map<int, int> returnedQuantitiesBySourceLine(List<Map<String, dynamic>> returns)
   }
   return result;
 }
+
+class LastPurchaseUnitCost {
+  final String invoiceId;
+  final double cost;
+  final DateTime createdAt;
+  const LastPurchaseUnitCost(this.invoiceId, this.cost, this.createdAt);
+}
+
+/// A snapshot of purchase records is reviewed by *original invoice date*, not
+/// date of a later amendment. Do not overwrite a newer purchase's unit cost.
+Map<String, LastPurchaseUnitCost> latestPurchaseUnitCosts(
+    Iterable<Map<String, dynamic>> invoices) {
+  final result = <String, LastPurchaseUnitCost>{};
+  for (final invoice in invoices) {
+    if (invoice['status'] != 'completed') continue;
+    final invoiceId = '${invoice['id'] ?? ''}';
+    final createdAt = invoice['createdAt'];
+    if (invoiceId.isEmpty || createdAt is! DateTime) continue;
+    final rawItems = invoice['items'];
+    final items = rawItems is List && rawItems.isNotEmpty
+        ? rawItems
+        : <Map<String, dynamic>>[{
+            'productId': invoice['productId'],
+            'unitCost': invoice['unitCost'],
+          }];
+    for (final raw in items) {
+      if (raw is! Map) continue;
+      final productId = '${raw['productId'] ?? ''}';
+      final price = raw['unitCost'];
+      if (productId.isEmpty || productId == 'null' || price is! num ||
+          !price.isFinite || price < 0) continue;
+      final prior = result[productId];
+      if (prior == null || createdAt.isAfter(prior.createdAt) ||
+          (createdAt.isAtSameMomentAs(prior.createdAt) &&
+              invoiceId.compareTo(prior.invoiceId) > 0)) {
+        result[productId] =
+            LastPurchaseUnitCost(invoiceId, price.toDouble(), createdAt);
+      }
+    }
+  }
+  return result;
+}
+
+bool inventoryPriceMismatch(num? recorded, num? expected) {
+  if (recorded == null || expected == null ||
+      !recorded.isFinite || !expected.isFinite ||
+      recorded < 0 || expected < 0) return true;
+  return (recorded * 100).round() != (expected * 100).round();
+}
