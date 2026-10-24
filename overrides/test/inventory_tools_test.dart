@@ -67,6 +67,30 @@ void main() {
     final product={'purchasePrice':875,'price':920};
     expect(product['price'],920);
   });
+  test('latest purchase correction refreshes its cost without overwriting later changes', () {
+    final original=DateTime(2026,10,16);
+    final saved=DateTime(2026,10,16,23);
+    bool can({
+      String? latest='invoice-446', String? productLast='invoice-446',
+      double? recorded=858, double? oldCost=858, double newCost=850,
+      DateTime? manual,
+    })=>shouldSyncEditedPurchaseCost(
+      invoiceId:'invoice-446',latestInvoiceId:latest,
+      previousInvoiceCost:oldCost,correctedInvoiceCost:newCost,
+      currentProductCost:recorded,productLastPurchaseId:productLast,
+      lastPurchaseRecordedAt:saved,originalInvoiceAt:original,
+      manualCorrectionAt:manual,
+    );
+    expect(can(),isTrue);
+    expect(can(productLast:null),isTrue); // legacy purchases without provenance
+    expect(can(latest:'newer-purchase'),isFalse);
+    expect(can(productLast:'newer-purchase'),isFalse);
+    expect(can(recorded:840),isFalse); // manual change not overwritten
+    expect(can(manual:DateTime(2026,10,17)),isFalse);
+    expect(can(manual:DateTime(2026,10,15)),isTrue);
+    expect(can(oldCost:850),isFalse); // unchanged purchase cost
+    expect(can(recorded:null),isFalse);
+  });
   test('duplicate invoice lines return their combined quantity once', () {
     final rows=groupedReturnItems([{'productId':'p','quantity':2},{'productId':'q','quantity':3},{'productId':'p','quantity':4}]);
     expect(rows.length,2);expect(rows.first['quantity'],6);
