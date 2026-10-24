@@ -3256,10 +3256,9 @@ class _ProfitReportState extends State<ProfitReport> {
                   for (final raw in rawItems) {
                     if (raw is! Map) continue;
                     final qty = (raw['quantity'] as num?)?.toDouble() ?? 0;
-                    final storedCost = (raw['purchasePriceAtSale'] as num?)?.toDouble();
-                    final currentCost = products['${raw['productId']}']?['purchasePrice'];
-                    final cost = storedCost ?? (currentCost is num ? currentCost.toDouble() : null);
-                    if (cost != null && cost >= 0) {
+                    final cost = (raw['purchasePriceAtSale'] as num?)?.toDouble();
+                    // Never reprice a historical sale using today's product cost.
+                    if (cost != null && cost.isFinite && cost >= 0) {
                       knownCost += event.sign * qty * cost;
                     } else {
                       missingCost++;
@@ -3267,9 +3266,9 @@ class _ProfitReportState extends State<ProfitReport> {
                   }
                 } else {
                   final qty = (sale['quantity'] as num?)?.toDouble() ?? 0;
-                  final cost = products['${sale['productId']}']?['purchasePrice'];
-                  if (cost is num && cost >= 0) {
-                    knownCost += event.sign * qty * cost.toDouble();
+                  final cost = (sale['purchasePriceAtSale'] as num?)?.toDouble();
+                  if (cost != null && cost.isFinite && cost >= 0) {
+                    knownCost += event.sign * qty * cost;
                   } else {
                     missingCost++;
                   }
@@ -3279,19 +3278,22 @@ class _ProfitReportState extends State<ProfitReport> {
                 if (expensesSnap.hasError) return const Center(child: Text('تعذر تحميل المصروفات'));
                 if (!expensesSnap.hasData) return const Center(child: CircularProgressIndicator());
                 final expenses = expensesSnap.data!.docs.where((d) { final data = d.data(); final date = (data['createdAt'] as Timestamp?)?.toDate(); return visibleAfterReset(data) && date != null && !date.isBefore(start) && date.isBefore(queryEnd); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
+              final completeProfit = missingCost == 0;
               return ListView(padding: const EdgeInsets.all(16), children: [
                 ListTile(title: const Text('عدد فواتير البيع',style:TextStyle(color:vibBlue)), trailing: Text('${sales.length}',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
                 ListTile(title: const Text('عدد المرتجعات خلال الفترة',style:TextStyle(color:vibBlue)), trailing: Text('${returns.length}',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
                 ListTile(title: const Text('صافي المبيعات بعد المرتجعات',style:TextStyle(color:vibBlue)), trailing: Text('${revenue.toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
                 ListTile(title: const Text('تكلفة الأصناف المعروفة',style:TextStyle(color:vibBlue)), trailing: Text('${knownCost.toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
                 ListTile(title: const Text('المصروفات',style:TextStyle(color:vibBlue)), trailing: Text('${expenses.toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
-                ListTile(title: const Text('الربح الإجمالي التقديري',style:TextStyle(color:vibBlue)),
-                  trailing: Text('${(revenue - knownCost).toStringAsFixed(2)} ج.م',
+                ListTile(title: const Text('الربح الإجمالي',style:TextStyle(color:vibBlue)),
+                  trailing: Text(completeProfit ? '${(revenue - knownCost).toStringAsFixed(2)} ج.م' : 'غير مكتمل',
                     style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold))),
-                ListTile(title: const Text('الربح بعد المصروفات',style:TextStyle(color:vibBlue)), trailing: Text('${(revenue - knownCost - expenses).toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
-                if (missingCost > 0) Text('الربح المعروض تقديري: تكلفة الشراء غير مسجلة في $missingCost فاتورة، ولذلك قد يكون الربح الفعلي أقل. أضف تكلفة شراء الأصناف أولًا.'),
+                ListTile(title: const Text('الربح بعد المصروفات',style:TextStyle(color:vibBlue)),
+                  trailing: Text(completeProfit ? '${(revenue - knownCost - expenses).toStringAsFixed(2)} ج.م' : 'غير مكتمل',
+                    style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
+                if (missingCost > 0) Text('تحذير: تكلفة الشراء وقت البيع غير محفوظة في $missingCost بند/سجل. لا يمكن حساب ربح دقيق؛ لن نستبدلها بسعر الشراء الحالي لأن ده يغيّر أرباح الماضي.'),
                 const SizedBox(height: 16),
-                const Text('هذا تقدير حسب سعر الشراء المسجل حاليًا للصنف. يشمل المصروفات المسجلة في الفترة، وقد يختلف إذا تغيرت التكلفة بعد البيع.'),
+                const Text('يُحسب الربح من تكلفة الصنف المحفوظة وقت البيع، بعد طرح المصروفات المسجلة. صحة التكلفة الأصلية تحتاج مراجعة فواتير الشراء.'),
               ]);
               });
               });

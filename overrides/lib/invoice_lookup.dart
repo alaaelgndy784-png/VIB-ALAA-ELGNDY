@@ -352,16 +352,20 @@ Future<void> replacePurchaseLocally(String id, int revision, String requestId,
       final productId = row['productId'] as String;
       final cost = (row['unitCost'] as num).toDouble();
       final oldCost = originalCosts[productId];
-      if (oldCost == null || !inventoryPriceMismatch(oldCost, cost) ||
-          newestCosts[productId]?.invoiceId != id) continue;
       final product = products[productId]!.data()!;
       final explicitCorrection = product['purchasePriceCorrectedAt'];
-      if (explicitCorrection is Timestamp && lastSourceDate is Timestamp &&
-          explicitCorrection.compareTo(lastSourceDate) > 0) continue;
       final lastPurchaseAt = product['lastPurchaseAt'];
-      if (lastPurchaseAt is Timestamp && lastSourceDate is Timestamp &&
-          lastPurchaseAt.compareTo(lastSourceDate) > 0) continue;
-      refreshedCosts[productId] = cost;
+      if (shouldSyncEditedPurchaseCost(
+        invoiceId: id,
+        latestInvoiceId: newestCosts[productId]?.invoiceId,
+        previousInvoiceCost: oldCost,
+        correctedInvoiceCost: cost,
+        currentProductCost: product['purchasePrice'] as num?,
+        productLastPurchaseId: product['lastPurchaseId'] as String?,
+        manualCorrectionAt: explicitCorrection is Timestamp ? explicitCorrection.toDate() : null,
+        lastPurchaseRecordedAt: lastPurchaseAt is Timestamp ? lastPurchaseAt.toDate() : null,
+        originalInvoiceAt: lastSourceDate is Timestamp ? lastSourceDate.toDate() : null,
+      )) refreshedCosts[productId] = cost;
     }
     final paid = cents(payment), due = total - paid;
     if (items.isEmpty || items.length > 50 || total > 1000000000000 || !payment.isFinite || paid < 0 || due < 0) throw Exception('راجع المدفوع وبنود الفاتورة');
