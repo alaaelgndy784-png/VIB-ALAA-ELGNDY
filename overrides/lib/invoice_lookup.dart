@@ -66,30 +66,38 @@ class _MovementPeriodControlsState extends State<MovementPeriodControls> {
     endText.dispose();
     super.dispose();
   }
-  @override Widget build(BuildContext context) => Padding(padding: EdgeInsets.all(widget.compact ? 8 : 12),
+  @override Widget build(BuildContext context) => Padding(padding: EdgeInsets.all(widget.compact ? 5 : 12),
     child: Column(children: [
       Row(children: [
         Expanded(child: TextField(key: const ValueKey('period-from-input'), controller: startText,
           enabled: widget.enabled, keyboardType: TextInputType.datetime, textAlign: TextAlign.center,
+          style: TextStyle(fontSize: widget.compact ? 13 : 16),
           onChanged: (value) => _editDate(true, value),
           decoration: const InputDecoration(labelText: 'من تاريخ', hintText: 'يوم/شهر/سنة',
-            border: OutlineInputBorder(), isDense: true))),
+            border: OutlineInputBorder(), isDense: true,
+            contentPadding: EdgeInsets.symmetric(vertical: 9, horizontal: 4)))),
         const SizedBox(width: 8),
         Expanded(child: TextField(key: const ValueKey('period-to-input'), controller: endText,
           enabled: widget.enabled, keyboardType: TextInputType.datetime, textAlign: TextAlign.center,
+          style: TextStyle(fontSize: widget.compact ? 13 : 16),
           onChanged: (value) => _editDate(false, value),
           decoration: const InputDecoration(labelText: 'إلى تاريخ', hintText: 'يوم/شهر/سنة',
-            border: OutlineInputBorder(), isDense: true))),
+            border: OutlineInputBorder(), isDense: true,
+            contentPadding: EdgeInsets.symmetric(vertical: 9, horizontal: 4)))),
       ]),
       SizedBox(height: widget.compact ? 4 : 8),
       Row(children: [
         Expanded(child: OutlinedButton.icon(onPressed: widget.enabled ? () => pick(true) : null,
-          style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
-          icon: const Icon(Icons.calendar_month, size: 18), label: const Text('البداية', maxLines: 1, overflow: TextOverflow.ellipsis))),
+          style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+            minimumSize: Size(0, widget.compact ? 32 : 40), padding: const EdgeInsets.symmetric(horizontal: 3),
+            textStyle: TextStyle(fontSize: widget.compact ? 12 : 14)),
+          icon: Icon(Icons.calendar_month, size: widget.compact ? 15 : 18), label: const Text('البداية', maxLines: 1, overflow: TextOverflow.ellipsis))),
         const SizedBox(width: 6),
         Expanded(child: OutlinedButton.icon(onPressed: widget.enabled ? () => pick(false) : null,
-          style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)),
-          icon: const Icon(Icons.calendar_month, size: 18), label: const Text('النهاية', maxLines: 1, overflow: TextOverflow.ellipsis))),
+          style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+            minimumSize: Size(0, widget.compact ? 32 : 40), padding: const EdgeInsets.symmetric(horizontal: 3),
+            textStyle: TextStyle(fontSize: widget.compact ? 12 : 14)),
+          icon: Icon(Icons.calendar_month, size: widget.compact ? 15 : 18), label: const Text('النهاية', maxLines: 1, overflow: TextOverflow.ellipsis))),
       ]),
       SizedBox(height: widget.compact ? 2 : 6),
       Row(mainAxisAlignment: MainAxisAlignment.end, children: [
@@ -107,7 +115,9 @@ class _MovementPeriodControlsState extends State<MovementPeriodControls> {
         const SizedBox(width: 8),
         FilledButton.icon(key: const ValueKey('period-apply-button'), onPressed: widget.enabled && startInputValid && endInputValid && !end.isBefore(start)
             ? () => widget.onConfirm(start, end) : null,
-          style: FilledButton.styleFrom(visualDensity: widget.compact ? VisualDensity.compact : VisualDensity.standard),
+          style: FilledButton.styleFrom(visualDensity: widget.compact ? VisualDensity.compact : VisualDensity.standard,
+            minimumSize: Size(0, widget.compact ? 32 : 40),
+            padding: const EdgeInsets.symmetric(horizontal: 10)),
           icon: const Icon(Icons.check, size: 18), label: const Text('تطبيق')),
       ]),
     ]));
