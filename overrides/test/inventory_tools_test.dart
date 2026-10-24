@@ -26,6 +26,47 @@ void main() {
     expect(()=>adjustedInventoryPrice(100,101,increase:false),throwsStateError);
     expect(()=>adjustedInventoryPrice(-1,10,increase:true),throwsStateError);
   });
+  test('purchase audit finds true latest unit cost, not the date an old invoice was amended', () {
+    final base=DateTime(2026,10,16);
+    final newer=DateTime(2026,10,24);
+    final rows=[
+      {'id':'000446','status':'completed','createdAt':base,'updatedAt':newer,
+        'items':[{'productId':'ideos-shower','unitCost':850,'quantity':4}]},
+      {'id':'000445','status':'completed','createdAt':DateTime(2026,10,14),
+        'items':[{'productId':'ideos-shower','unitCost':858}]},
+      {'id':'000447','status':'returned','createdAt':newer,
+        'items':[{'productId':'ideos-shower','unitCost':900}]},
+      {'id':'legacy','status':'completed','createdAt':DateTime(2026,10,15),
+        'productId':'old-item','unitCost':135},
+      {'id':'invalid','status':'completed','createdAt':newer,
+        'items':[{'productId':'bad','unitCost':double.nan}]},
+    ];
+    final latest=latestPurchaseUnitCosts(rows);
+    expect(latest['ideos-shower']!.invoiceId,'000446');
+    expect(latest['ideos-shower']!.cost,850);
+    expect(latest['old-item']!.cost,135);
+    expect(latest.containsKey('bad'),isFalse);
+    expect(inventoryPriceMismatch(858,latest['ideos-shower']!.cost),isTrue);
+    expect(inventoryPriceMismatch(850,latest['ideos-shower']!.cost),isFalse);
+    expect(inventoryPriceMismatch(850.001,850),isFalse);
+    expect(inventoryPriceMismatch(null,850),isTrue);
+  });
+  test('newer purchases supersede edited older invoices and selling prices stay separate', () {
+    final old=DateTime(2026,10,16),newer=DateTime(2026,10,22);
+    final latest=latestPurchaseUnitCosts([
+      {'id':'old','status':'completed','createdAt':old,
+        'items':[{'productId':'p','unitCost':850}]},
+      {'id':'newer','status':'completed','createdAt':newer,
+        'items':[{'productId':'p','unitCost':875}]},
+    ]);
+    expect(latest['p']!.invoiceId,'newer');
+    expect(latest['p']!.cost,875);
+    expect(inventoryPriceMismatch(875,875),isFalse);
+    // Purchase price and selling price are different concepts: no automatic
+    // adjustment of current selling price to the invoice's unit cost.
+    final product={'purchasePrice':875,'price':920};
+    expect(product['price'],920);
+  });
   test('duplicate invoice lines return their combined quantity once', () {
     final rows=groupedReturnItems([{'productId':'p','quantity':2},{'productId':'q','quantity':3},{'productId':'p','quantity':4}]);
     expect(rows.length,2);expect(rows.first['quantity'],6);
