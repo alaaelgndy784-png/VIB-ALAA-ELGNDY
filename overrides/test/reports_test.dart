@@ -62,8 +62,8 @@ void main() {
 
   test('employee online status expires after a missed heartbeat', () {
     final now=DateTime(2026,10,9,10);
-    expect(staffPresenceIsOnline({'online':true,'lastSeen':Timestamp.fromDate(now.subtract(const Duration(seconds:74)))},now),isTrue);
-    expect(staffPresenceIsOnline({'online':true,'lastSeen':Timestamp.fromDate(now.subtract(const Duration(seconds:76)))},now),isFalse);
+    expect(staffPresenceIsOnline({'online':true,'lastSeen':Timestamp.fromDate(now.subtract(const Duration(minutes:3, seconds:59)))},now),isTrue);
+    expect(staffPresenceIsOnline({'online':true,'lastSeen':Timestamp.fromDate(now.subtract(const Duration(minutes:4, seconds:1)))},now),isFalse);
     expect(staffPresenceIsOnline({'online':false,'lastSeen':Timestamp.fromDate(now)},now),isFalse);
     expect(staffPresenceIsOnline(null,now),isFalse);
   });
