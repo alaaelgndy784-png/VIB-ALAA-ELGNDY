@@ -4495,6 +4495,15 @@ ReceiptDayReport summarizeReceiptBetween(List<Map<String,dynamic>> receipts,Date
   return ReceiptDayReport(customers, count, totalCents);
 }
 
+ReceiptDayReport filterReceiptReportByCustomer(ReceiptDayReport report, String query) {
+  final needle = invoiceSearchText(query);
+  if (needle.isEmpty) return report;
+  final matches = report.customers.where((c) =>
+    invoiceSearchText(c.name).contains(needle) || invoiceSearchText(c.id).contains(needle)).toList();
+  return ReceiptDayReport(matches, matches.fold<int>(0, (sum, c) => sum + c.receipts.length),
+    matches.fold<int>(0, (sum, c) => sum + c.amountCents));
+}
+
 List<Map<String,dynamic>> receiptRowsForCustomer(List<Map<String,dynamic>> rows,String customerId)=>
   rows.where((row)=>'${row['customerId']??''}'==customerId).toList();
 
@@ -4536,6 +4545,7 @@ class CustomerPaymentReport extends StatefulWidget {
 }
 
 class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
+  final customerSearch = TextEditingController();
   late DateTime day, endDay, draftDay, draftEndDay;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> receipts;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> cancellations;
@@ -4553,6 +4563,11 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
     cancellations = widget.owner
         ? db.collection('voucherCancellations').snapshots(includeMetadataChanges: true)
         : const Stream<QuerySnapshot<Map<String, dynamic>>>.empty();
+  }
+
+  @override void dispose() {
+    customerSearch.dispose();
+    super.dispose();
   }
 
   Future<void> _pickReportDate({required bool end}) async {
@@ -4613,6 +4628,19 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
             const SizedBox(width: 6),
             _compactDateButton('إلى', draftEndDay, () => _pickReportDate(end: true)),
           ]),
+          TextField(
+            key: const ValueKey('receipt-customer-search'),
+            controller: customerSearch,
+            onChanged: (_) => setState(() {}),
+            decoration: InputDecoration(
+              isDense: true, hintText: widget.suppliers ? 'بحث عن مورد' : 'بحث عن عميل',
+              prefixIcon: const Icon(Icons.search, size: 19),
+              suffixIcon: customerSearch.text.trim().isEmpty ? null : IconButton(
+                icon: const Icon(Icons.close, size: 18), tooltip: 'مسح البحث',
+                onPressed: () { customerSearch.clear(); setState(() {}); }),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+            ),
+          ),
           Row(children: [
             TextButton.icon(
               onPressed: _setReportPeriodToday,
@@ -4654,7 +4682,8 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                   if(!widget.suppliers)return <String,dynamic>{...source,'id':d.id};
                   return supplierPaymentReportRow(d.id,source);
                 }).toList();
-              final report = summarizeReceiptPeriod(rows, day, endDay);
+              final report = filterReceiptReportByCustomer(
+                summarizeReceiptPeriod(rows, day, endDay), customerSearch.text);
               final pending = snapshot.data!.metadata.hasPendingWrites || (widget.owner && cancelSnapshot.data!.metadata.hasPendingWrites);
               final cached = snapshot.data!.metadata.isFromCache || (widget.owner && cancelSnapshot.data!.metadata.isFromCache);
               return Column(children: [
