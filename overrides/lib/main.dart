@@ -13,7 +13,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart' show rootBundle;
+import 'package:flutter/services.dart' show rootBundle, MethodChannel;
 import 'package:geolocator/geolocator.dart';
 import 'package:intl/intl.dart' show DateFormat;
 import 'package:local_auth/local_auth.dart';
@@ -47,6 +47,8 @@ part 'pending_sales.dart';
 part 'pending_receipts.dart';
 part 'product_import.dart';
 part 'inventory_tools.dart';
+part 'data_maintenance.dart';
+part 'manager_ringtone.dart';
 part 'online_payments.dart';
 part 'invoice_history.dart';
 part 'invoice_serials.dart';
@@ -416,7 +418,7 @@ class _OwnerSecurityState extends State<OwnerSecurity> {
       await const FlutterSecureStorage().write(key: 'vib_owner_biometric_ready', value: 'yes');
       final prefs = await SharedPreferences.getInstance();
       if (prefs.getBool('vib_login_chime') ?? true) {
-        await _chime.play(AssetSource('login-chime.wav'), volume: 1.0);
+        await vibPlayManagerRingtone(_chime);
       }
     } catch (e) {
       debugPrint('VIB manager chime or biometric preference failed: $e');
@@ -905,6 +907,14 @@ class _LoginPageState extends State<LoginPage> {
                     activeThumbColor: const Color(0xFF31E59A),
                     title: const Text('رنة الدخول', style: TextStyle(color: Color(0xFFE1E9F4), fontSize: 13, fontWeight: FontWeight.w600)),
                     secondary: const Icon(Icons.music_note_rounded, color: gold, size: 21),
+                  ),
+                  if (!staffApp) ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 3),
+                    leading: const Icon(Icons.library_music_outlined, color: gold, size: 21),
+                    title: const Text('اختيار رنة من رنات الموبايل', style: TextStyle(color: Color(0xFFE1E9F4), fontSize: 13)),
+                    subtitle: const Text('اختار الرنة وجربها. هتشتغل بعد فتح المدير.'),
+                    onTap: () => vibChooseManagerRingtone(context),
                   ),
                   const Divider(color: Color(0x332B4967), height: 15),
                   TextButton.icon(
@@ -2979,6 +2989,7 @@ class Management extends StatelessWidget {
     option(context, 'تقرير بيع وشراء المنتج', Icons.swap_vert, const ItemMovementReport()),
     option(context, 'سجل حركات الحسابات', Icons.history, const AccountMovements()),
     option(context, 'الإعدادات والطباعة', Icons.settings_outlined, const AppSettings()),
+    option(context, 'معالجة البيانات', Icons.cleaning_services_outlined, const DataMaintenancePage()),
     Padding(padding: const EdgeInsets.only(bottom: 10), child: Material(color: const Color(0xFF30283B),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: Color(0xFF594051))),
       child: ListTile(leading: const Icon(Icons.restart_alt, color: Colors.redAccent),

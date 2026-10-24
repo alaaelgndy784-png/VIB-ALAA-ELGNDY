@@ -144,6 +144,7 @@ jobs:
           base64 -d ../overrides/assets/vib-launcher.png.b64 > /tmp/vib-launcher.png
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do cp /tmp/vib-launcher.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"; done
           cp firebase/google-services.json android/app/google-services.json
+          if [ "$APP" = manager ]; then python3 ../overrides/android/configure_manager_ringtone.py "$APP"; fi
           flutter pub get
 
       - name: Verify invoice PDF rendering
@@ -166,7 +167,7 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4068 --build-name=0.2.43
+          flutter build apk --release --split-per-abi --build-number=4069 --build-name=0.2.44
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 

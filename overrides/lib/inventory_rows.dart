@@ -55,8 +55,11 @@ class InventoryProductCard extends StatelessWidget {
             ]),
           )),
           if(actions.isNotEmpty) IconButtonTheme(data: IconButtonThemeData(style: IconButton.styleFrom(
-            iconSize: 18, visualDensity: VisualDensity.compact)),
-            child: Align(alignment: AlignmentDirectional.centerEnd, child: Wrap(spacing: 0, children: actions))),
+            iconSize: 16, minimumSize: const Size(30, 30),
+            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            padding: const EdgeInsets.all(2), visualDensity: VisualDensity.compact)),
+            child: Align(alignment: AlignmentDirectional.centerEnd,
+              child: Wrap(spacing: 1, runSpacing: 0, children: actions))),
         ],
       ))));
   }
