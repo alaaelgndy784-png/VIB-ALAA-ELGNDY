@@ -2990,6 +2990,10 @@ class _InventoryAuditState extends State<InventoryAudit> {
                 const SizedBox(height: 8),
                 Wrap(spacing: 8, children: [
                   OutlinedButton.icon(onPressed: () => openInventoryPrices(context), icon: const Icon(Icons.price_change), label: const Text('زيادة / تخفيض الأسعار')),
+                  OutlinedButton.icon(onPressed:() => Navigator.push(context,
+                    MaterialPageRoute(builder:(_) => const PurchaseSalePriceAudit())),
+                    icon: const Icon(Icons.fact_check_outlined),
+                    label: const Text('مراجعة أسعار الشراء والبيع')),
                   OutlinedButton.icon(onPressed: auditRows.isEmpty ? null : () => printInventoryAudit(context, selected, auditRows, 'a4'), icon: const Icon(Icons.picture_as_pdf), label: const Text('PDF A4')),
                   OutlinedButton.icon(onPressed: auditRows.isEmpty ? null : () => printInventoryAudit(context, selected, auditRows, '80'), icon: const Icon(Icons.print), label: const Text('طباعة 80 مم')),
                 ]),
@@ -3027,6 +3031,112 @@ class _InventoryAuditState extends State<InventoryAudit> {
         },
       );
     },
+  );
+}
+
+
+class PurchaseSalePriceAudit extends StatefulWidget {
+  const PurchaseSalePriceAudit({super.key});
+  @override State<PurchaseSalePriceAudit> createState() => _PurchaseSalePriceAuditState();
+}
+
+class _PurchaseSalePriceAuditState extends State<PurchaseSalePriceAudit> {
+  bool loading = true;
+  String error = '';
+  int checked = 0, compared = 0, missing = 0, mismatches = 0, lossRisks = 0;
+  List<Map<String, dynamic>> results = [];
+  @override void initState() { super.initState(); load(); }
+
+  Future<void> load() async {
+    if(mounted) setState(() { loading = true; error = ''; });
+    try {
+      final products = await db.collection('products').get(const GetOptions(source: Source.server));
+      final purchases = await db.collection('purchases').get(const GetOptions(source: Source.server));
+      if(products.metadata.isFromCache || purchases.metadata.isFromCache ||
+          products.metadata.hasPendingWrites || purchases.metadata.hasPendingWrites) {
+        throw StateError('تحتاج اتصالًا بالسيرفر لمراجعة الأسعار');
+      }
+      final latest = latestPurchaseUnitCosts([
+        for(final invoice in purchases.docs) <String,dynamic>{
+          ...invoice.data(),'id':invoice.id,
+          'createdAt':(invoice.data()['createdAt'] as Timestamp?)?.toDate(),
+        },
+      ]);
+      final list = <Map<String,dynamic>>[];
+      var total=0, matchCount=0, noPrice=0, costDiff=0, loss=0;
+      for(final product in products.docs) {
+        final data=product.data();
+        if(data['active']==false)continue;
+        total++;
+        final currentCost=data['purchasePrice'] as num?,sale=data['price'] as num?;
+        final last=latest[product.id];
+        final diff=last!=null && inventoryPriceMismatch(currentCost,last.cost);
+        final below=sale!=null && currentCost!=null && sale.isFinite &&
+          currentCost.isFinite && sale>=0 && currentCost>=0 &&
+          sale+0.00001<currentCost;
+        if(last!=null)matchCount++;
+        if(currentCost==null || !currentCost.isFinite || currentCost<0 ||
+          sale==null || !sale.isFinite || sale<0 || last==null)noPrice++;
+        if(diff)costDiff++;
+        if(below)loss++;
+        final invalidPrice = currentCost==null || !currentCost.isFinite || currentCost<0 ||
+          sale==null || !sale.isFinite || sale<0;
+        if(diff || below || last==null || invalidPrice) {
+          list.add({'id':product.id,'data':data,'latest':last,'diff':diff,'below':below});
+        }
+      }
+      list.sort((a,b) {
+        int priority(Map<String,dynamic> r) =>
+          (r['diff']==true?2:0)+(r['below']==true?1:0);
+        final k=priority(b).compareTo(priority(a));
+        return k!=0?k:'${a['data']['name']}'.compareTo('${b['data']['name']}');
+      });
+      if(mounted)setState(() {
+        checked=total;compared=matchCount;missing=noPrice;mismatches=costDiff;
+        lossRisks=loss;results=list;loading=false;
+      });
+    }catch(e) {if(mounted)setState(() {error='تعذر إكمال مراجعة الأسعار: $e';loading=false;});}
+  }
+
+  @override Widget build(BuildContext context)=>Scaffold(
+    appBar:AppBar(title:const Text('مراجعة أسعار الشراء والبيع'),
+      actions:[IconButton(onPressed:loading?null:load,icon:const Icon(Icons.refresh),tooltip:'تحديث المراجعة')]),
+    body:loading?const Center(child:CircularProgressIndicator()) :
+      error.isNotEmpty?Center(child:Column(mainAxisSize:MainAxisSize.min,children:[
+        Text(error),FilledButton(onPressed:load,child:const Text('إعادة المحاولة'))])) :
+      Column(children:[
+        Card(child:Padding(padding:const EdgeInsets.all(12),child:Column(children:[
+          Text('أصناف تمت مراجعتها: $checked • آخر شراء متاح: $compared'),
+          Text('فروق في التكلفة: $mismatches • بيع أقل من التكلفة: $lossRisks',
+            style:const TextStyle(color:Colors.orangeAccent,fontWeight:FontWeight.bold)),
+          Text('سجلات أو أسعار ناقصة: $missing'),
+          const Text('تقرير للمراجعة فقط. لا يتم تغيير أي سعر تلقائيًا.',style:TextStyle(fontSize:12)),
+        ]))),
+        Expanded(child:results.isEmpty?const Center(child:Text('لم تظهر فروق بين الأسعار المسجلة')) :
+          ListView.builder(itemCount:results.length,itemBuilder:(context,i) {
+            final item=results[i],data=item['data'] as Map<String,dynamic>;
+            final last=item['latest'] as LastPurchaseUnitCost?;
+            final current=data['purchasePrice'] as num?,sale=data['price'] as num?;
+            return Card(margin:const EdgeInsets.symmetric(horizontal:10,vertical:4),
+              child:Padding(padding:const EdgeInsets.all(10),child:Column(
+                crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+                  Text('${data['name']??''}',style:const TextStyle(fontWeight:FontWeight.bold)),
+                  Text('شراء مسجل: ${current??'غير مسجل'} ج.م • بيع: ${sale??'غير مسجل'} ج.م'),
+                  Text(last==null?'لا توجد فاتورة شراء مؤرخة للمقارنة':
+                    'آخر شراء في الفواتير: ${last.cost.toStringAsFixed(2)} ج.م'),
+                  if(item['diff']==true)const Text('فرق بين تكلفة الصنف وآخر شراء',style:TextStyle(color:Colors.orangeAccent)),
+                  if(item['below']==true)const Text('تحذير: البيع أقل من التكلفة',style:TextStyle(color:Colors.redAccent)),
+                  if(item['diff']==true && last!=null)
+                    Align(alignment:AlignmentDirectional.centerEnd,
+                      child:OutlinedButton.icon(icon:const Icon(Icons.edit_outlined),
+                        label:const Text('راجع وصحح تكلفة الصنف'),
+                        onPressed:() async {
+                          await correctInventoryPurchaseCost(context,item['id'] as String,data);
+                          if(mounted)await load();
+                        })),
+                ])));
+          })),
+      ]),
   );
 }
 
@@ -3438,6 +3548,8 @@ Future<void> scannedPurchaseDialog(BuildContext context) async {
 
             tx.update(db.collection('products').doc(e.id), {
               'purchasePrice': e.cost,
+              'lastPurchaseId': purchaseRef.id,
+              'lastPurchaseAt': FieldValue.serverTimestamp(),
               if (increase != null) 'price': double.parse((e.cost * (1 + increase / 100)).toStringAsFixed(2)),
               'updatedAt': FieldValue.serverTimestamp(),
             });
@@ -3963,6 +4075,8 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
 
                   tx.update(db.collection('products').doc(e.id), {
                     'purchasePrice': e.cost,
+                    'lastPurchaseId': purchaseRef.id,
+                    'lastPurchaseAt': FieldValue.serverTimestamp(),
                     if (increase != null) 'price': double.parse((e.cost * (1 + increase / 100)).toStringAsFixed(2)),
                     'updatedAt': FieldValue.serverTimestamp(),
                   });
@@ -5993,7 +6107,12 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
         'kind': purchase ? 'purchase' : 'sale', 'quantity': purchase ? row['quantity'] : -(row['quantity'] as int),
         'balanceAfter': after, 'referenceId': id, 'editId': requestId, 'actorId': actor,
         'createdAt': FieldValue.serverTimestamp()});
-      if (purchase) tx.update(productSnaps[i].reference, {'purchasePrice': row['unitCost'], 'updatedAt': FieldValue.serverTimestamp()});
+      if (purchase) tx.update(productSnaps[i].reference, {
+        'purchasePrice': row['unitCost'],
+        'lastPurchaseId': id,
+        'lastPurchaseAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
     }
     if (addedDue > 0) {
       final before = cents((account!['balance'] as num?) ?? 0);

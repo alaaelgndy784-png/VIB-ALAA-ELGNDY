@@ -269,6 +269,28 @@ Future<void> replacePurchaseLocally(String id, int revision, String requestId,
   final preSupplierId='${preflight['supplierId'] ?? ''}';
   final preSupplier=preSupplierId.isEmpty ? null : (await db.collection('suppliers').doc(preSupplierId).get(const GetOptions(source:Source.server))).data();
   await assertPurchaseEditable({...preflight, 'id': id});
+  // An edited older purchase must NEVER replace the cost of a newer purchase.
+  // Fetch server records from this invoice's original date to identify the
+  // most recent invoice for every affected item; unreadable history means
+  // no automatic cost update (manual inventory correction remains available).
+  final lastSourceDate = preflight['createdAt'];
+  final newestCosts = <String, LastPurchaseUnitCost>{};
+  if (lastSourceDate is Timestamp) {
+    final recent = await db.collection('purchases')
+      .where('createdAt', isGreaterThanOrEqualTo: lastSourceDate)
+      .get(const GetOptions(source: Source.server));
+    if (recent.metadata.isFromCache || recent.metadata.hasPendingWrites) {
+      throw StateError('تعذر تأكيد تاريخ آخر شراء من السيرفر');
+    }
+    newestCosts.addAll(latestPurchaseUnitCosts([
+      for (final invoice in recent.docs)
+        <String, dynamic>{
+          ...invoice.data(),
+          'id': invoice.id,
+          'createdAt': (invoice.data()['createdAt'] as Timestamp?)?.toDate(),
+        },
+    ]));
+  }
   await db.runTransaction((tx) async {
     final profile = (await tx.get(db.collection('users').doc(actor))).data();
     if (profile?['role'] != 'owner' || profile?['active'] != true) throw Exception('تعديل الفاتورة متاح للمدير فقط');
@@ -314,6 +336,33 @@ Future<void> replacePurchaseLocally(String id, int revision, String requestId,
         'lineTotal': q * price});
     }
     total = purchaseEditTotalCents(items);
+    // Apply cost corrections only to an item whose amended invoice is still
+    // the last recorded purchase. Sales prices and historic sales costs stay
+    // unchanged. A newer purchase or explicit manual correction takes priority.
+    final originalCosts = <String, double>{};
+    for (final row in original) {
+      final productId = '${row['productId'] ?? ''}';
+      final value = row['unitCost'];
+      if (value is num && value.isFinite && value >= 0) {
+        originalCosts[productId] = value.toDouble();
+      }
+    }
+    final refreshedCosts = <String, double>{};
+    for (final row in items) {
+      final productId = row['productId'] as String;
+      final cost = (row['unitCost'] as num).toDouble();
+      final oldCost = originalCosts[productId];
+      if (oldCost == null || !inventoryPriceMismatch(oldCost, cost) ||
+          newestCosts[productId]?.invoiceId != id) continue;
+      final product = products[productId]!.data()!;
+      final explicitCorrection = product['purchasePriceCorrectedAt'];
+      if (explicitCorrection is Timestamp && lastSourceDate is Timestamp &&
+          explicitCorrection.compareTo(lastSourceDate) > 0) continue;
+      final lastPurchaseAt = product['lastPurchaseAt'];
+      if (lastPurchaseAt is Timestamp && lastSourceDate is Timestamp &&
+          lastPurchaseAt.compareTo(lastSourceDate) > 0) continue;
+      refreshedCosts[productId] = cost;
+    }
     final paid = cents(payment), due = total - paid;
     if (items.isEmpty || items.length > 50 || total > 1000000000000 || !payment.isFinite || paid < 0 || due < 0) throw Exception('راجع المدفوع وبنود الفاتورة');
     if (due > 0 && (customer == null || customer['active'] == false)) throw Exception('الفاتورة الآجلة تحتاج موردًا نشطًا');
@@ -345,12 +394,21 @@ Future<void> replacePurchaseLocally(String id, int revision, String requestId,
         'balanceBefore': cashBefore / 100, 'balanceAfter': (cashBefore + cashDelta) / 100,
         'referenceId': id, 'editId': requestId, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
     }
+    for (final entry in refreshedCosts.entries) {
+      tx.update(products[entry.key]!.reference, {
+        'purchasePrice': entry.value,
+        'lastPurchaseId': id,
+        if (lastSourceDate is Timestamp) 'lastPurchaseAt': lastSourceDate,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    }
     tx.update(ref, {'items': items, 'itemCount': items.length, 'cashPaidPosted': paid / 100,
       'total': total / 100, 'paid': paid / 100, 'due': due / 100, 'paymentStatus': due > 0 ? 'credit' : 'cash',
       'revision': revision + 1, 'updatedAt': FieldValue.serverTimestamp(), 'lastEditedBy': actor,
       'productId': items.length == 1 ? items.first['productId'] : '', 'productName': items.length == 1 ? items.first['productName'] : '',
       'quantity': items.length == 1 ? items.first['quantity'] : 0, 'unitCost': items.length == 1 ? items.first['unitCost'] : 0});
-    tx.set(edit, {'invoiceId': id, 'invoiceType': 'purchases', 'beforeItems': original, 'afterItems': items,
+    tx.set(edit, {'invoiceId': id, 'invoiceType': 'purchases',
+      'updatedProductCosts': refreshedCosts, 'beforeItems': original, 'afterItems': items,
       'totalBefore': old['total'], 'totalAfter': total / 100, 'paidBefore': old['paid'], 'paidAfter': paid / 100,
       'revision': revision + 1, 'requestKey': key, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
   });
