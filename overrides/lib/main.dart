@@ -3132,7 +3132,7 @@ class _PurchaseSalePriceAuditState extends State<PurchaseSalePriceAudit> {
                           await correctInventoryPurchaseCost(context,item['id'] as String,data);
                           if(mounted)await load();
                         })),
-                ]))));
+                ])));
           })),
       ]),
   );
