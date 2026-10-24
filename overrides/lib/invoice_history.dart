@@ -149,40 +149,51 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
   ]);
 
   @override Widget build(BuildContext context) => Column(children: [
-    Padding(padding: const EdgeInsets.all(12), child: Wrap(spacing: 8, runSpacing: 8, children: [
-      OutlinedButton.icon(onPressed: () => openVibReport(context, sales ? 'تقرير حركة المبيعات' : 'تقرير حركة المشتريات',
-        InvoiceMovementReportPage(type:widget.type)), icon:const Icon(Icons.summarize_outlined),label:Text(sales ? 'تقرير حركة المبيعات' : 'تقرير حركة المشتريات')),
-      TextButton.icon(onPressed: () { final now=DateTime.now(); setState(() => selectRange(DateTime(now.year,now.month,now.day-1),DateTime(now.year,now.month,now.day),includeYesterday:true)); },
-        icon: const Icon(Icons.today), label: const Text('فواتير اليوم')),
-    ])),
+    Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      child: Row(children: [
+        Expanded(child: OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 34), visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+            textStyle: const TextStyle(fontSize: 12)),
+          onPressed: () => openVibReport(context, sales ? 'تقرير حركة المبيعات' : 'تقرير حركة المشتريات',
+            InvoiceMovementReportPage(type:widget.type)),
+          icon: const Icon(Icons.summarize_outlined, size: 15),
+          label: const Text('تقرير الحركة', maxLines: 1, overflow: TextOverflow.ellipsis))),
+        const SizedBox(width: 6),
+        Expanded(child: OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(minimumSize: const Size(0, 34),
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+            textStyle: const TextStyle(fontSize: 12)),
+          onPressed: () { final now = DateTime.now();
+            setState(() => selectRange(DateTime(now.year, now.month, now.day - 1),
+              DateTime(now.year, now.month, now.day), includeYesterday:true)); },
+          icon: const Icon(Icons.today, size: 15), label: const Text('اليوم وأمس', maxLines: 1))),
+      ])),
     Padding(padding: const EdgeInsets.fromLTRB(12, 0, 12, 4), child: Row(children: [
       Expanded(child: TextField(
         controller: partySearchController,
         textInputAction: TextInputAction.search,
         decoration: InputDecoration(
-          labelText: 'بحث باسم ${sales ? 'العميل' : 'المورد'} — اكتب بداية الاسم',
-          prefixIcon: const Icon(Icons.search),
+          hintText: 'بحث باسم ${sales ? 'العميل' : 'المورد'}',
+          isDense: true,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 9, vertical: 10),
+          prefixIcon: const Icon(Icons.search, size: 19),
         ),
         onSubmitted: (_) => searchByParty(),
       )),
       const SizedBox(width: 8),
-      FilledButton.icon(onPressed: searchByParty, icon: const Icon(Icons.search), label: const Text('بحث')),
+      SizedBox(height: 35, child: FilledButton.icon(
+        style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 9),
+          visualDensity: VisualDensity.compact, textStyle: const TextStyle(fontSize: 12)),
+        onPressed: searchByParty, icon: const Icon(Icons.search, size: 15),
+        label: const Text('بحث'))),
       if (_searchingByParty) IconButton(tooltip: 'مسح البحث', onPressed: clearPartySearch, icon: const Icon(Icons.close)),
     ])),
     MovementPeriodControls(key:ValueKey('${from.toIso8601String()}-${to.toIso8601String()}'),from:from,to:to,enabled:true,compact:true,onConfirm:(start,end)=>setState(()=>selectRange(start,end))),
     if (_partySearchError.isNotEmpty) Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text(_partySearchError, style: const TextStyle(color: Colors.redAccent))),
-    Text(_searchingByParty
-        ? 'كل فواتير ${sales ? 'العميل' : 'المورد'} التي يبدأ اسمها بـ ${partySearchController.text.trim()} • الأحدث أولًا'
-        : _showYesterdayAndToday
-            ? 'فواتير ${sales ? 'المبيعات' : 'المشتريات'} • امبارح واليوم'
-            : 'فواتير ${sales ? 'المبيعات' : 'المشتريات'} • من ${DateFormat('dd/MM/yyyy').format(from)} إلى ${DateFormat('dd/MM/yyyy').format(to)}',
-      textAlign: TextAlign.center, style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
-    if (_showYesterdayAndToday)
-      Padding(padding: const EdgeInsets.only(top: 6, bottom: 2), child: Wrap(spacing: 16, children: [
-        _legend(Colors.greenAccent, 'النهارده'),
-        _legend(Colors.redAccent, 'امبارح'),
-      ])),
-    const SizedBox(height: 8),
+    const SizedBox(height: 3),
     if(numbering)const Padding(padding:EdgeInsets.all(8),child:Text('جاري تجهيز الأرقام الثابتة للفواتير القديمة...')),
     if(numberError.isNotEmpty)Text(numberError,style:const TextStyle(color:Colors.redAccent)),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: invoices, builder: (context, snapshot) {
@@ -200,7 +211,8 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
       }
       final totalCents=rows.fold<int>(0,(sum,row){final value=row.data()['total'];if(value is! num || !value.isFinite)return sum;return sum+(value*100).round();});
       return Column(children: [
-        Padding(padding: const EdgeInsets.only(bottom: 8), child: Text('عدد الفواتير: ${rows.length} • إجمالي الفترة: ${movementReportMoney(totalCents)}',style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
+        Padding(padding: const EdgeInsets.only(bottom: 4), child: Text('الفواتير: ${rows.length} • الإجمالي: ${movementReportMoney(totalCents)}',
+          style: const TextStyle(color: gold, fontSize: 13, fontWeight: FontWeight.bold))),
         Expanded(child: rows.isEmpty ? const Center(child:Text('لا توجد فواتير في الفترة المختارة')) : ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
           final row = rows[index], data = row.data();
           final dayColor = _invoiceDayColor(data);
