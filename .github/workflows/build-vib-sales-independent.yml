@@ -40,6 +40,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # Pin Java; ubuntu-latest can ship a newer JDK (e.g. 25)
+      # that older Gradle/Android tooling cannot parse.
+      - name: Set up supported Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
