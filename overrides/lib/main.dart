@@ -2966,38 +2966,72 @@ class _InventoryAuditState extends State<InventoryAudit> {
 
           return Column(children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 2),
+              padding: const EdgeInsets.fromLTRB(8, 3, 8, 0),
               child: TextField(
-                decoration: const InputDecoration(labelText: 'بحث في جرد المخزون', prefixIcon: Icon(Icons.search)),
+                decoration: const InputDecoration(hintText: 'بحث عن صنف',
+                  isDense: true, prefixIcon: Icon(Icons.search, size: 20),
+                  contentPadding: EdgeInsets.symmetric(vertical: 8)),
                 onChanged: (value) => setState(() => nameQuery = value),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 1),
               child: DropdownButtonFormField<String>(
-                value: selected,
-                decoration: const InputDecoration(labelText: 'الفئة'),
+                value: selected, isDense: true,
+                decoration: const InputDecoration(labelText: 'الفئة',
+                  isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
                 items: categories.map((v) => DropdownMenuItem(value: v, child: Text(v))).toList(),
                 onChanged: (v) => setState(() => category = v ?? 'الكل'),
               ),
             ),
             Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Card(child: Padding(padding: const EdgeInsets.all(10), child: Column(children: [
-                Text('عدد الأصناف: ${filtered.length}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                Text('إجمالي المخزون بسعر التكلفة: ${totalCost.toStringAsFixed(2)} ج.م'),
-                Text('إجمالي المخزون بسعر البيع: ${totalSale.toStringAsFixed(2)} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
-                Wrap(spacing: 8, children: [
-                  OutlinedButton.icon(onPressed: () => openInventoryPrices(context), icon: const Icon(Icons.price_change), label: const Text('زيادة / تخفيض الأسعار')),
-                  OutlinedButton.icon(onPressed:() => Navigator.push(context,
-                    MaterialPageRoute(builder:(_) => const PurchaseSalePriceAudit())),
-                    icon: const Icon(Icons.fact_check_outlined),
-                    label: const Text('مراجعة أسعار الشراء والبيع')),
-                  OutlinedButton.icon(onPressed: auditRows.isEmpty ? null : () => printInventoryAudit(context, selected, auditRows, 'a4'), icon: const Icon(Icons.picture_as_pdf), label: const Text('PDF A4')),
-                  OutlinedButton.icon(onPressed: auditRows.isEmpty ? null : () => printInventoryAudit(context, selected, auditRows, '80'), icon: const Icon(Icons.print), label: const Text('طباعة 80 مم')),
-                ]),
-              ]))),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              child: Card(child: Padding(padding: const EdgeInsets.all(6),
+                child: Column(children: [
+                  Text('الأصناف: ${filtered.length}  •  التكلفة: ${totalCost.toStringAsFixed(2)}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                  Text('البيع: ${totalSale.toStringAsFixed(2)} ج.م', maxLines: 1,
+                    style: const TextStyle(color: gold, fontSize: 12)),
+                  const SizedBox(height: 3),
+                  Row(children: [
+                    Expanded(child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+                        minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 3),
+                        textStyle: const TextStyle(fontSize: 11)),
+                      onPressed: () => openInventoryPrices(context),
+                      icon: const Icon(Icons.price_change, size: 15),
+                      label: const Text('تغيير أسعار', maxLines: 1, overflow: TextOverflow.ellipsis))),
+                    const SizedBox(width: 4),
+                    Expanded(child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+                        minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 3),
+                        textStyle: const TextStyle(fontSize: 11)),
+                      onPressed: () => Navigator.push(context,
+                        MaterialPageRoute(builder: (_) => const PurchaseSalePriceAudit())),
+                      icon: const Icon(Icons.fact_check_outlined, size: 15),
+                      label: const Text('مراجعة الأسعار', maxLines: 1, overflow: TextOverflow.ellipsis))),
+                  ]),
+                  Row(children: [
+                    Expanded(child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+                        minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 3),
+                        textStyle: const TextStyle(fontSize: 11)),
+                      onPressed: auditRows.isEmpty ? null :
+                        () => printInventoryAudit(context, selected, auditRows, 'a4'),
+                      icon: const Icon(Icons.picture_as_pdf, size: 15),
+                      label: const Text('PDF A4'))),
+                    const SizedBox(width: 4),
+                    Expanded(child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+                        minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 3),
+                        textStyle: const TextStyle(fontSize: 11)),
+                      onPressed: auditRows.isEmpty ? null :
+                        () => printInventoryAudit(context, selected, auditRows, '80'),
+                      icon: const Icon(Icons.print, size: 15),
+                      label: const Text('80 مم'))),
+                  ]),
+                ]))),
             ),
             Expanded(
               child: ListView.builder(itemCount: filtered.length, itemBuilder: (context, index) {
