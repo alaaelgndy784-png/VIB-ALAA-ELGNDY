@@ -130,13 +130,37 @@ const vibNeon = Color(0xFFB2FF59);
 const vibRed = Color(0xFFFF6B6B);
 final db = FirebaseFirestore.instance;
 Timestamp? activeResetAt;
+// Archived history is preserved in Firestore. These per-manager cutoffs
+// only hide older invoice/expense rows, not their accounting entries.
+Timestamp? managerArchivedSalesBefore;
+Timestamp? managerArchivedPurchasesBefore;
+Timestamp? managerArchivedExpensesBefore;
 
 bool visibleAfterReset(Map<String, dynamic> data) {
-  final resetAt = activeResetAt;
-  if (resetAt == null) return true;
   final createdAt = data['createdAt'];
-  if (createdAt is! Timestamp) return false;
-  return createdAt.compareTo(resetAt) >= 0;
+  final resetAt = activeResetAt;
+  if (resetAt != null) {
+    if (createdAt is! Timestamp || createdAt.compareTo(resetAt) < 0) return false;
+  }
+
+  // Invoice content can be either grouped "items" or a legacy single item.
+  // Reconciliation/receipt ledger entries have accountType/amount, not total/items.
+  Timestamp? archiveAt;
+  final invoiceShape = data['total'] is num &&
+    (data['items'] is List || data.containsKey('productId'));
+  if (data['accountType'] == 'expenses') {
+    archiveAt = managerArchivedExpensesBefore;
+  } else if (invoiceShape && data['supplierId'] is String) {
+    archiveAt = managerArchivedPurchasesBefore;
+  } else if (invoiceShape && data['customerId'] is String) {
+    archiveAt = managerArchivedSalesBefore;
+  }
+
+  // Old invoice/audit docs stay intact; only the manager's history view changes.
+  if (archiveAt != null) {
+    if (createdAt is! Timestamp || createdAt.compareTo(archiveAt) < 0) return false;
+  }
+  return true;
 }
 
 bool isTemporaryFirestoreOffline(Object error) => error is TimeoutException || (error is FirebaseException &&
@@ -352,6 +376,15 @@ class Gate extends StatelessWidget {
             ])));
           }
           activeResetAt = data['resetAt'] as Timestamp?;
+          if (data['role'] == 'owner') {
+            managerArchivedSalesBefore = data['managerArchivedSalesBefore'] as Timestamp?;
+            managerArchivedPurchasesBefore = data['managerArchivedPurchasesBefore'] as Timestamp?;
+            managerArchivedExpensesBefore = data['managerArchivedExpensesBefore'] as Timestamp?;
+          } else {
+            managerArchivedSalesBefore = null;
+            managerArchivedPurchasesBefore = null;
+            managerArchivedExpensesBefore = null;
+          }
           final showCost = data['role']=='owner' || data['showSaleCost']==true;
           if(saleCostVisible.value!=showCost)WidgetsBinding.instance.addPostFrameCallback((_)=>saleCostVisible.value=showCost);
           final editPrice=data['role']=='owner' || data['canEditSalePrice']==true;

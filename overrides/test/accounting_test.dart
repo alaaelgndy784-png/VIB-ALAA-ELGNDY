@@ -121,3 +121,31 @@ void main() {
     expect(unallocatedReceiptAfter({'createdAt': earlier}, {'createdAt': at, 'invoiceId': 'another'}), isFalse);
   });
 }
+
+
+test('manager invoice and expense history archive preserves ledgers and newer records', () {
+  final cutoff = Timestamp.fromDate(DateTime.utc(2026, 10, 24, 18));
+  final old = Timestamp.fromDate(DateTime.utc(2026, 10, 23));
+  final fresh = Timestamp.fromDate(DateTime.utc(2026, 10, 25));
+  activeResetAt = null;
+  managerArchivedSalesBefore = cutoff;
+  managerArchivedPurchasesBefore = cutoff;
+  managerArchivedExpensesBefore = cutoff;
+  final sale = {'customerId':'a','total':100,'items':<Object>[],'createdAt':old};
+  final purchase = {'supplierId':'s','total':100,'items':<Object>[],'createdAt':old};
+  final expense = {'accountType':'expenses','kind':'expense','amount':20,'createdAt':old};
+  final cashLedger = {'accountType':'cash','kind':'expense','amount':20,'createdAt':old};
+  final customerLedger = {'accountType':'customers','kind':'sale','amount':100,'createdAt':old};
+  expect(visibleAfterReset(sale), false);
+  expect(visibleAfterReset(purchase), false);
+  expect(visibleAfterReset(expense), false);
+  expect(visibleAfterReset(cashLedger), true);
+  expect(visibleAfterReset(customerLedger), true);
+  expect(visibleAfterReset({...sale,'createdAt':fresh}), true);
+  expect(visibleAfterReset({...purchase,'createdAt':fresh}), true);
+  expect(visibleAfterReset({...expense,'createdAt':fresh}), true);
+  managerArchivedSalesBefore = null;
+  managerArchivedPurchasesBefore = null;
+  managerArchivedExpensesBefore = null;
+  expect(visibleAfterReset(sale), true);
+});

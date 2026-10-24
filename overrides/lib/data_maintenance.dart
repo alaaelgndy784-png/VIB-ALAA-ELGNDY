@@ -8,12 +8,12 @@ class DataMaintenancePage extends StatefulWidget {
 
 class _DataMaintenancePageState extends State<DataMaintenancePage> {
   static const options = <({String id, String title, bool supported})>[
-    (id:'sales', title:'المبيعات', supported:false),
-    (id:'purchases', title:'المشتريات', supported:false),
+    (id:'sales', title:'المبيعات — أرشفة الفواتير القديمة', supported:true),
+    (id:'purchases', title:'المشتريات — أرشفة الفواتير القديمة', supported:true),
     (id:'customers', title:'العملاء — إخفاء وتصفير الأرصدة', supported:true),
     (id:'suppliers', title:'الموردون — إخفاء وتصفير الأرصدة', supported:true),
     (id:'cash', title:'الصندوق — تصفير الرصيد مع تسجيل حركة', supported:true),
-    (id:'expenses', title:'المصروفات', supported:false),
+    (id:'expenses', title:'المصروفات — أرشفة السجلات القديمة', supported:true),
     (id:'stockQty', title:'المخزن — تعديل الكمية 0 لجميع المنتجات', supported:true),
     (id:'stockPrice', title:'المخزن — تعديل الأسعار 0 لجميع المنتجات', supported:true),
     (id:'archiveProducts', title:'المخزن — إخفاء جميع المنتجات', supported:true),
@@ -35,7 +35,7 @@ class _DataMaintenancePageState extends State<DataMaintenancePage> {
       builder: (dialog) => StatefulBuilder(builder: (dialog, redraw) => AlertDialog(
         title: const Text('تأكيد معالجة البيانات'),
         content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Text('العملية ستغيّر بيانات حقيقية لكل الفروع وقد تؤثر على حسابات العملاء والمخزون. لا يمكن التراجع عنها تلقائيًا. اعمل نسخة احتياطية أولًا.'),
+          const Text('أرشفة المبيعات والمشتريات والمصروفات تخفي السجلات القديمة من قوائم المدير فقط، ولا تحذف الفواتير أو سندات القبض أو تغيّر رصيد العملاء والصندوق. باقي عمليات التصفير تغيّر بيانات حقيقية وقد لا يمكن التراجع عنها. اعمل نسخة احتياطية أولًا.'),
           const SizedBox(height: 12),
           Text('عدد الاختيارات: ' + selected.length.toString()),
           const SizedBox(height: 12),
@@ -83,6 +83,11 @@ class _DataMaintenancePageState extends State<DataMaintenancePage> {
   Future<void> _run() async {
     if (processing) return;
     if (selected.isEmpty) { _message('اختار بيانات المعالجة الأول'); return; }
+    const archives = {'sales','purchases','expenses'};
+    if (selected.any(archives.contains) && selected.any((id) => !archives.contains(id))) {
+      _message('لأمان الحسابات، نفّذ أرشفة الفواتير والمصروفات لوحدها، وبعدين أي تصفير آخر.');
+      return;
+    }
     if (!await _confirm() || !mounted) return;
     setState(() { processing = true; outcome = ''; });
     final finished = <String>[];
@@ -102,7 +107,21 @@ class _DataMaintenancePageState extends State<DataMaintenancePage> {
       }
       for (final id in selected.toList()) {
         int count = 0;
-        if (id == 'customers' || id == 'suppliers') {
+        if (id == 'sales' || id == 'purchases' || id == 'expenses') {
+          final field = switch (id) {
+            'sales' => 'managerArchivedSalesBefore',
+            'purchases' => 'managerArchivedPurchasesBefore',
+            _ => 'managerArchivedExpensesBefore',
+          };
+          // No deletion, no invoices mutated, and no balance corrections:
+          // only the manager's server-synchronized view boundary changes.
+          await db.collection('users').doc(uid).update({
+            field: FieldValue.serverTimestamp(),
+          });
+          finished.add('$id: تم إخفاء القديم');
+          if (mounted) setState(() { outcome = finished.join(' | '); });
+          continue;
+        } else if (id == 'customers' || id == 'suppliers') {
           count = await _batchChange(id, (data) =>
             data['active'] == false && (data['balance'] ?? 0) == 0 &&
               (data['openingBalance'] ?? 0) == 0 ? null : {
@@ -154,13 +173,58 @@ class _DataMaintenancePageState extends State<DataMaintenancePage> {
         });
       if (mounted) {
         setState(() { selected.clear(); });
-        _message('تم تنفيذ المعالجة. راجع الأرصدة من التقارير.');
+        _message('تمت المعالجة. الفواتير المؤرشفة ما زالت محفوظة، والرصيد لم يتغير بسبب الأرشفة.');
       }
     } catch (e) {
       if (mounted) _message('المعالجة لم تكتمل بالكامل: ' + e.toString() +
         (finished.isNotEmpty ? ' | تم: ' + finished.join(', ') : ''));
     } finally {
       if (mounted) setState(() { processing = false; });
+    }
+  }
+
+  Future<void> _restoreHistory(String id) async {
+    if (processing) return;
+    final category = switch (id) {
+      'sales' => 'المبيعات',
+      'purchases' => 'المشتريات',
+      _ => 'المصروفات',
+    };
+    final field = switch (id) {
+      'sales' => 'managerArchivedSalesBefore',
+      'purchases' => 'managerArchivedPurchasesBefore',
+      _ => 'managerArchivedExpensesBefore',
+    };
+    final accepted = await showDialog<bool>(context:context,
+      builder:(dialog) => AlertDialog(
+        title:Text('إظهار سجلات ' + category),
+        content:Text('هترجع السجلات المؤرشفة تظهر في قوائم المدير. مش هيتم تغيير أي أرصدة.'),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('إلغاء')),
+          FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('إظهار السجلات')),
+        ],
+      ));
+    if (accepted != true || !mounted) return;
+    setState(() => processing = true);
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) throw StateError('لا يوجد مدير مسجل');
+      final profile = await db.collection('users').doc(uid).get(
+        const GetOptions(source:Source.server));
+      if (profile.data()?['role'] != 'owner' || profile.data()?['active'] != true) {
+        throw StateError('العملية للمدير فقط');
+      }
+      await db.collection('users').doc(uid).update({field:FieldValue.delete()});
+      await db.collection('settings').doc(
+        'maintenance_' + DateTime.now().microsecondsSinceEpoch.toString()).set({
+          'operations':['restore_' + id], 'by':uid,
+          'createdAt':FieldValue.serverTimestamp(),
+        });
+      _message('تم استرجاع عرض سجلات ' + category);
+    } catch(e) {
+      _message('تعذر إظهار السجلات: ' + e.toString());
+    } finally {
+      if (mounted) setState(() => processing = false);
     }
   }
 
@@ -191,7 +255,7 @@ class _DataMaintenancePageState extends State<DataMaintenancePage> {
       const Text('معالجة البيانات', textAlign: TextAlign.center,
         style: TextStyle(color:gold, fontSize:24, fontWeight:FontWeight.bold)),
       const SizedBox(height:10),
-      const Text('حدد البيانات المراد معالجتها. العمليات المحاسبية المرتبطة بفواتير وسندات مؤمّنة من الإلغاء المباشر.',
+      const Text('اختار ما تريد. أرشفة المبيعات والمشتريات والمصروفات تخفي القديم من قوائم المدير فقط؛ السجلات والسندات والفلوس تظل محفوظة.',
         textAlign:TextAlign.right),
       const SizedBox(height:8),
       for (final option in options)
@@ -203,15 +267,36 @@ class _DataMaintenancePageState extends State<DataMaintenancePage> {
               else { selected.remove(option.id); } }),
           title:Text(option.title,
             style:TextStyle(color:option.supported ? Colors.redAccent : Colors.grey)),
-          subtitle: option.supported ? null :
-            const Text('محمي: يلزم تسوية محاسبية قبل الإلغاء'),
+          subtitle: {'sales','purchases','expenses'}.contains(option.id)
+            ? const Text('إخفاء القديم فقط — لا يمس الأرصدة أو السندات')
+            : option.supported ? null :
+              const Text('محمي: يلزم تسوية محاسبية قبل الإلغاء'),
         ),
+      const SizedBox(height:12),
+      if (managerArchivedSalesBefore != null ||
+          managerArchivedPurchasesBefore != null ||
+          managerArchivedExpensesBefore != null) ...[
+        const Text('السجلات المؤرشفة — استرجاع العرض', style: TextStyle(color: gold)),
+        Wrap(spacing:6, runSpacing:4, children:[
+          if (managerArchivedSalesBefore != null)
+            OutlinedButton(onPressed:processing ? null : ()=>_restoreHistory('sales'),
+              child:const Text('إظهار المبيعات')),
+          if (managerArchivedPurchasesBefore != null)
+            OutlinedButton(onPressed:processing ? null : ()=>_restoreHistory('purchases'),
+              child:const Text('إظهار المشتريات')),
+          if (managerArchivedExpensesBefore != null)
+            OutlinedButton(onPressed:processing ? null : ()=>_restoreHistory('expenses'),
+              child:const Text('إظهار المصروفات')),
+        ]),
+      ],
       const SizedBox(height:16),
       FilledButton.icon(
         onPressed:processing ? null : _run,
         icon:processing ? const SizedBox(width:16,height:16,
           child:CircularProgressIndicator(strokeWidth:2)) : const Icon(Icons.delete_sweep_outlined),
-        label:const Text('إلغاء البيانات المحددة'),
+        label:Text(selected.isNotEmpty && selected.every((id) =>
+          {'sales','purchases','expenses'}.contains(id))
+          ? 'أرشفة البيانات المحددة' : 'معالجة البيانات المحددة'),
       ),
       const SizedBox(height:8),
       OutlinedButton.icon(onPressed:processing ? null : _openAccountDirectory,
