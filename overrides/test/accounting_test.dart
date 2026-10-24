@@ -120,10 +120,8 @@ void main() {
     expect(unallocatedReceiptAfter({'createdAt': at}, {'createdAt': earlier}), isFalse);
     expect(unallocatedReceiptAfter({'createdAt': earlier}, {'createdAt': at, 'invoiceId': 'another'}), isFalse);
   });
-}
 
-
-test('manager invoice and expense history archive preserves ledgers and newer records', () {
+  test('manager invoice and expense history archive preserves ledgers and newer records', () {
   final cutoff = Timestamp.fromDate(DateTime.utc(2026, 10, 24, 18));
   final old = Timestamp.fromDate(DateTime.utc(2026, 10, 23));
   final fresh = Timestamp.fromDate(DateTime.utc(2026, 10, 25));
@@ -148,4 +146,5 @@ test('manager invoice and expense history archive preserves ledgers and newer re
   managerArchivedPurchasesBefore = null;
   managerArchivedExpensesBefore = null;
   expect(visibleAfterReset(sale), true);
-});
+  });
+}
