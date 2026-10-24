@@ -6263,9 +6263,20 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
           (int.tryParse(line.quantity.text) ?? 0) * (double.tryParse(line.price.text.replaceAll(',', '.')) ?? 0));
         final extraPaid = cash ? addedTotal : (double.tryParse(paid.text.replaceAll(',', '.')) ?? 0);
         return AlertDialog(
-          title: Text(replacing ? purchase ? 'تعديل فاتورة المشتريات' : 'تعديل فاتورة المبيعات' : 'إضافة بنود لنفس فاتورة ${purchase ? 'المشتريات' : 'المبيعات'}'),
-          content: SizedBox(width: 620, child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text('رقم الفاتورة: ${invoiceDisplayNumber(type,id,data)}'),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 5, vertical: 8),
+          titlePadding: const EdgeInsets.fromLTRB(8, 12, 8, 4),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          actionsPadding: const EdgeInsets.fromLTRB(7, 5, 7, 7),
+          title: Text(replacing ? purchase ? 'تعديل المشتريات' : 'تعديل المبيعات'
+            : 'إضافة بنود للفاتورة', textAlign: TextAlign.center,
+            style: const TextStyle(color: vibBlue, fontSize: 19, fontWeight: FontWeight.bold)),
+          content: SizedBox(
+            width: MediaQuery.sizeOf(c).width,
+            height: (MediaQuery.sizeOf(c).height -
+              MediaQuery.viewInsetsOf(c).bottom - 170).clamp(185.0, 700.0).toDouble(),
+            child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('فاتورة ${invoiceDisplayNumber(type,id,data)}',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
             if(replaceSale) OutlinedButton.icon(icon:const Icon(Icons.person_search),
               label:Text(selectedCustomerName.isEmpty ? 'اختيار العميل الصحيح' : 'العميل: $selectedCustomerName — تغيير العميل',softWrap:true),
               onPressed:saving ? null : () async {
@@ -6278,11 +6289,11 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
                 } catch(e) {if(c.mounted) await showInvoiceSaveProblem(c,'تعذر اختيار العميل: $e');}
               }) else Text('${purchase ? 'المورد' : 'العميل'}: ${data[purchase ? 'supplierName' : 'customerName'] ?? 'غير محدد'}'),
             if(replaceSale && selectedCustomerId!='${data['customerId'] ?? ''}')
-              const Text('عند الحفظ ينتقل باقي هذه الفاتورة من حساب العميل القديم إلى العميل المختار.',style:TextStyle(color:Colors.greenAccent)),
-            Text('الإجمالي السابق: ${data['total'] ?? 0} • المدفوع: ${data['paid'] ?? 0} • الباقي: ${data['due'] ?? 0}'),
-            const SizedBox(height: 10),
-            Text(replacing ? 'عدّل الأصناف والكميات والأسعار والمدفوع. يحفظ سجل التعديل وتُحدّث فروق المخزون والحسابات.' : 'البنود السابقة محفوظة؛ أضف البنود أو الكميات الإضافية هنا.'),
-            const Text('لتغيير الصنف اضغط على اسمه، ولزيادة الفاتورة اضغط إضافة بند.'),
+              const Text('سيُنقل باقي الفاتورة للعميل الجديد عند الحفظ',
+                style: TextStyle(color:Colors.greenAccent,fontSize:11)),
+            Text('السابق: ${data['total'] ?? 0}  •  مدفوع: ${data['paid'] ?? 0}  •  باقي: ${data['due'] ?? 0}',
+              style: const TextStyle(fontSize: 11)),
+            const SizedBox(height: 3),
             for (var i = 0; i < lines.length; i++)
               if (purchase) PurchaseInvoiceLine(
                 key: ObjectKey(lines[i]), number: i + 1, name: '${products.firstWhere((p) => p.id == lines[i].productId).data()['name']}',
