@@ -48,4 +48,31 @@ void main() {
     await tester.pumpWidget(const MaterialApp(home:Scaffold(body:InventoryProductCard(number:1,name:'صنف',quantity:null,unitPrice:20,quantityMessage:'تعذر التحميل'))));
     expect(find.text('تعذر التحميل'),findsOneWidget);expect(find.text('غير متاح'),findsOneWidget);expect(find.text('0.00'),findsNothing);
   });
+  testWidgets('manager inventory quantity sale price and total boxes are genuinely smaller', (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    Widget screen(bool compact) => MaterialApp(home: Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(body: InventoryProductCard(
+        number: 1, name: 'صنف طويل', quantity: 3, unitPrice: 29.62,
+        compactPriceBoxes: compact,
+      )),
+    ));
+    await tester.pumpWidget(screen(false));
+    await tester.pumpAndSettle();
+    final regular = tester.getSize(find.byKey(const ValueKey('inventory-price-boxes')));
+    await tester.pumpWidget(screen(true));
+    await tester.pumpAndSettle();
+    final compact = tester.getSize(find.byKey(const ValueKey('inventory-price-boxes')));
+    expect(compact.width, lessThan(regular.width));
+    expect(compact.height, lessThan(regular.height));
+    expect(compact.width, lessThanOrEqualTo(205));
+    expect(find.text('3'), findsOneWidget);
+    expect(find.text('29.62'), findsOneWidget);
+    expect(find.text('88.86'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
 }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 class InventoryProductCard extends StatelessWidget {
   final bool employee;
+  final bool compactPriceBoxes;
   final int number;
   final String name, priceLabel;
   final num? quantity, unitPrice;
@@ -9,7 +10,7 @@ class InventoryProductCard extends StatelessWidget {
   final List<Widget> actions;
   final VoidCallback? onTap;
   const InventoryProductCard({super.key, required this.number, required this.name,
-    required this.quantity, required this.unitPrice, this.priceLabel = 'سعر البيع', this.employee=false,
+    required this.quantity, required this.unitPrice, this.priceLabel = 'سعر البيع', this.employee=false, this.compactPriceBoxes=false,
     this.quantityMessage, this.detail, this.actions = const [], this.onTap});
 
   static const quantityColor = Color(0xFF66DE91);
@@ -17,14 +18,20 @@ class InventoryProductCard extends StatelessWidget {
   static const totalColor = Color(0xFFFFD166);
 
   Widget box(String label, String value, Color color) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+    padding: EdgeInsets.symmetric(horizontal: compactPriceBoxes ? 3 : 5,
+      vertical: compactPriceBoxes ? 3 : 5),
     decoration: BoxDecoration(color: color.withValues(alpha: .10),
-      border: Border.all(color: color.withValues(alpha: .65)), borderRadius: BorderRadius.circular(6)),
+      border: Border.all(color: color.withValues(alpha: .65)),
+      borderRadius: BorderRadius.circular(compactPriceBoxes ? 5 : 6)),
     child: Column(mainAxisSize: MainAxisSize.min, children: [
-      FittedBox(fit: BoxFit.scaleDown, child: Text(label, maxLines: 1, textAlign: TextAlign.center, style: TextStyle(color: color, fontSize: 11))),
-      const SizedBox(height: 2),
-      FittedBox(fit: BoxFit.scaleDown, child: Text(value, maxLines: 1, textDirection: num.tryParse(value) != null ? TextDirection.ltr : null,
-        textAlign: TextAlign.center, style: TextStyle(color: color, fontSize: 14, fontWeight: FontWeight.bold))),
+      FittedBox(fit: BoxFit.scaleDown, child: Text(label, maxLines: 1, textAlign: TextAlign.center,
+        style: TextStyle(color: color, fontSize: compactPriceBoxes ? 10 : 11))),
+      SizedBox(height: compactPriceBoxes ? 1 : 2),
+      FittedBox(fit: BoxFit.scaleDown, child: Text(value, maxLines: 1,
+        textDirection: num.tryParse(value) != null ? TextDirection.ltr : null,
+        textAlign: TextAlign.center,
+        style: TextStyle(color: color, fontSize: compactPriceBoxes ? 12 : 14,
+          fontWeight: FontWeight.bold))),
     ]),
   );
   @override Widget build(BuildContext context) {
@@ -45,12 +52,15 @@ class InventoryProductCard extends StatelessWidget {
           ]),
           if(employee) Padding(padding:const EdgeInsets.only(top:4),child:Text('المتاح: $qty',style:const TextStyle(color:Colors.redAccent,fontSize:12))),
           if(detail != null) Padding(padding: const EdgeInsets.only(top: 6), child: Text(detail!, style: const TextStyle(fontSize: 12))),
-          const SizedBox(height: 6),
+          SizedBox(height: compactPriceBoxes ? 3 : 6),
           Align(alignment: AlignmentDirectional.centerStart, child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 270),
+            key: const ValueKey('inventory-price-boxes'),
+            constraints: BoxConstraints(maxWidth: compactPriceBoxes ? 205 : 270),
             child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Expanded(child: box('العدد', qty, employee ? totalColor : quantityColor)), const SizedBox(width: 4),
-              Expanded(child: box(priceLabel, price, employee ? quantityColor : priceColor)), const SizedBox(width: 4),
+              Expanded(child: box('العدد', qty, employee ? totalColor : quantityColor)),
+              SizedBox(width: compactPriceBoxes ? 3 : 4),
+              Expanded(child: box(priceLabel, price, employee ? quantityColor : priceColor)),
+              SizedBox(width: compactPriceBoxes ? 3 : 4),
               Expanded(child: box('الإجمالي', total != null && total.isFinite ? total.toStringAsFixed(2) : 'غير متاح', totalColor)),
             ]),
           )),

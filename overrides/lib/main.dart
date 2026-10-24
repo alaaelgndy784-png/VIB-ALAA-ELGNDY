@@ -3201,7 +3201,7 @@ class _InventoryAuditState extends State<InventoryAudit> {
                 final p = filtered[index];
                 final data = p.data();
                 final qty = amounts[p.id] ?? 0;
-                return InventoryProductCard(number: index + 1, name: '${data['name']}', quantity: qty, unitPrice: data['price'] as num?,
+                return InventoryProductCard(number: index + 1, name: '${data['name']}', quantity: qty, unitPrice: data['price'] as num?, compactPriceBoxes: true,
                   detail: 'الفئة: ${data['category'] ?? 'غير مصنف'} • سعر الشراء: ${data['purchasePrice'] ?? 'غير مسجل'} ج.م',
                   actions: [
                     IconButton(
