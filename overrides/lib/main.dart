@@ -965,7 +965,7 @@ class OfflineCacheNotice extends StatelessWidget {
                   ? '$localCount فاتورة مدير لها نسخة أمان على الجهاز • تنتظر تأكيد السيرفر'
                   : queued>0?'$queued عملية تنتظر المزامنة'
                   : pending?'تغييرات تنتظر المزامنة'
-                  : 'وضع غير متصل • عرض بيانات محفوظة على الجهاز';
+                  : 'غير متصل • بيانات محلية';
                 return Container(width:double.infinity,
                   color:(pending||queued>0)?const Color(0xFF5A3B12):const Color(0xFF3B321C),
                   padding:const EdgeInsets.symmetric(horizontal:12,vertical:5),
@@ -2806,10 +2806,20 @@ class _SalesState extends State<Sales> {
         .toList()
       ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
     return Column(children: [
-      Padding(padding: const EdgeInsets.fromLTRB(10,8,10,2), child: Row(children: [
-        Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.add_shopping_cart, size: 18), label: const Text('فاتورة جديدة', maxLines: 1, overflow: TextOverflow.ellipsis), onPressed: () => newSaleDialog(context, owner, branchId))),
-        const SizedBox(width: 6),
-        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.payments_outlined, size: 18), label: const Text('سند قبض', maxLines: 1, overflow: TextOverflow.ellipsis), onPressed:()=>createReceiptVoucher(context,branchId,owner:owner))),
+      Padding(padding: const EdgeInsets.fromLTRB(8,3,8,2), child: Row(children: [
+        Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact,
+          minimumSize: const Size(0, 34), textStyle: const TextStyle(fontSize: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 4)),
+          icon: const Icon(Icons.add_shopping_cart, size: 15),
+          label: const Text('فاتورة جديدة', maxLines: 1, overflow: TextOverflow.ellipsis),
+          onPressed: () => newSaleDialog(context, owner, branchId))),
+        const SizedBox(width: 5),
+        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+          minimumSize: const Size(0, 34), textStyle: const TextStyle(fontSize: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 4)),
+          icon: const Icon(Icons.payments_outlined, size: 15),
+          label: const Text('سند قبض', maxLines: 1, overflow: TextOverflow.ellipsis),
+          onPressed:()=>createReceiptVoucher(context,branchId,owner:owner))),
       ])),
       Padding(padding:const EdgeInsets.symmetric(horizontal:10),child: PendingSalesShortcut(owner:owner, compact:true)),
       if(!owner) const EmployeeOfflineSaleNotice(),
@@ -2820,7 +2830,10 @@ class _SalesState extends State<Sales> {
         const SizedBox(width:6),
         Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.edit_note, size:18), label: const Text('تعديل فاتورة', maxLines:1, overflow:TextOverflow.ellipsis), onPressed: () => editSaleByNumber(context))),
       ])),
-      Padding(padding: const EdgeInsets.all(8), child: Text('فواتير المبيعات • من ${DateFormat('dd/MM/yyyy').format(selectedFrom)} إلى ${DateFormat('dd/MM/yyyy').format(selectedTo)} • العدد: ${rows.length} • الإجمالي: ${movementReportMoney(rows.fold<int>(0,(sum,row){final value=row.data()['total'];return value is num && value.isFinite ? sum+(value*100).round() : sum;}))}',textAlign:TextAlign.center,style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
+        child: Text('الفواتير: ${rows.length} • الإجمالي: ${movementReportMoney(rows.fold<int>(0,(sum,row){final value=row.data()['total'];return value is num && value.isFinite ? sum+(value*100).round() : sum;}))}',
+          maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
+          style: const TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.bold))),
       Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد فواتير في هذا التاريخ')) : ListView(children: rows.map((d) {
         final sale = d.data();
         final paymentText = sale.containsKey('paid') ? ' • مدفوع ${sale['paid'] ?? 0} • باقي ${sale['due'] ?? 0}' : '';
