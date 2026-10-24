@@ -76,6 +76,8 @@ const _managerFirebaseAppId = '1:200962643703:android:04784682cd1d95b22c65f2';
 const _staffFirebaseAppId = '1:200962643703:android:fd5ac8ff4a1fae7c2c65f2';
 
 bool staffApp = false;
+// Set only after a local biometric success, consumed by OwnerSecurity once.
+bool _managerBiometricVerifiedForSignIn = false;
 final saleCostVisible = ValueNotifier<bool>(false);
 final salePriceEditable = ValueNotifier<bool>(false);
 Future<FirebaseOptions> _firebaseOptionsForThisApp() async {
@@ -387,39 +389,94 @@ class OwnerSecurity extends StatefulWidget {
 class _OwnerSecurityState extends State<OwnerSecurity> {
   final auth = LocalAuthentication();
   final password = TextEditingController();
-  bool unlocked = false, checking = true, busy = false;
+  final AudioPlayer _chime = AudioPlayer();
+  bool unlocked = false, checking = true, busy = false, showFallback = false;
   String message = '';
-  @override void initState() { super.initState(); WidgetsBinding.instance.addPostFrameCallback((_) => biometric()); }
+  @override void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_managerBiometricVerifiedForSignIn) {
+        _managerBiometricVerifiedForSignIn = false;
+        unawaited(_unlockManager());
+      } else {
+        unawaited(biometric());
+      }
+    });
+  }
+  @override void dispose() {
+    password.dispose();
+    unawaited(_chime.dispose());
+    super.dispose();
+  }
+  Future<void> _unlockManager() async {
+    if (!mounted) return;
+    setState(() { unlocked = true; checking = false; message = ''; });
+    try {
+      await const FlutterSecureStorage().write(key: 'vib_owner_biometric_ready', value: 'yes');
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getBool('vib_login_chime') ?? true) {
+        await _chime.play(AssetSource('login-chime.wav'), volume: 1.0);
+      }
+    } catch (e) {
+      debugPrint('VIB manager chime or biometric preference failed: $e');
+    }
+  }
   Future<void> biometric() async {
+    if (!mounted) return;
     setState(() { checking = true; message = ''; });
     try {
       final available = await auth.canCheckBiometrics && await auth.isDeviceSupported();
-      if (!available) throw Exception('البصمة غير متاحة على الجهاز');
-      final ok = await auth.authenticate(localizedReason: 'استخدم بصمتك لفتح VIB MANAGER', options: const AuthenticationOptions(biometricOnly: true, stickyAuth: true));
-      if (mounted) setState(() { unlocked = ok; checking = false; if (!ok) message = 'لم يتم التحقق من البصمة'; });
-    } catch (_) { if (mounted) setState(() { checking = false; message = 'استخدم الرقم السري كبديل'; }); }
+      if (!available) throw StateError('البصمة غير متاحة على الجهاز');
+      final ok = await auth.authenticate(localizedReason: 'استخدم بصمتك لفتح VIB MANAGER',
+        options: const AuthenticationOptions(biometricOnly: true, stickyAuth: true));
+      if (!mounted) return;
+      if (ok) { await _unlockManager(); }
+      else { setState(() { checking = false; showFallback = true; message = 'لم يتم التحقق من البصمة'; }); }
+    } catch (_) {
+      if (mounted) setState(() {
+        checking = false; showFallback = true; message = 'يمكنك استخدام الرقم السري كبديل';
+      });
+    }
   }
   Future<void> verifyPassword() async {
-    if (password.text.length < 6) return;
+    if (password.text.length < 6 || busy) return;
     setState(() { busy = true; message = ''; });
     try {
       final user = FirebaseAuth.instance.currentUser;
-      if (user?.email == null) throw Exception();
+      if (user?.email == null) throw StateError('لا يوجد حساب مدير');
       await user!.reauthenticateWithCredential(EmailAuthProvider.credential(email: user.email!, password: password.text));
-      if (mounted) setState(() => unlocked = true);
+      if (mounted) await _unlockManager();
     } catch (_) { if (mounted) setState(() => message = 'الرقم السري غير صحيح'); }
     finally { if (mounted) setState(() => busy = false); }
   }
   @override Widget build(BuildContext context) {
     if (unlocked) return widget.child;
-    return Scaffold(body: Center(child: ConstrainedBox(constraints: const BoxConstraints(maxWidth: 420), child: Padding(padding: const EdgeInsets.all(24), child: Column(mainAxisSize: MainAxisSize.min, children: [
-      const Icon(Icons.fingerprint, size: 86, color: gold), const Text('حماية VIB MANAGER', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)), const SizedBox(height: 18),
-      if (checking) const CircularProgressIndicator() else FilledButton.icon(onPressed: biometric, icon: const Icon(Icons.fingerprint), label: const Text('فتح بالبصمة')),
-      const SizedBox(height: 18), TextField(controller: password, obscureText: true, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'الرقم السري البديل')),
-      const SizedBox(height: 10), FilledButton(onPressed: busy ? null : verifyPassword, child: const Text('فتح بالرقم السري')),
-      if (message.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10), child: Text(message, style: const TextStyle(color: Colors.redAccent))),
-      TextButton(onPressed: () => FirebaseAuth.instance.signOut(), child: const Text('تسجيل الخروج')),
-    ])))));
+    return Scaffold(body: Center(child: SingleChildScrollView(child: ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 420),
+      child: Padding(padding: const EdgeInsets.all(22), child: Column(
+        mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.fingerprint, size: 86, color: gold),
+          const Text('حماية VIB MANAGER', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 16),
+          if (checking) const CircularProgressIndicator() else
+            FilledButton.icon(onPressed: biometric, icon: const Icon(Icons.fingerprint),
+              label: const Text('فتح بالبصمة')),
+          if (!showFallback && !checking) TextButton(
+            onPressed: () => setState(() => showFallback = true),
+            child: const Text('استخدام الرقم السري بدل البصمة')),
+          if (showFallback) ...[
+            const SizedBox(height: 10),
+            TextField(controller: password, obscureText: true, keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'الرقم السري البديل')),
+            const SizedBox(height: 8),
+            FilledButton(onPressed: busy ? null : verifyPassword,
+              child: const Text('فتح بالرقم السري')),
+          ],
+          if (message.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 10),
+            child: Text(message, style: const TextStyle(color: Colors.redAccent))),
+          TextButton(onPressed: () => FirebaseAuth.instance.signOut(), child: const Text('تسجيل الخروج')),
+        ]))))));
   }
 }
 
