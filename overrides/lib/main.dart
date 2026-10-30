@@ -5621,10 +5621,12 @@ class _AppSettingsState extends State<AppSettings> {
   String paper = 'a4';
   String thermalPrinterLabel = 'غير محددة';
   bool loading = true, saving = false;
+  bool openingChimeEnabled = true;
   @override void initState() { super.initState(); load(); }
   Future<void> load() async {
     final localPrefs = await SharedPreferences.getInstance();
     thermalPrinterLabel = localPrefs.getString('vib.thermal.printer.name') ?? 'غير محددة';
+    openingChimeEnabled = localPrefs.getBool('vib_login_chime') ?? true;
     final d = (await db.collection('settings').doc('main').get()).data();
     if (d != null) {
       company.text = '${d['companyName'] ?? company.text}'; phone.text = '${d['phone'] ?? ''}';
@@ -5662,6 +5664,33 @@ class _AppSettingsState extends State<AppSettings> {
     TextField(controller: taxNumber, decoration: const InputDecoration(labelText: 'رقم البطاقة الضريبية')),
     TextField(controller: commercialRegister, decoration: const InputDecoration(labelText: 'رقم السجل التجاري')),
     TextField(controller: footer, maxLines: 3, maxLength: 300, decoration: const InputDecoration(labelText: 'النص أسفل الفاتورة')),
+    if (!staffApp) ...[
+      const SizedBox(height: 16),
+      const Text('نغمة فتح تطبيق مانيجر', style: TextStyle(color: gold, fontSize: 20)),
+      SwitchListTile(
+        secondary: const Icon(Icons.music_note, color: gold),
+        title: const Text('تشغيل نغمة الدخول بعد فتح المدير'),
+        subtitle: const Text('احفظ اختيارك على الموبايل، ويمكن إيقاف الرنة في أي وقت.'),
+        value: openingChimeEnabled,
+        onChanged: (enabled) async {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setBool('vib_login_chime', enabled);
+          if (mounted) setState(() => openingChimeEnabled = enabled);
+        },
+      ),
+      ListTile(
+        leading: const Icon(Icons.library_music_outlined, color: gold),
+        title: const Text('اختيار رنة من رنات الموبايل'),
+        subtitle: const Text('الرنة المختارة تشتغل بعد نجاح فتح مانيجر.'),
+        enabled: openingChimeEnabled,
+        onTap: openingChimeEnabled ? () => vibChooseManagerRingtone(context) : null,
+      ),
+      OutlinedButton.icon(
+        icon: const Icon(Icons.play_arrow),
+        label: const Text('تجربة نغمة الدخول'),
+        onPressed: openingChimeEnabled ? () => vibPreviewManagerRingtone(context) : null,
+      ),
+    ],
     const SizedBox(height: 10),
     OutlinedButton.icon(icon: const Icon(Icons.image_outlined), label: const Text('اختيار لوجو الشركة'), onPressed: saving ? null : () async {
       final file = await ImagePicker().pickImage(source: ImageSource.gallery, maxWidth: 512, maxHeight: 512, imageQuality: 80);
@@ -6845,6 +6874,9 @@ Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
     final quantity = TextEditingController(text: '1');
     final choice = await showDialog<Map<String, int>>(context: context, builder: (dialogContext) => StatefulBuilder(
       builder: (dialogContext, setDialogState) => AlertDialog(
+        scrollable: true,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        actionsPadding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
         title: const Text('إرجاع صنف من الفاتورة'),
         content: Column(mainAxisSize: MainAxisSize.min, children: [
           DropdownButtonFormField<int>(
@@ -6859,6 +6891,8 @@ Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
           ),
           const SizedBox(height: 10),
           TextField(controller: quantity, keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => FocusScope.of(dialogContext).unfocus(),
             decoration: InputDecoration(labelText: 'الكمية (المتاح ${available[selected]})')),
         ]),
         actions: [
@@ -6870,7 +6904,7 @@ Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
               return;
             }
             Navigator.pop(dialogContext, {'sourceItemIndex': selected, 'quantity': qty});
-          }, child: const Text('متابعة')),
+          }, child: const Text('تأكيد الكمية ومراجعة المرتجع')),
         ],
       ),
     ));
@@ -7046,10 +7080,13 @@ Future<void> confirmPartialPurchaseReturn(BuildContext context, String id) async
     if(!context.mounted)return;
     final indexes=available.keys.toList();var selected=indexes.first;final quantity=TextEditingController(text:'1');
     final choice=await showDialog<Map<String,int>>(context:context,builder:(dialogContext)=>StatefulBuilder(builder:(dialogContext,setDialogState)=>AlertDialog(
+      scrollable:true,
+      insetPadding:const EdgeInsets.symmetric(horizontal:12,vertical:14),
+      actionsPadding:const EdgeInsets.fromLTRB(12,6,12,12),
       title:const Text('إرجاع صنف من فاتورة المشتريات'),content:Column(mainAxisSize:MainAxisSize.min,children:[
         DropdownButtonFormField<int>(value:selected,isExpanded:true,decoration:const InputDecoration(labelText:'الصنف'),items:indexes.map((i)=>DropdownMenuItem(value:i,child:Text('${items[i]['productName']??'صنف'} • المتاح للإرجاع ${available[i]}'))).toList(),onChanged:(v){if(v!=null)setDialogState((){selected=v;quantity.text='1';});}),
-        TextField(controller:quantity,keyboardType:TextInputType.number,decoration:InputDecoration(labelText:'الكمية (المتاح ${available[selected]})')),
-      ]),actions:[TextButton(onPressed:()=>Navigator.pop(dialogContext),child:const Text('إلغاء')),FilledButton(onPressed:(){final q=int.tryParse(quantity.text.trim());if(q==null||q<1||q>(available[selected]??0)){ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content:Text('اكتب كمية صحيحة لا تتجاوز المتاح')));return;}Navigator.pop(dialogContext,{'sourceItemIndex':selected,'quantity':q});},child:const Text('متابعة'))])));
+        TextField(controller:quantity,keyboardType:TextInputType.number,textInputAction:TextInputAction.done,onSubmitted:(_)=>FocusScope.of(dialogContext).unfocus(),decoration:InputDecoration(labelText:'الكمية (المتاح ${available[selected]})')),
+      ]),actions:[TextButton(onPressed:()=>Navigator.pop(dialogContext),child:const Text('إلغاء')),FilledButton(onPressed:(){final q=int.tryParse(quantity.text.trim());if(q==null||q<1||q>(available[selected]??0)){ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content:Text('اكتب كمية صحيحة لا تتجاوز المتاح')));return;}Navigator.pop(dialogContext,{'sourceItemIndex':selected,'quantity':q});},child:const Text('تأكيد الكمية ومراجعة المرتجع'))])));
     quantity.dispose();if(choice==null||!context.mounted)return;
     final index=choice['sourceItemIndex']!,qty=choice['quantity']!,row=items[index];
     final lineQty=(row['quantity'] as num?)?.toInt()??0;final lineTotal=(row['lineTotal'] as num?)?.toDouble()??lineQty*((row['unitCost'] as num?)?.toDouble()??0);
@@ -7088,6 +7125,7 @@ Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantit
     final amount=allocatedPartialReturnCents(
       (lineValue*100).round(),qty,already,quantity);
     final cashRefund=partialReturnCashCents(valueCents:amount,cashAvailableCents:cashAvailable,debtAvailableCents:debtAvailable),debtReduction=amount-cashRefund;
+    if(amount<=0 || amount>cashAvailable+debtAvailable)throw StateError('قيمة المرتجع أكبر من المتبقي في تسوية الفاتورة');
     final returnRef=db.collection('purchaseReturns').doc(),now=FieldValue.serverTimestamp();
     tx.set(stockRef,{'branchId':'main','productId':productId,'quantity':before-quantity},SetOptions(merge:true));
     tx.set(db.collection('stockMovements').doc(),{'productId':productId,'productName':item['productName'],'branchId':'main','kind':'purchase_return','quantity':-quantity,'balanceAfter':before-quantity,'referenceId':returnRef.id,'actorId':actor,'createdAt':now});
@@ -7097,8 +7135,13 @@ Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantit
     if(cashRefund>0){tx.set(cashRef,{'balance':cashAfter,'updatedAt':now},SetOptions(merge:true));tx.set(db.collection('accountMovements').doc(),{'accountType':'cash','kind':'purchase_return','amount':cashRefund/100,'delta':cashRefund/100,'balanceBefore':cashBefore,'balanceAfter':cashAfter,'accountId':supplierId,'accountName':d['supplierName'],'referenceId':returnRef.id,'reason':'استرداد نقدية مرتجع صنف مشتريات','actorId':actor,'createdAt':now});}
     tx.set(returnRef,{'sourceInvoiceId':id,'returnType':'partial','sourceItemIndex':sourceItemIndex,'sourceLineKey':'$sourceItemIndex','sourceQuantity':quantity,'items':[{'sourceItemIndex':sourceItemIndex,'productId':productId,'productName':item['productName'],'quantity':quantity,'unitCost':item['unitCost']??0,'lineTotal':amount/100}],'total':amount/100,'cashRefund':cashRefund/100,'debtReduction':debtReduction/100,'supplierId':supplierId,'supplierName':d['supplierName'],'invoiceNumber':d['invoiceNumber'],'internalNumber':d['internalNumber'],'invoiceBarcode':d['invoiceBarcode'],'createdAt':now,'actorId':actor});
     final quantities=Map<String,dynamic>.from(rawReturned is Map?rawReturned:{});quantities['$sourceItemIndex']=already+quantity;
+    final allReturned=items.asMap().entries.every((entry) {
+      final original=(entry.value['quantity'] as num?)?.toInt()??0;
+      final returned=(quantities['${entry.key}'] as num?)?.toInt()??0;
+      return original>0 && returned>=original;
+    });
     final priorTotal=((d['partialReturnTotal'] as num?)?.toDouble()??0),priorCashTotal=((d['partialCashRefund'] as num?)?.toDouble()??0),priorDebtTotal=((d['partialDebtReduction'] as num?)?.toDouble()??0);
-    tx.update(invoiceRef,{'partialReturnQuantities':quantities,'partialReturnTotal':((priorTotal*100).round()+amount)/100,'partialCashRefund':((priorCashTotal*100).round()+cashRefund)/100,'partialDebtReduction':((priorDebtTotal*100).round()+debtReduction)/100,'lastPartialReturnId':returnRef.id});
+    tx.update(invoiceRef,{'partialReturnQuantities':quantities,'partialReturnTotal':((priorTotal*100).round()+amount)/100,'partialCashRefund':((priorCashTotal*100).round()+cashRefund)/100,'partialDebtReduction':((priorDebtTotal*100).round()+debtReduction)/100,'lastPartialReturnId':returnRef.id,if(allReturned)'status':'returned',if(allReturned)'returnedAt':now,if(allReturned)'returnId':returnRef.id});
   });
 }
 
