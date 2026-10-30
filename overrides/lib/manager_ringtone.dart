@@ -26,3 +26,19 @@ Future<void> vibChooseManagerRingtone(BuildContext context) async {
       SnackBar(content:Text('تعذر اختيار الرنة: ' + error.toString())));
   }
 }
+
+Future<void> vibPreviewManagerRingtone(BuildContext context) async {
+  final player = AudioPlayer();
+  try {
+    await vibPlayManagerRingtone(player);
+  } catch (error) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر تشغيل الرنة: $error')));
+    }
+  } finally {
+    // Keep the fallback audio player alive long enough to hear the chime.
+    await Future<void>.delayed(const Duration(seconds: 3));
+    await player.dispose();
+  }
+}
