@@ -1820,6 +1820,24 @@ class StaffDashboard extends StatelessWidget {
       ),
       DashboardSummaryCard(owner: false, actorId: uid),
       Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+        child: Column(children: [
+          DashboardActionTile(
+            title: 'فواتيري المعلقة ومتابعة الاعتماد',
+            icon: Icons.pending_actions,
+            accent: const Color(0xFFFFC857),
+            onTap: () => openPage('فواتير الموظف',
+              const PendingSalesPage(owner: false))),
+          const SizedBox(height: 7),
+          DashboardActionTile(
+            title: 'سندات القبض',
+            icon: Icons.payments_outlined,
+            accent: const Color(0xFF32E69B),
+            onTap: () => openPage('سندات القبض',
+              ReceiptVouchers(owner: false, branchId: branchId))),
+        ]),
+      ),
+      Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: GridView.count(
           shrinkWrap: true,
@@ -1829,8 +1847,6 @@ class StaffDashboard extends StatelessWidget {
           crossAxisSpacing: 8,
           childAspectRatio: 2.05,
           children: [
-            DashboardActionTile(title: 'سند قبض', icon: Icons.volunteer_activism, accent: const Color(0xFF32E69B),
-              onTap: () => openPage('سندات القبض', ReceiptVouchers(owner: false, branchId: branchId))),
             DashboardActionTile(title: 'فاتورة مبيعات', icon: Icons.shopping_cart, accent: const Color(0xFFFF922E),
               onTap: () => openPage('المبيعات', Sales(owner: false, branchId: branchId))),
             DashboardActionTile(title: 'العملاء', icon: Icons.groups, accent: const Color(0xFF38A9FF),
@@ -1886,9 +1902,21 @@ class OwnerDashboard extends StatelessWidget {
         actions: DashboardNoticeButton(onTap: () => openStaffChat(context, owner: true)),
       ),
       const DashboardSummaryCard(owner: true),
+      // Approval and customer receipts live on the dashboard rather than
+      // taking space above the sales invoice list.
       Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: const PendingSalesShortcut(owner: true, compact: true),
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+        child: Column(children: [
+          tile('الفواتير المعلقة والاعتماد', Icons.pending_actions,
+            () => openPage('الفواتير المعلقة والاعتماد',
+              const PendingSalesPage(owner: true)),
+            accent: const Color(0xFFFFC857)),
+          const SizedBox(height: 7),
+          tile('سندات القبض والاعتماد', Icons.payments_outlined,
+            () => openPage('سندات القبض',
+              ReceiptVouchers(owner: true, branchId: branchId)),
+            accent: const Color(0xFF32E69B)),
+        ]),
       ),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1920,8 +1948,6 @@ class OwnerDashboard extends StatelessWidget {
           iconColor: gold, collapsedIconColor: gold,
           title: const Text('إجراءات إضافية', style: TextStyle(color: gold, fontWeight: FontWeight.bold)),
           children: [
-            ListTile(leading: const Icon(Icons.receipt_long, color: Color(0xFF45D483)),
-              title: const Text('سندات القبض'), onTap: () => openPage('سندات القبض', ReceiptVouchers(owner: true, branchId: branchId))),
             ListTile(leading: const Icon(Icons.receipt, color: gold),
               title: const Text('سندات صرف الموردين'), onTap: () => openPage('سندات صرف الموردين', const SupplierPaymentVouchers())),
             ListTile(leading: const Icon(Icons.sync_alt, color: const Color(0xFF51F2B0)),
@@ -2730,7 +2756,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 if (c.mounted) Navigator.pop(c);
                 if (context.mounted) await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
                   title:const Text('تم إرسال الفاتورة للمدير'),
-                  content:const Text('في انتظار الاعتماد. لم يتم خصم المخزون أو تسجيل الحسابات بعد. تابع الحالة من المبيعات ← فواتير الموظف.'),
+                  content:const Text('في انتظار الاعتماد. لم يتم خصم المخزون أو تسجيل الحسابات بعد. تابع الحالة من الرئيسية ← فواتيري المعلقة ومتابعة الاعتماد.'),
                   actions:[TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('تم'))]));
                 return;
               }
@@ -2865,22 +2891,16 @@ class _SalesState extends State<Sales> {
         .toList()
       ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
     return Column(children: [
-      Padding(padding: const EdgeInsets.fromLTRB(8,3,8,2), child: Row(children: [
-        Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact,
-          minimumSize: const Size(0, 34), textStyle: const TextStyle(fontSize: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 4)),
-          icon: const Icon(Icons.add_shopping_cart, size: 15),
-          label: const Text('فاتورة جديدة', maxLines: 1, overflow: TextOverflow.ellipsis),
-          onPressed: () => newSaleDialog(context, owner, branchId))),
-        const SizedBox(width: 5),
-        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
-          minimumSize: const Size(0, 34), textStyle: const TextStyle(fontSize: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 4)),
-          icon: const Icon(Icons.payments_outlined, size: 15),
-          label: const Text('سند قبض', maxLines: 1, overflow: TextOverflow.ellipsis),
-          onPressed:()=>createReceiptVoucher(context,branchId,owner:owner))),
-      ])),
-      Padding(padding:const EdgeInsets.symmetric(horizontal:10),child: PendingSalesShortcut(owner:owner, compact:true)),
+      // Keep invoice actions focused on the invoice; receipt and approval
+      // shortcuts are available separately on the home dashboard.
+      Padding(padding: const EdgeInsets.fromLTRB(8, 3, 8, 2),
+        child: SizedBox(width: double.infinity, child: FilledButton.icon(
+          style: FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            minimumSize: const Size(0, 36)),
+          icon: const Icon(Icons.add_shopping_cart, size: 17),
+          label: const Text('فاتورة جديدة'),
+          onPressed: () => newSaleDialog(context, owner, branchId)))),
       if(!owner) const EmployeeOfflineSaleNotice(),
       MovementPeriodControls(key:ValueKey('${selectedFrom.toIso8601String()}-${selectedTo.toIso8601String()}'),from:selectedFrom,to:selectedTo,enabled:true,compact:true,onConfirm:(from,to)=>setState(() {selectedFrom=from;selectedTo=to;})),
       if (owner) Padding(padding: const EdgeInsets.fromLTRB(10, 0, 10, 2),
