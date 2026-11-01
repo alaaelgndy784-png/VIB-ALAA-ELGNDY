@@ -53,4 +53,31 @@ void main() {
     expect(report.netCents, 21000);
     expect(report.dueCents, 20000);
   });
+  test('home invoice approval badge counts only visible pending requests', () {
+    expect(pendingHomeApprovalCount([
+      {'status': 'pending'},
+      {'status': 'pending', 'removed': true},
+      {'status': 'approved'},
+      {'status': 'rejected'},
+      {'status': 'pending', 'managerOffline': true},
+    ], sales: true), 2);
+    expect(pendingHomeApprovalCount([
+      {'status': 'approved'},
+      {'status': 'rejected'},
+    ], sales: true), 0);
+  });
+
+  test('home receipt approval badge clears after approval or rejection', () {
+    expect(pendingHomeApprovalCount([
+      {'status': 'pending', 'amount': 100},
+      {'status': 'pending', 'amount': 200},
+      {'status': 'approved', 'amount': 300},
+      {'status': 'rejected', 'amount': 400},
+    ], sales: false), 2);
+    expect(pendingHomeApprovalCount([
+      {'status': 'approved'},
+      {'status': 'rejected'},
+    ], sales: false), 0);
+  });
+
 }
