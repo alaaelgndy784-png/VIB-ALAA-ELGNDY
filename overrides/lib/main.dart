@@ -1265,6 +1265,51 @@ class DashboardActionTile extends StatelessWidget {
   );
 }
 
+// Badges show requests awaiting review; approved, rejected and hidden
+// invoices do not produce notifications.
+int pendingHomeApprovalCount(Iterable<Map<String, dynamic>> requests,
+    {required bool sales}) =>
+    requests.where((data) => data['status'] == 'pending' &&
+      (!sales || pendingSaleIsVisible(data))).length;
+
+class PendingApprovalDashboardTile extends StatelessWidget {
+  final bool sales;
+  final VoidCallback onTap;
+  const PendingApprovalDashboardTile({super.key, required this.sales,
+    required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+    stream: (sales ? pendingSalesQuery(true) : pendingReceiptQuery(true))
+        .snapshots(includeMetadataChanges: true),
+    builder: (context, snapshot) {
+      final count = snapshot.hasData ? pendingHomeApprovalCount(
+        snapshot.data!.docs.map((d) => d.data()), sales: sales) : 0;
+      return Stack(clipBehavior: Clip.none, children: [
+        Padding(padding: const EdgeInsets.only(top: 10, right: 3),
+          child: DashboardActionTile(
+            title: sales ? 'اعتماد فواتير المبيعات' : 'اعتماد سندات القبض',
+            icon: sales ? Icons.fact_check_outlined : Icons.approval_outlined,
+            accent: sales ? const Color(0xFFFFC857) : const Color(0xFF32E69B),
+            onTap: onTap)),
+        if (count > 0) Positioned(
+          top: 0, right: 0,
+          child: IgnorePointer(child: Container(
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 27),
+            alignment: Alignment.center,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFDD4141),
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: const Color(0xFF071321), width: 2)),
+            child: Text(count > 99 ? '99+' : '$count',
+              style: const TextStyle(color: Colors.white, fontSize: 13,
+                fontWeight: FontWeight.bold))))),
+      ]);
+    },
+  );
+}
+
 DateTime _dashboardStartOfDay([DateTime? day]) {
   final value = day ?? DateTime.now();
   return DateTime(value.year, value.month, value.day);
@@ -1863,7 +1908,6 @@ class StaffDashboard extends StatelessWidget {
           ],
         ),
       ),
-      DashboardRecentSales(owner: false, actorId: uid, branchId: branchId),
     ],
   );
 }
@@ -1902,22 +1946,6 @@ class OwnerDashboard extends StatelessWidget {
         actions: DashboardNoticeButton(onTap: () => openStaffChat(context, owner: true)),
       ),
       const DashboardSummaryCard(owner: true),
-      // Approval and customer receipts live on the dashboard rather than
-      // taking space above the sales invoice list.
-      Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
-        child: Column(children: [
-          tile('الفواتير المعلقة والاعتماد', Icons.pending_actions,
-            () => openPage('الفواتير المعلقة والاعتماد',
-              const PendingSalesPage(owner: true)),
-            accent: const Color(0xFFFFC857)),
-          const SizedBox(height: 7),
-          tile('سندات القبض والاعتماد', Icons.payments_outlined,
-            () => openPage('سندات القبض',
-              ReceiptVouchers(owner: true, branchId: branchId)),
-            accent: const Color(0xFF32E69B)),
-        ]),
-      ),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: GridView.count(
@@ -1939,7 +1967,17 @@ class OwnerDashboard extends StatelessWidget {
           ],
         ),
       ),
-      DashboardRecentSales(owner: true),
+      // Replace the large "آخر المعاملات" card with two direct actions.
+      Padding(padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+        child: Column(children: [
+          PendingApprovalDashboardTile(sales: true,
+            onTap: () => openPage('اعتماد فواتير المبيعات',
+              const PendingSalesPage(owner: true))),
+          const SizedBox(height: 5),
+          PendingApprovalDashboardTile(sales: false,
+            onTap: () => openPage('اعتماد سندات القبض',
+              const PendingReceiptPage(owner: true))),
+        ])),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 16),
         child: ExpansionTile(
           collapsedShape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: managerBorder)),
@@ -1948,6 +1986,10 @@ class OwnerDashboard extends StatelessWidget {
           iconColor: gold, collapsedIconColor: gold,
           title: const Text('إجراءات إضافية', style: TextStyle(color: gold, fontWeight: FontWeight.bold)),
           children: [
+            ListTile(leading: const Icon(Icons.receipt_long, color: Color(0xFF45D483)),
+              title: const Text('سندات القبض: إنشاء وعرض'),
+              onTap: () => openPage('سندات القبض',
+                ReceiptVouchers(owner: true, branchId: branchId))),
             ListTile(leading: const Icon(Icons.receipt, color: gold),
               title: const Text('سندات صرف الموردين'), onTap: () => openPage('سندات صرف الموردين', const SupplierPaymentVouchers())),
             ListTile(leading: const Icon(Icons.sync_alt, color: const Color(0xFF51F2B0)),
