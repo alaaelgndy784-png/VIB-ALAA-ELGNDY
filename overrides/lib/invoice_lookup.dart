@@ -164,6 +164,7 @@ class _MovementPeriodControlsState extends State<MovementPeriodControls> {
           icon: const Icon(Icons.check, size: 18), label: const Text('تطبيق')),
       ]),
     ]));
+  }
 }
 
 String invoiceSearchText(String value) {
