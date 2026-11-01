@@ -55,6 +55,7 @@ part 'invoice_serials.dart';
 part 'invoice_a4.dart';
 part 'invoice_parties.dart';
 part 'business_reports.dart';
+part 'customer_sales_report.dart';
 part 'invoice_lookup.dart';
 part 'account_statements.dart';
 part 'staff_purchases.dart';
@@ -2882,12 +2883,31 @@ class _SalesState extends State<Sales> {
       Padding(padding:const EdgeInsets.symmetric(horizontal:10),child: PendingSalesShortcut(owner:owner, compact:true)),
       if(!owner) const EmployeeOfflineSaleNotice(),
       MovementPeriodControls(key:ValueKey('${selectedFrom.toIso8601String()}-${selectedTo.toIso8601String()}'),from:selectedFrom,to:selectedTo,enabled:true,compact:true,onConfirm:(from,to)=>setState(() {selectedFrom=from;selectedTo=to;})),
-      if (owner) Padding(padding: const EdgeInsets.fromLTRB(10,0,10,2), child: Row(children: [
-        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.summarize_outlined, size:18), label: const Text('تقرير المبيعات', maxLines:1, overflow:TextOverflow.ellipsis),
-          onPressed: () => openVibReport(context, 'تقرير حركة المبيعات', const InvoiceMovementReportPage(type: 'sales')))),
-        const SizedBox(width:6),
-        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.edit_note, size:18), label: const Text('تعديل فاتورة', maxLines:1, overflow:TextOverflow.ellipsis), onPressed: () => editSaleByNumber(context))),
-      ])),
+      if (owner) Padding(padding: const EdgeInsets.fromLTRB(10, 0, 10, 2),
+        child: Row(children: [
+          Expanded(child: FilledButton.icon(
+            style: FilledButton.styleFrom(visualDensity: VisualDensity.compact,
+              minimumSize: const Size(0, 36), padding: const EdgeInsets.symmetric(horizontal: 6)),
+            icon: const Icon(Icons.person_search, size: 18),
+            label: const Text('تقرير مسحوبات عميل', maxLines: 1, overflow: TextOverflow.ellipsis),
+            onPressed: () => openVibReport(context, 'تقرير مسحوبات عميل', const CustomerSalesReportPage()))),
+          const SizedBox(width: 5),
+          PopupMenuButton<String>(
+            tooltip: 'تقارير وتعديل',
+            icon: const Icon(Icons.more_horiz, color: gold),
+            onSelected: (value) {
+              if (value == 'report') {
+                openVibReport(context, 'تقرير حركة المبيعات', const InvoiceMovementReportPage(type: 'sales'));
+              } else if (value == 'edit') {
+                editSaleByNumber(context);
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'report', child: Text('تقرير حركة المبيعات')),
+              PopupMenuItem(value: 'edit', child: Text('تعديل فاتورة')),
+            ],
+          ),
+        ])),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
         child: Text('الفواتير: ${rows.length} • الإجمالي: ${movementReportMoney(rows.fold<int>(0,(sum,row){final value=row.data()['total'];return value is num && value.isFinite ? sum+(value*100).round() : sum;}))}',
           maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
