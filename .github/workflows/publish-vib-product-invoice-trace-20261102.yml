@@ -1,0 +1,107 @@
+name: Publish VIB 0.2.56 Product Invoice Trace APKs
+
+on:
+  push:
+    branches:
+      - feature/product-invoice-trace-20261102
+    paths:
+      - .github/workflows/publish-vib-product-invoice-trace-20261102.yml
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout feature source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Wait for tested Android manager and staff builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: '41516655359'
+          TESTED_SHA: 0909f32fc5fcff5d8f98b44276b9e84786061e98
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$TESTED_SHA" HEAD
+          complete=0
+          for i in $(seq 1 150); do
+            details="$(gh api "repos/$REPO/actions/runs/$RUN_ID" --jq '[.head_sha, .status, (.conclusion // "")] | join(" ")')"
+            echo "Build check $i: $details"
+            read -r sha status conclusion <<< "$details"
+            test "$sha" = "$TESTED_SHA" || { echo "Unexpected source SHA"; exit 1; }
+            if [ "$status" = completed ]; then
+              if [ "$conclusion" = success ]; then
+                complete=1
+                break
+              fi
+              echo "Build concluded unsuccessfully: $conclusion"
+              exit 1
+            fi
+            sleep 20
+          done
+          test "$complete" = 1 || { echo "Timed out waiting for successful APK build"; exit 1; }
+
+      - name: Download tested manager APK
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41516655359
+          name: VIB-SALES-MANAGER-APK
+          github-token: ${{ github.token }}
+          path: release
+
+      - name: Download tested staff APK
+        uses: actions/download-artifact@v4
+        with:
+          run-id: 41516655359
+          name: VIB-SALES-STAFF-APK
+          github-token: ${{ github.token }}
+          path: release
+
+      - name: Validate both Android archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          for name in ('VIB-SALES-MANAGER.apk', 'VIB-SALES-STAFF.apk'):
+              path = Path('release') / name
+              assert path.is_file() and path.stat().st_size > 1_000_000, name
+              with zipfile.ZipFile(path) as archive:
+                  assert archive.testzip() is None, name
+                  assert 'AndroidManifest.xml' in archive.namelist(), name
+          PY
+          cd release
+          sha256sum VIB-SALES-MANAGER.apk VIB-SALES-STAFF.apk > SHA256SUMS.txt
+
+      - name: Publish direct VIB Android APK downloads
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-sales-0.2.56-product-invoice-trace-20261102
+          name: VIB Sales 0.2.56 - Product Invoice Movement Report
+          target_commitish: ${{ github.sha }}
+          body: |
+            Manager product invoice trace: find original purchase and sales invoices
+            by selected product, old item name or code and optional date range.
+            Shows matching invoice number, date, party, quantity, unit price and line
+            amount; opens the original invoice. Historical grouped and single-item
+            invoices are supported. This report is read-only.
+            Existing 80mm, PDF and manager UI fixes from the feature base are included.
+            Both manager and staff APKs were built from validated commit
+            0909f32fc5fcff5d8f98b44276b9e84786061e98, version 0.2.56+4081.
+            Back up important business records before installing.
+          files: |
+            release/VIB-SALES-MANAGER.apk
+            release/VIB-SALES-STAFF.apk
+            release/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          make_latest: false
