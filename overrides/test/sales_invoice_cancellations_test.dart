@@ -46,6 +46,30 @@ void main() {
     expect(find.textContaining('950.00'),findsOneWidget);
   });
 
+  testWidgets('staff entry screen always shows customer balance and item count', (tester) async {
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SizedBox(width:355,
+      child:EmployeeSaleEntryBalanceStrip(
+        customerName:'عميل تجريبي',previousBalance:325.5,
+        invoiceTotal:1020,itemCount:4,onChooseCustomer:(){},
+      ),
+    ))));
+    expect(find.byKey(const ValueKey('staff-sale-entry-balances')),findsOneWidget);
+    expect(find.textContaining('عدد البنود: 4'),findsOneWidget);
+    expect(find.textContaining('1020.00'),findsOneWidget);
+    expect(find.textContaining('325.50'),findsOneWidget);
+    expect(find.textContaining('اختيار عميل'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
+  testWidgets('staff entry asks for client instead of making an absent balance zero', (tester) async {
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:EmployeeSaleEntryBalanceStrip(
+      customerName:'',previousBalance:null,invoiceTotal:0,itemCount:0,
+      onChooseCustomer:(){},
+    ))));
+    expect(find.textContaining('اختر العميل لعرض الرصيد'),findsOneWidget);
+    expect(tester.takeException(),isNull);
+  });
+
   test('only a completed sale is eligible for mistaken-invoice cancellation', () {
     expect(saleInvoiceCanBeCancelled(invoice()), isTrue);
     for (final state in ['returned', 'cancelled', 'pending', 'draft']) {
