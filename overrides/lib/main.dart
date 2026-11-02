@@ -60,6 +60,7 @@ part 'invoice_lookup.dart';
 part 'account_statements.dart';
 part 'staff_purchases.dart';
 part 'voucher_cancellations.dart';
+part 'sales_invoice_cancellations.dart';
 part 'employee_visits.dart';
 part 'employee_collections.dart';
 
@@ -2992,7 +2993,7 @@ class _SalesState extends State<Sales> {
             Text('رقم الفاتورة: ${invoiceDisplayNumber('sales',d.id,sale)}'),
           ]),
           subtitle: Column(crossAxisAlignment:CrossAxisAlignment.start,mainAxisSize:MainAxisSize.min,children:[
-            Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${sale['partialReturnTotal']} ج.م' : ''}'),
+            Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'cancelled' ? ' • ملغاة بالخطأ' : sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${sale['partialReturnTotal']} ج.م' : ''}'),
             _sellerLabel(sale),
           ]),
           trailing: Text('${sale['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
@@ -7268,7 +7269,7 @@ Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantit
 Future<void> confirmReturn(BuildContext context, String type, String id, Map<String, dynamic> data) async {
   try {
     final current = (await db.collection(type).doc(id).get(const GetOptions(source: Source.server))).data();
-    if (current == null || current['status'] == 'returned' || !visibleAfterReset(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    if (current == null || current['status'] != 'completed' || !visibleAfterReset(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
     if (type == 'sales' || type == 'purchases') {
       final priorReturns = await db.collection(type=='sales'?'salesReturns':'purchaseReturns').where('sourceInvoiceId', isEqualTo: id)
           .get(const GetOptions(source: Source.server));
@@ -7313,7 +7314,14 @@ String accountBalanceLabel(num balance, {required bool supplier}) => balance < 0
 String invoiceReturnSignature(Map<String,dynamic> data) => jsonEncode({for(final key in
   ['status','revision','items','productId','quantity','branchId','stockBranchId','customerId','supplierId','total','due','paid','receiptPaid','onlinePaid','onlinePaymentEver','cashPosted','cashPaidPosted','partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction']) key:data[key]});
 
-Future<void> returnInvoice(String type, String id, {String? expectedSignature}) async {
+Future<void> returnInvoice(String type, String id,
+    {String? expectedSignature, String? cancellationReason,
+     List<String> cancelledReceiptIds = const []}) async {
+  final cancellingSale = cancellationReason != null;
+  if (cancellingSale && type != 'sales') throw StateError('الإلغاء مخصص للمبيعات فقط');
+  if (cancellingSale && cancellationReason.trim().length < 5) {
+    throw StateError('سبب الإلغاء مطلوب');
+  }
   if (!['sales', 'purchases'].contains(type)) throw StateError('نوع الفاتورة غير صحيح');
   final preflight = (await db.collection(type).doc(id).get()).data();
   if (preflight == null) throw Exception('الفاتورة غير موجودة');
@@ -7328,7 +7336,39 @@ Future<void> returnInvoice(String type, String id, {String? expectedSignature}) 
     if (!visibleAfterReset(d)) throw StateError('الفاتورة تخص دورة قديمة');
     if (expectedSignature != null && invoiceReturnSignature(d) != expectedSignature) throw StateError('الفاتورة تغيّرت؛ افتح مراجعة المرتجع من جديد');
     if(type=='sales' && ((d['onlinePaid'] as num?)??0)>0)throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
-    if (d['status'] == 'returned') throw Exception('الفاتورة مرتجعة بالفعل');
+    if (d['status'] != 'completed') throw StateError('الفاتورة ملغاة أو مرتجعة أو غير معتمدة بالفعل');
+    if (cancellingSale) {
+      if (!saleInvoiceCanBeCancelled(d)) {
+        throw StateError('الفاتورة غير متاحة للإلغاء');
+      }
+      if (cancelledReceiptIds.length > 50 ||
+          cancelledReceiptIds.toSet().length != cancelledReceiptIds.length) {
+        throw StateError('سجلات سندات القبض غير صالحة للإلغاء الآمن');
+      }
+      var receiptCents = 0;
+      for (final receiptId in cancelledReceiptIds) {
+        final receiptSnap = await tx.get(db.collection('receipts').doc(receiptId));
+        final cancellationSnap = await tx.get(
+          db.collection('voucherCancellations').doc('receipt_$receiptId'));
+        final receipt = receiptSnap.data();
+        final cancellation = cancellationSnap.data();
+        if (receipt == null || receipt['invoiceId'] != id ||
+            cancellation == null || cancellation['type'] != 'receipt' ||
+            cancellation['originalId'] != receiptId) {
+          throw StateError('أحد سندات القبض لم يُلغَ بالفعل؛ ألغِ السند أولًا');
+        }
+        final amount = receipt['amount'];
+        if (amount is! num || !amount.isFinite || amount <= 0) {
+          throw StateError('قيمة سند القبض المرتبط غير صحيحة');
+        }
+        receiptCents += (amount * 100).round();
+      }
+      if (receiptCents != (((d['receiptPaid'] as num?) ?? 0) * 100).round() ||
+          ('${d['receiptId'] ?? ''}'.trim().isNotEmpty &&
+           !cancelledReceiptIds.contains('${d['receiptId']}'))) {
+        throw StateError('سندات القبض المتصلة بالفاتورة تغيرت؛ راجعها قبل الإلغاء');
+      }
+    }
     final returnedLines=d['partialReturnQuantities'];
     if(((d['partialReturnTotal'] as num?)?.toDouble()??0)>0||(returnedLines is Map&&returnedLines.isNotEmpty))throw StateError('الفاتورة بدأ لها مرتجع أصناف؛ أكمل الأصناف المتبقية بدل إرجاعها كاملة');
 
@@ -7363,7 +7403,7 @@ Future<void> returnInvoice(String type, String id, {String? expectedSignature}) 
 
       DocumentSnapshot<Map<String, dynamic>>? customerSnap;
       final customerId = '${d['customerId'] ?? ''}';
-      final due = returnSettlement(d, sales: true).debt;
+      final due = (cancellingSale ? saleCancellationSettlement(d) : returnSettlement(d, sales: true)).debt;
       if (due > 0 && customerId.isEmpty) throw StateError('الفاتورة الآجلة بدون حساب عميل؛ راجع الفاتورة');
       if (customerId.isNotEmpty) {
         customerSnap = await tx.get(db.collection('customers').doc(customerId));
@@ -7371,7 +7411,7 @@ Future<void> returnInvoice(String type, String id, {String? expectedSignature}) 
 
       DocumentSnapshot<Map<String, dynamic>>? cashSnap;
       final hasFinancialFields = d.containsKey('paid') || d.containsKey('due');
-      final paid = hasFinancialFields ? returnSettlement(d, sales: true).cash : 0;
+      final paid = hasFinancialFields ? (cancellingSale ? saleCancellationSettlement(d) : returnSettlement(d, sales: true)).cash : 0;
       if (paid > 0) {
         cashSnap = await tx.get(db.collection('settings').doc('cash'));
         if (((cashSnap.data()?['balance'] as num?)?.toDouble() ?? 0) < paid) throw Exception('رصيد الصندوق لا يكفي لرد المبلغ المحصل');
@@ -7432,14 +7472,21 @@ Future<void> returnInvoice(String type, String id, {String? expectedSignature}) 
           'balanceBefore': beforeCash,
           'balanceAfter': afterCash,
           'referenceId': ret.id,
-          'reason': 'رد قيمة فاتورة مبيعات',
+          'reason': cancellingSale ? 'إلغاء فاتورة مبيعات أُنشئت بالخطأ' : 'رد قيمة فاتورة مبيعات',
           'createdAt': now,
           'actorId': FirebaseAuth.instance.currentUser!.uid,
         });
       }
 
-      tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
-      tx.update(invoiceRef, {'status': 'returned', 'returnedAt': now, 'returnId': ret.id});
+      tx.set(ret, {...d, 'sourceInvoiceId': id,
+        'returnType': cancellingSale ? 'cancellation' : 'full',
+        if (cancellingSale) 'cancellationReason': cancellationReason,
+        if (cancellingSale) 'cancelledReceiptIds': cancelledReceiptIds,
+        'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+      tx.update(invoiceRef, {
+        'status': cancellingSale ? 'cancelled' : 'returned',
+        'returnedAt': now, 'returnId': ret.id,
+      });
     } else {
       final supplierRef = db.collection('suppliers').doc('${d['supplierId']}');
       final supplier = await tx.get(supplierRef);
