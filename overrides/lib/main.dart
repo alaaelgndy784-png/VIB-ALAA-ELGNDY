@@ -6894,15 +6894,11 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   final paid = (data['paid'] as num?)?.toDouble() ?? (isSale ? total : 0);
   final due = (data['due'] as num?)?.toDouble() ?? total - paid;
   final receiptPaid = (data['receiptPaid'] as num?)?.toDouble() ?? 0;
-  num? supplierBalance = ((data['revision'] as num?)?.toInt() ?? 0) == 0 ? data['supplierBalanceAfter'] as num? : null;
-  bool liveSupplierBalance = false;
-  if (!isSale && supplierBalance == null && settingsOverride == null && '${data['supplierId'] ?? ''}'.isNotEmpty) {
-    try {
-      supplierBalance = (await db.collection('suppliers').doc('${data['supplierId']}')
-        .get(const GetOptions(source: Source.cache))).data()?['balance'] as num?;
-      liveSupplierBalance = true;
-    } catch (_) { /* Keep missing historical balances explicit instead of printing zero. */ }
-  }
+  // Do not substitute a potentially stale supplier account balance into
+  // a historical PDF.  Only invoice-saved balance snapshots are authoritative.
+  final num? supplierBalance = ((data['revision'] as num?)?.toInt() ?? 0) == 0
+    ? data['supplierBalanceAfter'] as num? : null;
+  const liveSupplierBalance = false;
   return createStyledA4InvoicePdf(font: font, logo: logo, isSale: isSale,
     number: number, barcode: barcode, data: data, items: items, company: company,
     address: address, taxNumber: taxNumber, commercialRegister: commercialRegister,
