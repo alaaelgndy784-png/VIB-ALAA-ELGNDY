@@ -57,7 +57,7 @@ jobs:
           echo "NEW APK SIGNATURE DETAIL:"
           cat dist/new-cert.txt
           old_cert="$(sed -n 's/.*certificate SHA-256 digest: *//p' dist/old-cert.txt | head -n 1)"
-          new_cert="$(awk '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}' dist/new-cert.txt)"
+          new_cert="$(sed -n 's/.*certificate SHA-256 digest: *//p' dist/new-cert.txt | head -n 1)"
           test -n "$old_cert"
           echo "PREVIOUS STAFF SIGNER SHA256: $old_cert"
           echo "LATEST STAFF SIGNER SHA256:   $new_cert"
