@@ -6350,7 +6350,7 @@ Future<void> printTestPage(BuildContext context, String paper, {String? bluetoot
 
 Future<void> invoiceActions(BuildContext context, String type, String id, Map<String, dynamic> data, {bool canReturn = true}) async {
   try{data=await numberedInvoiceData(type,id,data);}catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر تخصيص رقم الفاتورة: $e');return;}
-  final returned = data['status'] == 'returned';
+  final returned = data['status'] == 'returned' || data['status'] == 'cancelled';
   final profile = (await db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid).get()).data();
   if (!context.mounted) return;
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
@@ -6367,6 +6367,14 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
     if (type == 'sales') ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال الفاتورة PDF على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
     if (!returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.assignment_return, color: Colors.orangeAccent), title: const Text('إرجاع صنف من الفاتورة'), onTap: () { Navigator.pop(c); type=='sales' ? confirmPartialSalesReturn(context, id) : confirmPartialPurchaseReturn(context,id); }),
+    if (type == 'sales' && profile?['role'] == 'owner' &&
+        saleInvoiceCanBeCancelled(data))
+      ListTile(leading: const Icon(Icons.cancel_outlined, color: Colors.redAccent),
+        title: const Text('إلغاء فاتورة مبيعات معمولة بالغلط'),
+        onTap: () async {
+          Navigator.pop(c);
+          await confirmSalesInvoiceCancellation(context, id);
+        }),
     if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
   ])));
 }
@@ -6943,7 +6951,7 @@ int allocatedPartialReturnCents(int lineCents, int lineQuantity,
 Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
   try {
     final invoice = (await db.collection('sales').doc(id).get(const GetOptions(source: Source.server))).data();
-    if (invoice == null || invoice['status'] == 'returned' || !visibleAfterReset(invoice)) {
+    if (invoice == null || invoice['status'] != 'completed' || !visibleAfterReset(invoice)) {
       throw StateError('الفاتورة غير متاحة للمرتجع');
     }
     if (((invoice['onlinePaid'] as num?) ?? 0) > 0) {
@@ -7042,7 +7050,7 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
   await db.runTransaction((tx) async {
     final invoiceSnap = await tx.get(invoiceRef);
     final d = invoiceSnap.data();
-    if (d == null || d['status'] == 'returned' || !visibleAfterReset(d)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    if (d == null || d['status'] != 'completed' || !visibleAfterReset(d)) throw StateError('الفاتورة غير متاحة للمرتجع');
     final profileSnap = await tx.get(db.collection('users').doc(actor));
     if (profileSnap.data()?['active'] != true || profileSnap.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
     if (((d['onlinePaid'] as num?) ?? 0) > 0) throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
@@ -7319,7 +7327,7 @@ Future<void> returnInvoice(String type, String id,
      List<String> cancelledReceiptIds = const []}) async {
   final cancellingSale = cancellationReason != null;
   if (cancellingSale && type != 'sales') throw StateError('الإلغاء مخصص للمبيعات فقط');
-  if (cancellingSale && cancellationReason.trim().length < 5) {
+  if (cancellingSale && cancellationReason!.trim().length < 5) {
     throw StateError('سبب الإلغاء مطلوب');
   }
   if (!['sales', 'purchases'].contains(type)) throw StateError('نوع الفاتورة غير صحيح');
