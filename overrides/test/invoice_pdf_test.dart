@@ -394,6 +394,30 @@ void main() {
     {'productName': 'حنفية نصف بوصة الحياة', 'quantity': 3, 'unitPrice': 195, 'lineTotal': 585},
     {'productName': 'طاسة دش الحياة مقاس 20 × 20', 'quantity': 1, 'unitPrice': 325, 'lineTotal': 325},
   ];
+  test('old invoice with saved number but no internal serial renders A4 and 80mm offline', () async {
+    const id = 'sale-1284-old';
+    final invoice = <String,dynamic>{
+      'invoiceNumber':'001284',
+      'customerName':'محل الراشد البنفسج 10',
+      'createdAt':Timestamp.fromDate(DateTime(2026, 10, 25, 12, 29)),
+      'total':2880.0, 'paid':0.0,'due':2880.0,'status':'completed',
+      'items':[
+        {'productName':'طبة نيكل الحياة','quantity':20,'unitPrice':22.50,'lineTotal':450.0},
+        {'productName':'بلف سخان','quantity':5,'unitPrice':210.0,'lineTotal':1050.0},
+        {'productName':'طقم جلبة الحياة','quantity':15,'unitPrice':92.0,'lineTotal':1380.0},
+      ]
+    };
+    expect(invoiceDisplayNumber('sales',id,invoice),'001284');
+    expect(invoice.containsKey('internalNumber'),isFalse);
+    for (final paper in ['a4','80']) {
+      final bytes=await createInvoicePdf('sales',id,invoice,
+        paperChoice:paper,settingsOverride:brand);
+      expect(String.fromCharCodes(bytes.take(4)),'%PDF');
+      expect(bytes.length,greaterThan(1000));
+      expect(invoice.containsKey('internalNumber'),isFalse);
+    }
+  });
+
   for (final paper in ['a4','80']) {
     for (final long in [false,true]) {
       test('$paper ${long ? 'long invoice pagination' : 'brand and totals'}', () async {
