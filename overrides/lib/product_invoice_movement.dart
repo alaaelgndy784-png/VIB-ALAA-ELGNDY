@@ -134,27 +134,48 @@ class _ProductInvoiceMovementPageState extends State<ProductInvoiceMovementPage>
     }
   }
 
+  Future<Uint8List> _buildInvoicePdf() async {
+    final font = pw.Font.ttf(
+        await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    return createVibProductInvoiceReportPdf(
+      productName: _productName.isNotEmpty ? _productName : _search.text.trim(),
+      type: widget.type,
+      hits: _hits,
+      font: font,
+      from: _from,
+      to: _to,
+      allDates: _allDates,
+    );
+  }
+
   Future<void> _sharePdf() async {
     if (!_complete || _loading || _exporting || _hits.isEmpty) return;
     setState(() => _exporting = true);
     try {
-      final font = pw.Font.ttf(
-        await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-      final report = await createVibProductInvoiceReportPdf(
-        productName: _productName.isNotEmpty ? _productName : _search.text.trim(),
-        type: widget.type,
-        hits: _hits,
-        font: font,
-        from: _from,
-        to: _to,
-        allDates: _allDates,
-      );
+      final bytes = await _buildInvoicePdf();
       await Printing.sharePdf(
-        bytes: report,
+        bytes: bytes,
         filename: 'VIB-${widget.type.toUpperCase()}-PRODUCT-INVOICES.pdf');
     } catch (error) {
       if (mounted) await showInvoiceSaveProblem(context,
-        'تعذر تجهيز تقرير الفواتير: $error');
+        'تعذر مشاركة تقرير الفواتير: $error');
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  Future<void> _printPdf() async {
+    if (!_complete || _loading || _exporting || _hits.isEmpty) return;
+    setState(() => _exporting = true);
+    try {
+      final bytes = await _buildInvoicePdf();
+      await Printing.layoutPdf(
+        name: 'VIB-PRODUCT-INVOICE-REPORT',
+        onLayout: (_) async => bytes,
+      );
+    } catch (error) {
+      if (mounted) await showInvoiceSaveProblem(context,
+        'تعذر طباعة تقرير فواتير الصنف: $error');
     } finally {
       if (mounted) setState(() => _exporting = false);
     }
@@ -289,11 +310,17 @@ class _ProductInvoiceMovementPageState extends State<ProductInvoiceMovementPage>
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
       if (_complete && _hits.isNotEmpty)
         Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          child: SizedBox(width: double.infinity, child: FilledButton.icon(
-            onPressed: _exporting ? null : _sharePdf,
-            icon: const Icon(Icons.picture_as_pdf_outlined, size: 19),
-            label: Text(_exporting ? 'جاري تجهيز التقرير...' :
-              'إرسال تقرير فواتير الصنف PDF / واتساب')))),
+          child: Row(children: [
+            Expanded(child: OutlinedButton.icon(
+              onPressed: _exporting ? null : _printPdf,
+              icon: const Icon(Icons.print_outlined, size: 17),
+              label: const Text('طباعة A4'))),
+            const SizedBox(width: 7),
+            Expanded(child: FilledButton.icon(
+              onPressed: _exporting ? null : _sharePdf,
+              icon: const Icon(Icons.picture_as_pdf_outlined, size: 17),
+              label: Text(_exporting ? 'جاري التجهيز...' : 'PDF / واتساب'))),
+          ])),
       if (_error.isNotEmpty) Padding(padding: const EdgeInsets.all(8),
         child: Text(_error, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
       Expanded(child: _hits.isEmpty ? Center(child: Text(_complete
