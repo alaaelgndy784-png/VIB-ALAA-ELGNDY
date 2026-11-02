@@ -1,7 +1,7 @@
 const {test,before,after,beforeEach}=require('node:test');
 const {readFileSync}=require('node:fs');
 const {initializeTestEnvironment,assertSucceeds,assertFails}=require('@firebase/rules-unit-testing');
-const {doc,setDoc,writeBatch,getDoc,serverTimestamp,runTransaction,deleteDoc,getDocs,collection,query,orderBy}=require('firebase/firestore');
+const {doc,setDoc,writeBatch,getDoc,serverTimestamp,runTransaction,deleteDoc,getDocs,collection,query,orderBy,where}=require('firebase/firestore');
 const assert=require('node:assert/strict');
 let env;
 before(async()=>{env=await initializeTestEnvironment({projectId:'demo-vib',firestore:{rules:readFileSync('../firestore.rules','utf8')}})});
@@ -98,6 +98,14 @@ function saleBatch(db,{n=1,paid,customer=true,mutate=()=>{},omit='',saleId='sale
   }
   return batch.commit();
 }
+test('staff can list only the main inventory and cannot enumerate other branch stock',async()=>{
+  const staff=env.authenticatedContext('staff').firestore();
+  const ownMain=query(collection(staff,'stock'),where('branchId','==','main'));
+  const main=await assertSucceeds(getDocs(ownMain));
+  assert.ok(main.docs.some((row)=>row.id==='main_p0'));
+  await assertFails(getDocs(collection(staff,'stock')));
+  await assertFails(getDocs(query(collection(staff,'stock'),where('branchId','==','otherbranch'))));
+});
 test('staff reads main stock and nonexistent own retry invoice',async()=>{
   const db=env.authenticatedContext('staff').firestore();await assertSucceeds(getDoc(doc(db,'stock/main_p0')));
   await assertSucceeds(getDoc(doc(db,'sales/new')));
