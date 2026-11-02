@@ -10,6 +10,36 @@ bool saleInvoiceCanBeCancelled(Map<String, dynamic> sale) {
   return partial is! Map || partial.isEmpty;
 }
 
+// Compare the actual financial facts, not Firestore map insertion order or
+// unrelated invoice metadata (printing, numbering, presentation updates).
+// The earlier raw jsonEncode(items) signature could reject an unchanged sale
+// when the deserialized map key order changed between two server reads.
+String saleCancellationFinancialSnapshot(Map<String, dynamic> sale) {
+  int cents(dynamic value) => value is num && value.isFinite
+      ? (value * 100).round() : -1;
+  final items = _saleReturnInvoiceItems(sale);
+  final rows = [
+    for (final item in items)
+      [
+        '${item['productId'] ?? ''}',
+        (item['quantity'] as num?)?.toInt() ?? -1,
+        cents(item['unitPrice']),
+        cents(item['lineTotal']),
+      ],
+  ];
+  return jsonEncode([
+    '${sale['status'] ?? ''}',
+    '${sale['customerId'] ?? ''}',
+    '${sale['branchId'] ?? ''}',
+    '${sale['stockBranchId'] ?? ''}',
+    cents(sale['total']), cents(sale['paid']), cents(sale['due']),
+    cents(sale['receiptPaid'] ?? 0),
+    sale['onlinePaymentEver'] == true,
+    cents(sale['onlinePaid'] ?? 0),
+    rows,
+  ]);
+}
+
 // A cancelled receipt already reversed its own customer and cash movements.
 // Never refund it again when cancelling the sale itself.
 ({double cash, double debt}) saleCancellationSettlement(Map<String, dynamic> sale) =>
@@ -121,7 +151,7 @@ Future<bool> confirmSalesInvoiceCancellation(BuildContext context, String invoic
     reason.dispose();
     if (!confirmed || !context.mounted) return false;
     await returnInvoice('sales', invoiceId,
-      expectedSignature: invoiceReturnSignature(sale),
+      expectedCancellationSnapshot: saleCancellationFinancialSnapshot(sale),
       cancellationReason: reasonText, cancelledReceiptIds: receiptIds);
     if (context.mounted) {
       await showInvoiceSaveProblem(context,
