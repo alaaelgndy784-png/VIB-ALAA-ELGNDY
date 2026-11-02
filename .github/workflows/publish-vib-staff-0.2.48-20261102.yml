@@ -74,12 +74,12 @@ jobs:
               data=Path(path).read_text()
               row=next((line for line in data.splitlines() if line.startswith('package:')),None)
               assert row, f'No package information in {path}'
-              values=dict(re.findall(r"(name|versionCode|versionName)='([^']+)'",row))
+              values=dict(re.findall(r"(?:^|\\s)(name|versionCode|versionName)='([^']+)'",row))
               return values
           old=identity('dist/old-package.txt')
           new=identity('dist/new-package.txt')
           assert old['name']==new['name']=='com.alaa.vibsales.staffscan',(old,new)
-          assert int(new['versionCode'])==4073,new
+          assert int(new['versionCode'])==6073,new # Flutter arm64 split-per-abi adds 2000
           assert new['versionName']=='0.2.48',new
           assert int(new['versionCode'])>int(old['versionCode']),(old,new)
           print('Verified in-place staff upgrade:',old,'->',new)
