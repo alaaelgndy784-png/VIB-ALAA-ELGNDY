@@ -2704,6 +2704,13 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         ),
         body:checkout ? ListView(children:[
           if(!owner && lines.length > 4) const Padding(padding:EdgeInsets.all(8),child:Text('أكثر من ٤ بنود: تُرسل للمدير، ولا تخصم المخزون أو تسجل الحسابات حتى الاعتماد.')),
+          if(!owner) EmployeeSaleCheckoutSummary(
+            items:[for(final row in lines)
+              (name:'${productDoc(row.productId!).data()['name'] ?? ''}',
+               quantity:int.tryParse(row.quantity.text) ?? 0,
+               unitPrice:double.tryParse(row.price.text.trim().replaceAll(',','.')) ?? 0)],
+            customerName:'${selectedCustomer?['name'] ?? ''}',
+            previousBalance:previousBalance,total:previewTotal,paid:checkoutPaid),
           PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
             paid:paid,enabled:!saving,partyLabel:'العميل',
             onModeChanged:(value)=>update(() => credit=value),onChanged:()=>update(() {})),
