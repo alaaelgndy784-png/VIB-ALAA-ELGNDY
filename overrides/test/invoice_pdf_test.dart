@@ -394,6 +394,32 @@ void main() {
     {'productName': 'حنفية نصف بوصة الحياة', 'quantity': 3, 'unitPrice': 195, 'lineTotal': 585},
     {'productName': 'طاسة دش الحياة مقاس 20 × 20', 'quantity': 1, 'unitPrice': 325, 'lineTotal': 325},
   ];
+  test('older numbered-only sales invoice can generate PDF without serial backfill', () async {
+    const invoiceId = 'existing-sale-1284';
+    final oldData = <String, dynamic>{
+      // An invoice created under quota pressure may not have internalNumber.
+      'invoiceNumber': '001284',
+      'customerName': 'محل الراشد البنفسج 10',
+      'total': 2880.00, 'paid': 0.0, 'due': 2880.00,
+      'status': 'completed',
+      'items': <Map<String, dynamic>>[
+        {'productName': 'طبه نيكل الحياه', 'quantity': 20, 'unitPrice': 22.50, 'lineTotal': 450.00},
+        {'productName': 'بلف سخان', 'quantity': 5, 'unitPrice': 210.00, 'lineTotal': 1050.00},
+        {'productName': 'طقم جلبه', 'quantity': 15, 'unitPrice': 92.00, 'lineTotal': 1380.00},
+      ],
+      'createdAt': Timestamp.fromDate(DateTime(2026, 10, 25, 12, 29)),
+    };
+    expect(invoiceDisplayNumber('sales', invoiceId, oldData), '001284');
+    expect(oldData.containsKey('internalNumber'), isFalse);
+    for (final paper in ['a4', '80']) {
+      final pdfBytes = await createInvoicePdf('sales', invoiceId, oldData,
+        paperChoice: paper, settingsOverride: brand);
+      expect(String.fromCharCodes(pdfBytes.take(4)), '%PDF');
+      expect(pdfBytes.length, greaterThan(1000));
+      expect(oldData.containsKey('internalNumber'), isFalse);
+    }
+  });
+
   for (final paper in ['a4','80']) {
     for (final long in [false,true]) {
       test('$paper ${long ? 'long invoice pagination' : 'brand and totals'}', () async {
