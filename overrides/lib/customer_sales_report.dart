@@ -260,22 +260,28 @@ Future<Uint8List> createCustomerSalesReportPdf(
         ' • المرتجعات: ' + movementReportMoney(report.returnCents) +
         ' • صافي الحركة: ' + movementReportMoney(report.netCents)),
       pw.SizedBox(height: 10),
-      for (final invoice in report.rows) ...[
-        pw.Text('فاتورة ' + invoice.number + ' | ' + movementReportDate(invoice.date) +
-          (invoice.returned ? ' | مرتجعة بالكامل' : ''),
+      // Every sale starts on a fresh page. Long item tables can flow across
+      // pages, but a different invoice must never start on the same page.
+      for (var i = 0; i < report.rows.length; i++) ...[
+        if (i > 0) pw.NewPage(),
+        pw.Text('فاتورة ' + report.rows[i].number + ' | ' + movementReportDate(report.rows[i].date) +
+          (report.rows[i].returned ? ' | مرتجعة بالكامل' : ''),
           style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 12)),
-        itemTable(invoice.data),
-        pw.Text('إجمالي الفاتورة: ' + movementReportMoney(invoice.totalCents) +
-          ' | مدفوع: ' + movementReportMoney(invoice.paidCents) +
-          ' | باقي: ' + movementReportMoney(invoice.dueCents)),
+        itemTable(report.rows[i].data),
+        pw.Text('إجمالي الفاتورة: ' + movementReportMoney(report.rows[i].totalCents) +
+          ' | مدفوع: ' + movementReportMoney(report.rows[i].paidCents) +
+          ' | باقي: ' + movementReportMoney(report.rows[i].dueCents)),
         pw.SizedBox(height: 10),
       ],
       if (report.returns.isNotEmpty) ...[
+        // Keep returns separate from the last sales invoice too.
+        if (report.rows.isNotEmpty) pw.NewPage(),
         pw.Text('المرتجعات خلال الفترة', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold)),
-        for (final returned in report.returns) ...[
-          pw.Text('مرتجع فاتورة ' + returned.number + ' | ' + movementReportDate(returned.date) +
-            ' | ' + movementReportMoney(returned.totalCents)),
-          itemTable(returned.data),
+        for (var i = 0; i < report.returns.length; i++) ...[
+          if (i > 0) pw.NewPage(),
+          pw.Text('مرتجع فاتورة ' + report.returns[i].number + ' | ' + movementReportDate(report.returns[i].date) +
+            ' | ' + movementReportMoney(report.returns[i].totalCents)),
+          itemTable(report.returns[i].data),
           pw.SizedBox(height: 8),
         ],
       ],
