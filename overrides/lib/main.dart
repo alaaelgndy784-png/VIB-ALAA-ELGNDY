@@ -8056,6 +8056,10 @@ class _StaffCustomersState extends State<StaffCustomers> {
   }
   @override
   Widget build(BuildContext context) => Column(children: [
+    if (!widget.canViewBalance) const Padding(
+      padding:EdgeInsets.symmetric(horizontal:12,vertical:5),
+      child:Text('أرصدة حسابات العملاء مخفية بصلاحيات المدير لهذا الموظف. تفعيلها من صلاحيات الموظف عند المدير.',
+        style:TextStyle(color:Colors.orangeAccent,fontSize:12))),
     if (widget.canAddCustomer) Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: SizedBox(width: double.infinity,
       child: FilledButton.icon(onPressed: addCustomer, icon: const Icon(Icons.person_add), label: const Text('إضافة عميل جديد')))),
     Padding(padding: const EdgeInsets.all(12), child: TextField(decoration: const InputDecoration(labelText: 'بحث عن عميل بالاسم أو الهاتف', prefixIcon: Icon(Icons.search)),
