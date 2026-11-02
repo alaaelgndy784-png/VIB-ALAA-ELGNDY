@@ -6,6 +6,7 @@ Future<Uint8List> createVibCustomerPaymentDetailPdf(
   DateTime from, ReceiptDayReport report, pw.Font font,
   {required bool owner, required bool thermal, DateTime? to,
    required bool suppliers}) async {
+  initializeChequeTimeZones();
   final pdf = pw.Document();
   final logoData = await rootBundle.load('assets/vip-logo.png');
   final logo = pw.MemoryImage(logoData.buffer.asUint8List(
