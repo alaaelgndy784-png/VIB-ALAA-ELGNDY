@@ -1987,6 +1987,7 @@ class OwnerDashboard extends StatelessWidget {
             tile('المحادثة', Icons.forum, () => openStaffChat(context, owner: true), accent: const Color(0xFFB866FF)),
             tile('حركة السداد', Icons.volunteer_activism, () => openPage('حركة السداد', const CustomerPaymentReport(owner: true)), accent: const Color(0xFF31E59A)),
             tile('زيارات الموظفين', Icons.location_on, () => openPage('زيارات الموظفين', const EmployeeVisitReport()), accent: const Color(0xFF38A9FF)),
+            tile('تجميع النواقص', Icons.inventory_2_outlined, () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EmployeeVisitShortagesPage())), accent: const Color(0xFFFFC857)),
             tile('مواعيد الشيكات', Icons.event_note, () => openPage('مواعيد الشيكات', ChequeAgenda(uid: uid)), accent: const Color(0xFFFFC857)),
           ],
         ),
