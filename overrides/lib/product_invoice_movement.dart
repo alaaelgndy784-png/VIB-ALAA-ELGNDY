@@ -3,6 +3,12 @@ part of 'main.dart';
 // Read-only invoice line tracing. Historical grouped invoices and older single-
 // item invoices are both supported. No inventory, balance or invoice writes.
 String vibInvoiceProductSearchText(String value) => invoiceSearchText(value);
+String vibReadableProductInvoiceNumber(String type, String id,
+    Map<String, dynamic> invoice) {
+  final displayed = invoiceDisplayNumber(type, id, invoice).trim();
+  // Legacy invoices without a serial should never show an opaque Firestore ID.
+  return displayed.isEmpty || displayed == id ? 'غير مرقمة' : displayed;
+}
 
 List<Map<String, dynamic>> vibInvoiceProductLines(Map<String, dynamic> invoice) {
   final raw = invoice['items'];
@@ -68,7 +74,10 @@ class VibProductInvoiceHit {
 
 class ProductInvoiceMovementPage extends StatefulWidget {
   final String type;
-  const ProductInvoiceMovementPage({super.key, required this.type});
+  final String? initialProductId;
+  final String initialProductName;
+  const ProductInvoiceMovementPage({super.key, required this.type,
+    this.initialProductId, this.initialProductName = ''});
   @override State<ProductInvoiceMovementPage> createState() => _ProductInvoiceMovementPageState();
 }
 
@@ -76,7 +85,7 @@ class _ProductInvoiceMovementPageState extends State<ProductInvoiceMovementPage>
   final TextEditingController _search = TextEditingController();
   String? _productId;
   String _productName = '';
-  bool _allDates = true, _loading = false, _complete = false;
+  bool _allDates = true, _loading = false, _complete = false, _exporting = false;
   int _generation = 0, _readCount = 0;
   String _error = '';
   List<VibProductInvoiceHit> _hits = [];
@@ -86,6 +95,9 @@ class _ProductInvoiceMovementPageState extends State<ProductInvoiceMovementPage>
 
   @override void initState() {
     super.initState();
+    _productId = widget.initialProductId;
+    _productName = widget.initialProductName;
+    if (_productName.isNotEmpty) _search.text = _productName;
     final now = DateTime.now();
     _from = DateTime(now.year, now.month, 1);
     _to = DateTime(now.year, now.month, now.day);
@@ -98,60 +110,81 @@ class _ProductInvoiceMovementPageState extends State<ProductInvoiceMovementPage>
   }
 
   Future<void> _selectProduct() async {
-    final filter = TextEditingController();
-    final chosen = await showModalBottomSheet<MapEntry<String, String>>(
-      context: context,
-      isScrollControlled: true,
-      builder: (sheet) => StatefulBuilder(builder: (sheet, refresh) => SafeArea(
-        child: Padding(
-          padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheet).bottom),
-          child: SizedBox(height: MediaQuery.sizeOf(sheet).height * .7,
-            child: Column(children: [
-              const Padding(padding: EdgeInsets.all(10),
-                child: Text('اختيار صنف من المخزون', style: TextStyle(fontWeight: FontWeight.bold))),
-              Padding(padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: TextField(controller: filter,
-                  decoration: const InputDecoration(labelText: 'بحث بالاسم أو الكود',
-                    prefixIcon: Icon(Icons.search)),
-                  onChanged: (_) => refresh(() {}))),
-              Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-                stream: db.collection('products').snapshots(),
-                builder: (sheet, snap) {
-                  if (snap.hasError) return const Center(child: Text('تعذر قراءة سجل الأصناف'));
-                  if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-                  final text = vibInvoiceProductSearchText(filter.text);
-                  final products = snap.data!.docs.where((p) {
-                    final name = (p.data()['name'] ?? '').toString();
-                    return vibInvoiceProductSearchText(name).contains(text) ||
-                        p.id.toLowerCase().contains(filter.text.trim().toLowerCase());
-                  }).toList()..sort((a, b) =>
-                    (a.data()['name'] ?? '').toString().compareTo(
-                      (b.data()['name'] ?? '').toString()));
-                  if (products.isEmpty) return const Center(child:
-                    Text('الصنف غير موجود هنا؛ ارجع وابحث بالاسم المكتوب في الفاتورة القديمة'));
-                  return ListView.builder(itemCount: products.length, itemBuilder: (sheet, index) {
-                    final p = products[index];
-                    final name = (p.data()['name'] ?? p.id).toString();
-                    return ListTile(
-                      title: Text(name, maxLines: 2),
-                      subtitle: Text('كود الصنف: ' + p.id),
-                      onTap: () => Navigator.pop(sheet, MapEntry(p.id, name)));
-                  });
-                },
-              )),
-            ]),
+    if (_loading || _exporting) return;
+    try {
+      final snapshot = await db.collection('products').get();
+      if (!mounted) return;
+      final options = <VibMovementProductChoice>[
+        for (final item in snapshot.docs)
+          (
+            id: item.id,
+            name: (item.data()['name'] ?? item.id).toString(),
+            code: (item.data()['code'] ?? item.data()['sku'] ??
+                item.data()['barcode'] ?? item.id).toString(),
           ),
-        ),
-      )),
+      ];
+      final choice = await showVibMovementProductPicker(context, options);
+      if (choice == null || !mounted) return;
+      final product = options.firstWhere((element) => element.id == choice);
+      setState(() {
+        _productId = product.id;
+        _productName = product.name;
+        _search.text = product.name;
+        _complete = false;
+        _hits = [];
+        _error = '';
+      });
+    } catch (error) {
+      if (mounted) setState(() =>
+          _error = 'تعذر تحميل أسماء الأصناف: $error');
+    }
+  }
+
+  Future<Uint8List> _buildInvoicePdf() async {
+    final font = pw.Font.ttf(
+        await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    return createVibProductInvoiceReportPdf(
+      productName: _productName.isNotEmpty ? _productName : _search.text.trim(),
+      type: widget.type,
+      hits: _hits,
+      font: font,
+      from: _from,
+      to: _to,
+      allDates: _allDates,
     );
-    filter.dispose();
-    if (chosen != null && mounted) setState(() {
-      _productId = chosen.key;
-      _productName = chosen.value;
-      _search.text = chosen.value;
-      _complete = false;
-      _hits = [];
-    });
+  }
+
+  Future<void> _sharePdf() async {
+    if (!_complete || _loading || _exporting || _hits.isEmpty) return;
+    setState(() => _exporting = true);
+    try {
+      final bytes = await _buildInvoicePdf();
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: 'VIB-${widget.type.toUpperCase()}-PRODUCT-INVOICES.pdf');
+    } catch (error) {
+      if (mounted) await showInvoiceSaveProblem(context,
+        'تعذر مشاركة تقرير الفواتير: $error');
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
+  }
+
+  Future<void> _printPdf() async {
+    if (!_complete || _loading || _exporting || _hits.isEmpty) return;
+    setState(() => _exporting = true);
+    try {
+      final bytes = await _buildInvoicePdf();
+      await Printing.layoutPdf(
+        name: 'VIB-PRODUCT-INVOICE-REPORT',
+        onLayout: (_) async => bytes,
+      );
+    } catch (error) {
+      if (mounted) await showInvoiceSaveProblem(context,
+        'تعذر طباعة تقرير فواتير الصنف: $error');
+    } finally {
+      if (mounted) setState(() => _exporting = false);
+    }
   }
 
   Future<void> _findInvoices() async {
@@ -201,7 +234,7 @@ class _ProductInvoiceMovementPageState extends State<ProductInvoiceMovementPage>
               selectedProductName: selectedName);
           for (final item in rows) {
             matches.add(VibProductInvoiceHit(
-              id: doc.id, number: invoiceDisplayNumber(widget.type, doc.id, invoice),
+              id: doc.id, number: vibReadableProductInvoiceNumber(widget.type, doc.id, invoice),
               party: (invoice[_sales ? 'customerName' : 'supplierName'] ?? 'غير مسجل').toString(),
               type: widget.type, date: date, invoice: invoice, item: item));
           }
@@ -281,6 +314,19 @@ class _ProductInvoiceMovementPageState extends State<ProductInvoiceMovementPage>
             ' • قيمتها: ' + totalValue.toStringAsFixed(2) +
             ' ج.م (قبل خصم المرتجعات والإلغاءات)',
             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12))),
+      if (_complete && _hits.isNotEmpty)
+        Padding(padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          child: Row(children: [
+            Expanded(child: OutlinedButton.icon(
+              onPressed: _exporting ? null : _printPdf,
+              icon: const Icon(Icons.print_outlined, size: 17),
+              label: const Text('طباعة A4'))),
+            const SizedBox(width: 7),
+            Expanded(child: FilledButton.icon(
+              onPressed: _exporting ? null : _sharePdf,
+              icon: const Icon(Icons.picture_as_pdf_outlined, size: 17),
+              label: Text(_exporting ? 'جاري التجهيز...' : 'PDF / واتساب'))),
+          ])),
       if (_error.isNotEmpty) Padding(padding: const EdgeInsets.all(8),
         child: Text(_error, style: const TextStyle(color: Colors.redAccent, fontSize: 12))),
       Expanded(child: _hits.isEmpty ? Center(child: Text(_complete

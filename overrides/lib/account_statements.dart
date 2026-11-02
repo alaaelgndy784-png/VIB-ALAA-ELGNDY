@@ -149,19 +149,111 @@ ProductPeriodTotals summarizeProductPeriod(List<Map<String,dynamic>> rows,int cu
   final recorded=latest.values.fold<int>(0,(sum,row)=>sum+((row['balanceAfter'] as num?)?.toInt() ?? 0));
   return ProductPeriodTotals(opening,closing,current,incoming,outgoing,current-recorded);
 }
-Future<Uint8List> createProductTracePdf(String name,List<Map<String,dynamic>> rows,Map<String,String> parties,ProductPeriodTotals total,pw.Font font,{DateTimeRange? range}) async {
-  final pdf=pw.Document();
-  pw.Widget cell(String value,{bool head=false})=>pw.Padding(padding:const pw.EdgeInsets.all(5),child:pw.Text(value,textAlign:pw.TextAlign.right,style:pw.TextStyle(fontSize:9,color:head?PdfColors.white:PdfColors.black)));
-  pdf.addPage(pw.MultiPage(pageFormat:PdfPageFormat.a4,maxPages:1000,theme:pw.ThemeData.withFont(base:font,bold:font),textDirection:pw.TextDirection.rtl,
-    footer:(c)=>pw.Text('${c.pageNumber} / ${c.pagesCount}',textAlign:pw.TextAlign.center),build:(_)=>[
-      pw.Text('VIB للتجارة والتوزيع',style:pw.TextStyle(fontSize:22)),pw.Text('تقرير حركة المنتج: $name',style:pw.TextStyle(fontSize:17)),
-      pw.Text(range==null?'كل الحركات المسجلة':'من ${DateFormat('dd/MM/yyyy').format(range.start)} إلى ${DateFormat('dd/MM/yyyy').format(range.end)} - شامل اليوم الأخير'),
-      pw.Text('أول المدة: ${total.opening} - الداخل: ${total.incoming} - الخارج: ${total.outgoing} - آخر المدة: ${total.closing}'),
-      pw.Text('الموجود الآن: ${total.current}'),if(total.gap!=0)pw.Text('فرق بين المخزون وآخر حركة مسجلة: ${total.gap} - يحتاج مراجعة'),pw.SizedBox(height:12),
-      pw.Table(border:pw.TableBorder.all(width:.4),columnWidths:{0:const pw.FlexColumnWidth(1),1:const pw.FlexColumnWidth(1),2:const pw.FlexColumnWidth(3.5),3:const pw.FlexColumnWidth(1.6),4:const pw.FlexColumnWidth(1.7),5:const pw.FlexColumnWidth(.4)},children:[
-        pw.TableRow(repeat:true,decoration:const pw.BoxDecoration(color:PdfColor.fromInt(0xFF14263D)),children:['الرصيد','العدد','الطرف / الفاتورة / المستخدم','التاريخ','الحركة','م'].map((v)=>cell(v,head:true)).toList()),
-        for(var i=0;i<rows.length;i++)pw.TableRow(children:[cell('${rows[i]['balanceAfter'] ?? '-'}'),cell('${rows[i]['quantity']}'),cell(parties['${rows[i]['id']}'] ?? ''),
-          cell(receiptReportStamp(rows[i],DateTime.now())),cell(movementName('${rows[i]['kind']}')),cell('${i+1}')]),
-      ]),
-    ]));return pdf.save();
+Future<Uint8List> createProductTracePdf(
+    String name, List<Map<String,dynamic>> rows,
+    Map<String,String> parties, ProductPeriodTotals total, pw.Font font,
+    {DateTimeRange? range}) async {
+  final pdf = pw.Document();
+  const headerColor = PdfColor.fromInt(0xFF16263A);
+  const lineColor = PdfColor.fromInt(0xFFBEC7D3);
+  const lightBg = PdfColor.fromInt(0xFFF2F4F7);
+  pw.Widget cell(String value, {bool head = false}) => pw.Padding(
+    padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 5),
+    child: pw.Text(value,
+      textAlign: pw.TextAlign.center,
+      style: pw.TextStyle(font: font, fontSize: head ? 10.5 : 11,
+        color: head ? PdfColors.white : PdfColors.black,
+        fontWeight: head ? pw.FontWeight.bold : pw.FontWeight.normal)));
+  final incoming = rows.fold<int>(0, (sum, row) {
+    final qty = (row['quantity'] as num?)?.toInt() ?? 0;
+    return qty > 0 ? sum + qty : sum;
+  });
+  final outgoing = rows.fold<int>(0, (sum, row) {
+    final qty = (row['quantity'] as num?)?.toInt() ?? 0;
+    return qty < 0 ? sum - qty : sum;
+  });
+  pdf.addPage(pw.MultiPage(
+    pageFormat: PdfPageFormat.a4,
+    maxPages: 1000,
+    margin: const pw.EdgeInsets.fromLTRB(26, 25, 26, 25),
+    theme: pw.ThemeData.withFont(base: font, bold: font),
+    textDirection: pw.TextDirection.rtl,
+    footer: (ctx) => pw.Center(child: pw.Text(
+      'صفحة ${ctx.pageNumber} من ${ctx.pagesCount}',
+      style: pw.TextStyle(font: font, fontSize: 9, color: PdfColors.grey700))),
+    build: (_) => [
+      pw.Center(child: pw.Column(children: [
+        pw.Text('VIB للتجارة والتوزيع',
+          style: pw.TextStyle(font: font, fontSize: 19,
+            fontWeight: pw.FontWeight.bold, color: headerColor)),
+        pw.SizedBox(height: 8),
+        pw.Text('تقرير حركة المخزون - $name',
+          textAlign: pw.TextAlign.center,
+          style: pw.TextStyle(font: font, fontSize: 16,
+            fontWeight: pw.FontWeight.bold)),
+        pw.SizedBox(height: 5),
+        pw.Text(range == null ? 'جميع التواريخ'
+          : 'من ${DateFormat('dd/MM/yyyy').format(range.start)} إلى ${DateFormat('dd/MM/yyyy').format(range.end)}',
+          style: pw.TextStyle(font: font, fontSize: 11)),
+      ])),
+      pw.SizedBox(height: 12),
+      pw.Container(
+        padding: const pw.EdgeInsets.all(9),
+        decoration: pw.BoxDecoration(
+          color: lightBg, border: pw.Border.all(color: lineColor)),
+        child: pw.Column(children: [
+          pw.Text('الحركات المعروضة: ${rows.length} • الوارد: $incoming • الصادر: $outgoing',
+            style: pw.TextStyle(font: font, fontSize: 12,
+              fontWeight: pw.FontWeight.bold)),
+          pw.SizedBox(height: 4),
+          pw.Text('رصيد المخزون الحالي: ${total.current} • أول المدة: ${total.opening} • آخر المدة: ${total.closing}',
+            style: pw.TextStyle(font: font, fontSize: 11)),
+        ]),
+      ),
+      pw.SizedBox(height: 12),
+      if (rows.isEmpty)
+        pw.Text('لا توجد حركات في الفترة المختارة',
+          style: pw.TextStyle(font: font, fontSize: 12))
+      else pw.Table(
+        border: pw.TableBorder.all(color: lineColor, width: .6),
+        columnWidths: {
+          0: const pw.FlexColumnWidth(1),
+          1: const pw.FlexColumnWidth(1.1),
+          2: const pw.FlexColumnWidth(3.1),
+          3: const pw.FlexColumnWidth(1.3),
+          4: const pw.FlexColumnWidth(1.6),
+          5: const pw.FlexColumnWidth(.5),
+        },
+        children: [
+          pw.TableRow(
+            repeat: true,
+            decoration: const pw.BoxDecoration(color: headerColor),
+            children: [
+              cell('الرصيد', head: true),
+              cell('العدد', head: true),
+              cell('المورد أو العميل / الفاتورة', head: true),
+              cell('التاريخ', head: true),
+              cell('نوع الحركة', head: true),
+              cell('م', head: true),
+            ]),
+          for (var i = 0; i < rows.length; i++)
+            pw.TableRow(
+              decoration: i.isOdd ? const pw.BoxDecoration(color: lightBg) : null,
+              children: [
+                cell('${rows[i]['balanceAfter'] ?? '-'}'),
+                cell('${rows[i]['quantity'] ?? 0}'),
+                cell(parties['${rows[i]['id']}'] ?? 'بيانات الفاتورة غير متاحة'),
+                cell(receiptReportStamp(rows[i], DateTime.now())),
+                cell(movementName('${rows[i]['kind']}')),
+                cell('${i + 1}'),
+              ]),
+        ],
+      ),
+      pw.SizedBox(height: 12),
+      pw.Text('هذا كشف حركة مخزون، وليس كشف أسعار مشتريات. لمعرفة المورد وسعر الشراء بدقة افتح تقرير فواتير مشتريات الصنف الأصلية.',
+        style: pw.TextStyle(font: font, fontSize: 10,
+          color: PdfColors.grey700)),
+    ],
+  ));
+  return pdf.save();
 }
