@@ -5350,24 +5350,10 @@ class Accounts extends StatelessWidget {
   final bool startWithSuppliers;
   const Accounts({super.key, this.startWithSuppliers = false});
 
+  // Customers and suppliers have independent directories; don't expose the
+  // opposite account type via a tab inside a search screen.
   @override
-  Widget build(BuildContext context) => DefaultTabController(
-    length: 2,
-    initialIndex: startWithSuppliers ? 1 : 0,
-    child: Column(children: [
-      Material(
-        color: Theme.of(context).colorScheme.surface,
-        child: const TabBar(tabs: [
-          Tab(icon: Icon(Icons.people_outline), text: 'العملاء'),
-          Tab(icon: Icon(Icons.business_outlined), text: 'الموردون'),
-        ]),
-      ),
-      const Expanded(child: TabBarView(children: [
-        AccountDirectory(suppliers: false),
-        AccountDirectory(suppliers: true),
-      ])),
-    ]),
-  );
+  Widget build(BuildContext context) => AccountDirectory(suppliers: startWithSuppliers);
 }
 
 class AccountDirectoryRow extends StatelessWidget {
@@ -5405,12 +5391,17 @@ class AccountDirectoryRow extends StatelessWidget {
   );
 }
 
-class AccountDirectory extends StatelessWidget {
+class AccountDirectory extends StatefulWidget {
   final bool suppliers;
   const AccountDirectory({super.key, required this.suppliers});
+  @override State<AccountDirectory> createState() => _AccountDirectoryState();
+}
 
+class _AccountDirectoryState extends State<AccountDirectory> {
+  String query = '';
   @override
   Widget build(BuildContext context) {
+    final suppliers = widget.suppliers;
     final collection = suppliers ? 'suppliers' : 'customers';
     return Column(children: [
       Padding(padding: const EdgeInsets.fromLTRB(10,8,10,4), child: Column(children: [
@@ -5439,6 +5430,16 @@ class AccountDirectory extends StatelessWidget {
         ))),
         if(suppliers) Padding(padding:const EdgeInsets.only(top:4),child:FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:12)),
           onPressed: () => createAccountDialog(context, collection, suppliers), icon: const Icon(Icons.person_add, size:18), label: const Text('إضافة مورد'))),
+        const SizedBox(height: 6),
+        TextField(
+          key: ValueKey(suppliers ? 'suppliers-only-search' : 'customers-only-search'),
+          onChanged: (value) => setState(() => query = invoiceSearchText(value.trim())),
+          decoration: InputDecoration(
+            isDense: true,
+            prefixIcon: const Icon(Icons.search),
+            hintText: suppliers ? 'بحث في الموردين فقط بالاسم أو الهاتف' : 'بحث في العملاء فقط بالاسم أو الهاتف',
+          ),
+        ),
       ])),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: db.collection(collection).snapshots(),
@@ -5446,10 +5447,17 @@ class AccountDirectory extends StatelessWidget {
           if (snapshot.hasError) return const Center(child: Text('تعذر تحميل الحسابات'));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           final docs = snapshot.data!.docs
-              .where((d) => d.data()['active'] != false)
+              .where((d) {
+                if (d.data()['active'] == false) return false;
+                final record = d.data();
+                final haystack = invoiceSearchText('${record['name'] ?? ''} ${record['phone'] ?? ''}');
+                return query.isEmpty || haystack.contains(query);
+              })
               .toList()
             ..sort((a, b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
-          if (docs.isEmpty) return Center(child: Text(suppliers ? 'لا يوجد موردون مسجلون' : 'لا يوجد عملاء مسجلون'));
+          if (docs.isEmpty) return Center(child: Text(query.isNotEmpty
+            ? (suppliers ? 'لا يوجد مورد مطابق للبحث' : 'لا يوجد عميل مطابق للبحث')
+            : (suppliers ? 'لا يوجد موردون مسجلون' : 'لا يوجد عملاء مسجلون')));
           return ListView.builder(itemCount: docs.length, itemBuilder: (context, index) {
             final d = docs[index], account = d.data();
             final balance=(account['balance'] as num?) ?? 0;
