@@ -66,6 +66,51 @@ class InvoiceEditorFrame extends StatelessWidget {
 
 }
 
+
+class EmployeeSaleCheckoutSummary extends StatelessWidget {
+  final List<({String name, int quantity, double unitPrice})> items;
+  final double previousBalance, total, paid;
+  final String customerName;
+  const EmployeeSaleCheckoutSummary({super.key, required this.items, required this.previousBalance,
+    required this.total, required this.paid, required this.customerName});
+  @override Widget build(BuildContext context) {
+    final due = (total-paid).clamp(0.0, double.infinity).toDouble();
+    Widget moneyRow(String label,double amount,{bool emph=false}) => Padding(
+      padding:const EdgeInsets.symmetric(vertical:3),
+      child:Row(children:[
+        Expanded(child:Text(label,maxLines:2,style:TextStyle(fontSize:12,color:emph?gold:Colors.white))),
+        Text('${amount.toStringAsFixed(2)} ج.م',style:TextStyle(fontSize:emph?15:12,color:emph?gold:Colors.white,
+          fontWeight:emph?FontWeight.bold:FontWeight.normal)),
+      ]));
+    return Card(
+      key:const ValueKey('employee-sale-checkout-review'),
+      color:const Color(0xFF17212C),
+      margin:const EdgeInsets.fromLTRB(6,6,6,10),
+      child:Padding(padding:const EdgeInsets.all(10),
+        child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+          const Text('مراجعة بنود فاتورة الموظف وأرصدة العميل',
+            style:TextStyle(color:gold,fontWeight:FontWeight.bold,fontSize:15)),
+          Text('العميل: ${customerName.trim().isEmpty ? 'اختر العميل من أسفل' : customerName}',
+            style:const TextStyle(fontSize:13)),
+          const Divider(),
+          for (var i=0;i<items.length;i++)
+            Padding(padding:const EdgeInsets.symmetric(vertical:3),child:Column(
+              crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+                Text('${i+1}. ${items[i].name}',style:const TextStyle(fontWeight:FontWeight.w600,fontSize:13)),
+                Text('${items[i].quantity} × ${items[i].unitPrice.toStringAsFixed(2)} = ${(items[i].quantity*items[i].unitPrice).toStringAsFixed(2)} ج.م',
+                  style:const TextStyle(color:Colors.white70,fontSize:12)),
+              ])),
+          const Divider(),
+          moneyRow('إجمالي البنود',total,emph:true),
+          moneyRow('المدفوع لهذه الفاتورة',paid),
+          moneyRow('باقي الفاتورة',due,emph:true),
+          moneyRow('رصيد العميل السابق',previousBalance),
+          moneyRow('الرصيد بعد الفاتورة',previousBalance+due,emph:true),
+        ]))),
+    );
+  }
+}
+
 class InvoiceProductsBar extends StatefulWidget {
   final List<({String id,String name})> products;
   final bool enabled;
