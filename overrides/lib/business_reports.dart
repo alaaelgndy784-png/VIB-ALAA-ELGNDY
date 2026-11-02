@@ -230,7 +230,7 @@ class _InvoiceMovementReportPageState extends State<InvoiceMovementReportPage> {
   ]);
 }
 
-Future<Uint8List> createInvoiceMovementReportPdf(InvoiceMovementReport report, pw.Font font) async {
+Future<Uint8List> createInvoiceMovementReportPdf(InvoiceMovementReport report, pw.Font font, {String? reportTitle, String? reportCustomer}) async {
   final pdf = pw.Document();
   const navy = PdfColor.fromInt(0xFF14263D), accent = PdfColor.fromInt(0xFFB58A38);
   pw.Widget cell(String value, {bool header = false, bool customer = false}) => pw.Padding(
@@ -241,7 +241,8 @@ Future<Uint8List> createInvoiceMovementReportPdf(InvoiceMovementReport report, p
     footer: (context) => pw.Text('${context.pageNumber} / ${context.pagesCount}', textAlign: pw.TextAlign.center),
     build: (_) => [
       pw.Center(child: pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 22, color: navy))),
-      pw.SizedBox(height: 8), pw.Center(child: pw.Text(report.type == 'sales' ? 'تقرير حركة المبيعات' : 'تقرير حركة المشتريات', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 18))),
+      pw.SizedBox(height: 8), pw.Center(child: pw.Text(reportTitle ?? (report.type == 'sales' ? 'تقرير حركة المبيعات' : 'تقرير حركة المشتريات'), textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 18))),
+      if (reportCustomer != null) pw.Center(child: pw.Text('اسم العميل: $reportCustomer', style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold))),
       pw.Text('من ${DateFormat('yyyy/MM/dd').format(report.from)} إلى ${DateFormat('yyyy/MM/dd').format(report.to)} • توقيت القاهرة'),
       pw.Text('عدد الفواتير: ${report.rows.length} • مرتجعات الفترة: ${report.returnedCount}'),
       pw.SizedBox(height: 8),
