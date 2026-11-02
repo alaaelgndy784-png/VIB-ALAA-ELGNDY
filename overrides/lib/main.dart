@@ -2051,7 +2051,7 @@ class _ProductsState extends State<Products> {
         if (!owner) Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () => newSaleDialog(context, false, branchId), icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة')))),
         Expanded(child: docs.isEmpty ? const Center(child: Text('لا توجد منتجات بعد'))
           : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: db.collection('stock').snapshots(includeMetadataChanges: true),
+              stream: db.collection('stock').where('branchId', isEqualTo: 'main').snapshots(includeMetadataChanges: true),
               builder: (context, stock) {
                 final quantities = <String, int>{};
                 for (final row in stock.data?.docs ?? []) {
