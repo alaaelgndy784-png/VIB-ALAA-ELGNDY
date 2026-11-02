@@ -1,0 +1,96 @@
+name: Publish VIB Sales 0.2.54 Payment Colors Direct APKs
+on:
+  push:
+    branches: [ui/vib-sales-0.2.54-cash-credit-colors]
+    paths:
+      - .github/workflows/publish-vib-sales-0.2.54-payment-colors.yml
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  release-tested-apks:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      EXPECTED_SHA: e460b37b9f9503681b2ea7e606cfb1b974d2cee0
+      MANAGER_RUN: "41460498184"
+      STAFF_RUN: "41460498149"
+    steps:
+      - name: Verify successful APK builds from exact updated source
+        run: |
+          set -euo pipefail
+          for run_id in "$MANAGER_RUN" "$STAFF_RUN"; do
+            gh run watch "$run_id" --repo "$REPO" --exit-status --interval 20
+            actual="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '[.head_sha,.conclusion] | join(" ")')"
+            test "$actual" = "$EXPECTED_SHA success"
+          done
+
+      - name: Download tested APKs and previously published compatible versions
+        run: |
+          set -euo pipefail
+          mkdir -p dist previous/manager previous/staff
+          gh run download "$MANAGER_RUN" --repo "$REPO" --name VIB-SALES-MANAGER-APK --dir dist
+          gh run download "$STAFF_RUN" --repo "$REPO" --name VIB-SALES-STAFF-APK --dir dist
+          gh release download vib-manager-0.2.48-preview-fixed-tiles-20261102 --repo "$REPO" --pattern VIB-SALES-MANAGER.apk --dir previous/manager
+          gh release download vib-sales-staff-0.2.53-catalog-reconcile-20261102 --repo "$REPO" --pattern VIB-SALES-STAFF.apk --dir previous/staff
+
+      - name: Verify ZIP integrity, matching Android app IDs, higher versions and same signing certificates
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          for name in (
+              'dist/VIB-SALES-MANAGER.apk',
+              'dist/VIB-SALES-STAFF.apk',
+              'previous/manager/VIB-SALES-MANAGER.apk',
+              'previous/staff/VIB-SALES-STAFF.apk',
+          ):
+              path=Path(name)
+              assert path.stat().st_size>10_000_000, f'Unexpected APK size: {name}'
+              with ZipFile(path) as z:
+                  assert z.testzip() is None, f'Invalid APK: {name}'
+                  assert {'AndroidManifest.xml','classes.dex'}.issubset(set(z.namelist())), name
+          PY
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          BUILD_TOOLS="$(find "$SDK/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -x "$BUILD_TOOLS/apksigner" && test -x "$BUILD_TOOLS/aapt"
+          for app in manager staff; do
+            if [ "$app" = manager ]; then apk=VIB-SALES-MANAGER.apk; expected=com.alaa.vibsales.managerscan; else apk=VIB-SALES-STAFF.apk; expected=com.alaa.vibsales.staffscan; fi
+            "$BUILD_TOOLS/apksigner" verify --print-certs "dist/$apk" > "dist/new-$app.cert"
+            "$BUILD_TOOLS/apksigner" verify --print-certs "previous/$app/$apk" > "dist/old-$app.cert"
+            old_cert="$(sed -n 's/.*certificate SHA-256 digest: *//p' "dist/old-$app.cert" | head -n1)"
+            new_cert="$(sed -n 's/.*certificate SHA-256 digest: *//p' "dist/new-$app.cert" | head -n1)"
+            test -n "$old_cert" && test "$new_cert" = "$old_cert" || { echo "SIGNATURE MISMATCH: $app"; exit 1; }
+            "$BUILD_TOOLS/aapt" dump badging "dist/$apk" > "dist/new-$app.package"
+            "$BUILD_TOOLS/aapt" dump badging "previous/$app/$apk" > "dist/old-$app.package"
+          done
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+          def identity(p):
+              row=next(s for s in Path(p).read_text().splitlines() if s.startswith('package:'))
+              return dict(re.findall(r"(?:^|\s)(name|versionCode|versionName)='([^']+)'",row))
+          for app,expected in [('manager','com.alaa.vibsales.managerscan'),('staff','com.alaa.vibsales.staffscan')]:
+              new=identity(f'dist/new-{app}.package')
+              old=identity(f'dist/old-{app}.package')
+              assert new['name']==old['name']==expected,(app,new,old)
+              assert new['versionName']=='0.2.54' and int(new['versionCode'])==6079,(app,new)
+              assert int(new['versionCode'])>int(old['versionCode']),(app,new,old)
+              print(f'Verified compatible upgrade for {app}: {old} -> {new}')
+          PY
+          (cd dist && sha256sum VIB-SALES-MANAGER.apk VIB-SALES-STAFF.apk > SHA256SUMS.txt)
+
+      - name: Publish stable direct download links for version 0.2.54
+        run: |
+          gh release create vib-sales-0.2.54-payment-colors-20261102 \
+            dist/VIB-SALES-MANAGER.apk dist/VIB-SALES-STAFF.apk dist/SHA256SUMS.txt \
+            --repo "$REPO" \
+            --target "$EXPECTED_SHA" \
+            --title "VIB Sales 0.2.54 — Cash Neon Green and Credit Red" \
+            --notes "تحديث مانيجر وموظف 0.2.54 فوق نسخة مزامنة الجرد الحديثة: زر نقدي أخضر فسفوري وزر آجل أحمر في فواتير المبيعات، مع إطار أبيض يوضح الاختيار الحالي. يحافظ على إصلاحات مزامنة أصناف الموظف وإلغاء فواتير المبيعات والتقارير الموجودة بالمصدر. لا تغيير لقواعد الحسابات أو تسجيل الفواتير. اجتازت الحزمتان بناء واختبارات GitHub وفحص التوقيع والتحديث من النسخ المنشورة. يفضّل مراجعة الفواتير المعلقة قبل التحديث؛ ثبّت التحديث فوق التطبيق، ولا تحذف التطبيق." \
+            --prerelease
