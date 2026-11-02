@@ -6505,7 +6505,7 @@ Future<void> _printPdfOnBluetoothThermal(
   Uint8List pdfBytes, {
   String? printerMac,
 }) async {
-  if (!await _ensureThermalBluetoothPermission(context)) return;
+  if (!await _ensureThermalBluetoothPermission(context)) throw StateError('لم يتم السماح بالاتصال بطابعة البلوتوث.');
   if (!await PrintBluetoothThermal.bluetoothEnabled) throw StateError('شغّل البلوتوث على الموبايل.');
   var mac = printerMac;
   var name = '';
@@ -6513,7 +6513,7 @@ Future<void> _printPdfOnBluetoothThermal(
         .where((device) => !_isBluetoothAudioDevice(device.name)).toList();
   if (mac == null || !printers.any((printer) => printer.macAdress == mac)) {
     final selected = await _chooseBluetoothThermalPrinter(context);
-    if (selected == null) return;
+    if (selected == null) throw StateError('لم يتم اختيار طابعة حرارية؛ لم تُطبع الفاتورة.');
     mac = selected.mac;
     name = selected.name;
   } else {
@@ -7176,7 +7176,12 @@ Future<void> printInvoice(BuildContext context, String type, String id, Map<Stri
       final prefs = await SharedPreferences.getInstance();
       await _printPdfOnBluetoothThermal(context, bytes, printerMac: prefs.getString(_thermalPrinterMacKey));
     } else {
-      await Printing.layoutPdf(name: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf', format: invoicePageFormat(paperChoice ?? 'a4'), dynamicLayout: false, onLayout: (_) async => bytes);
+      final sentToPrinter = await Printing.layoutPdf(
+        name: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf',
+        format: invoicePageFormat(paperChoice ?? 'a4'),
+        dynamicLayout: false,
+        onLayout: (_) async => bytes);
+      if (!sentToPrinter) return; // No print audit after cancelled OS dialog.
     }
     // Printing and the optional printedAt server audit are separate outcomes.
     try {
