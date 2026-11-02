@@ -7323,7 +7323,8 @@ String invoiceReturnSignature(Map<String,dynamic> data) => jsonEncode({for(final
   ['status','revision','items','productId','quantity','branchId','stockBranchId','customerId','supplierId','total','due','paid','receiptPaid','onlinePaid','onlinePaymentEver','cashPosted','cashPaidPosted','partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction']) key:data[key]});
 
 Future<void> returnInvoice(String type, String id,
-    {String? expectedSignature, String? cancellationReason,
+    {String? expectedSignature, String? expectedCancellationSnapshot,
+     String? cancellationReason,
      List<String> cancelledReceiptIds = const []}) async {
   final cancellingSale = cancellationReason != null;
   if (cancellingSale && type != 'sales') throw StateError('الإلغاء مخصص للمبيعات فقط');
@@ -7342,7 +7343,15 @@ Future<void> returnInvoice(String type, String id,
     final profile = await tx.get(db.collection('users').doc(actor));
     if (profile.data()?['active'] != true || profile.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
     if (!visibleAfterReset(d)) throw StateError('الفاتورة تخص دورة قديمة');
-    if (expectedSignature != null && invoiceReturnSignature(d) != expectedSignature) throw StateError('الفاتورة تغيّرت؛ افتح مراجعة المرتجع من جديد');
+    if (cancellingSale) {
+      if (expectedCancellationSnapshot == null ||
+          saleCancellationFinancialSnapshot(d) != expectedCancellationSnapshot) {
+        throw StateError('تغير إجمالي الفاتورة أو المدفوع أو الأصناف أو العميل فعلًا؛ افتح الفاتورة وراجع بياناتها قبل الإلغاء.');
+      }
+    } else if (expectedSignature != null &&
+        invoiceReturnSignature(d) != expectedSignature) {
+      throw StateError('الفاتورة تغيّرت؛ افتح مراجعة المرتجع من جديد');
+    }
     if(type=='sales' && ((d['onlinePaid'] as num?)??0)>0)throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
     if (d['status'] != 'completed') throw StateError('الفاتورة ملغاة أو مرتجعة أو غير معتمدة بالفعل');
     if (cancellingSale) {
