@@ -51,6 +51,7 @@ part 'data_maintenance.dart';
 part 'manager_ringtone.dart';
 part 'online_payments.dart';
 part 'invoice_history.dart';
+part 'customer_sales_report.dart';
 part 'invoice_serials.dart';
 part 'invoice_a4.dart';
 part 'invoice_parties.dart';
