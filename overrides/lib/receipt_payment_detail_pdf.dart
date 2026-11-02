@@ -7,6 +7,9 @@ Future<Uint8List> createVibCustomerPaymentDetailPdf(
   {required bool owner, required bool thermal, DateTime? to,
    required bool suppliers}) async {
   final pdf = pw.Document();
+  final logoData = await rootBundle.load('assets/vip-logo.png');
+  final logo = pw.MemoryImage(logoData.buffer.asUint8List(
+      logoData.offsetInBytes, logoData.lengthInBytes));
   final parties = suppliers ? 'الموردين' : 'العملاء';
   final single = report.customers.length == 1 ? report.customers.single : null;
   final title = suppliers ? 'تقرير حركة سداد المورد' : 'تقرير حركة سداد العميل';
@@ -52,6 +55,8 @@ Future<Uint8List> createVibCustomerPaymentDetailPdf(
         mainAxisSize: pw.MainAxisSize.min,
         crossAxisAlignment: pw.CrossAxisAlignment.stretch,
         children: [
+          pw.Center(child: pw.Image(logo, width: 38, height: 38)),
+          pw.SizedBox(height: 4),
           pw.Center(child: line('VIB للتجارة والتوزيع', strong: true, size: 12)),
           pw.Center(child: line(reportTitle, strong: true, size: 11)),
           if (single != null) line((suppliers ? 'المورد: ' : 'العميل: ') + single.name,
@@ -95,8 +100,16 @@ Future<Uint8List> createVibCustomerPaymentDetailPdf(
         ctx.pagesCount.toString(), style: pw.TextStyle(font: font, fontSize: 9))),
     build: (_) => [
       pw.Center(child: pw.Column(children: [
-        pw.Text('VIB للتجارة والتوزيع', style: pw.TextStyle(font: font,
-          fontSize: 19, color: navy, fontWeight: pw.FontWeight.bold)),
+        pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
+            pw.Text('تاريخ الطباعة: ' +
+              DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now()),
+              style: pw.TextStyle(font: font, fontSize: 9)),
+            pw.Image(logo, width: 48, height: 48),
+            pw.Text('VIB للتجارة والتوزيع', style: pw.TextStyle(font: font,
+              fontSize: 14, color: navy, fontWeight: pw.FontWeight.bold)),
+          ]),
+        pw.SizedBox(height: 9),
         pw.SizedBox(height: 5),
         pw.Text(reportTitle, style: pw.TextStyle(font: font,
           fontSize: 16, fontWeight: pw.FontWeight.bold)),
