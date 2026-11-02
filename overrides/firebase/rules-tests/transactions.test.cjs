@@ -98,6 +98,34 @@ function saleBatch(db,{n=1,paid,customer=true,mutate=()=>{},omit='',saleId='sale
   }
   return batch.commit();
 }
+test('manager inventory and employee catalogue include same active items even at zero quantity', async()=>{
+  await env.withSecurityRulesDisabled(async ctx=>{
+    const admin=ctx.firestore();
+    await setDoc(doc(admin,'products/zeroSpring'),{
+      name:'سوستة استيل 1.1/4',category:'غير مصنف',price:165,active:true,
+    });
+    await setDoc(doc(admin,'stock/main_zeroSpring'),{
+      branchId:'main',productId:'zeroSpring',quantity:0,
+    });
+    await setDoc(doc(admin,'products/archivedSpring'),{
+      name:'أرشيف سوستة',price:170,active:false,
+    });
+  });
+  const staff=env.authenticatedContext('staff').firestore();
+  const manager=env.authenticatedContext('owner').firestore();
+  const [allManager,activeEmployee,zeroStock]=await Promise.all([
+    assertSucceeds(getDocs(collection(manager,'products'))),
+    assertSucceeds(getDocs(query(collection(staff,'products'),where('active','==',true)))),
+    assertSucceeds(getDoc(doc(staff,'stock/main_zeroSpring'))),
+  ]);
+  const activeManagerIds=allManager.docs.filter(item=>item.data().active===true)
+    .map(item=>item.id).sort();
+  const employeeIds=activeEmployee.docs.map(item=>item.id).sort();
+  assert.deepEqual(employeeIds,activeManagerIds);
+  assert.equal(zeroStock.data().quantity,0);
+  assert.ok(employeeIds.includes('zeroSpring'));
+  assert.ok(!employeeIds.includes('archivedSpring'));
+});
 test('staff can list only the main inventory and cannot enumerate other branch stock',async()=>{
   const staff=env.authenticatedContext('staff').firestore();
   const ownMain=query(collection(staff,'stock'),where('branchId','==','main'));
