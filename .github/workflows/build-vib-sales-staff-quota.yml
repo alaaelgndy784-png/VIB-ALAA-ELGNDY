@@ -164,14 +164,14 @@ jobs:
 
       - name: Test staff quota safeguards
         working-directory: VIB-SALES-INDEPENDENT
-        run: flutter test test/accounting_test.dart test/pending_sale_data_test.dart
+        run: flutter test test/accounting_test.dart test/pending_sale_data_test.dart test/staff_catalogue_sync_test.dart
 
       - name: Build ${{ matrix.app }} APK
         working-directory: VIB-SALES-INDEPENDENT
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4077 --build-name=0.2.52
+          flutter build apk --release --split-per-abi --build-number=4078 --build-name=0.2.53
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
