@@ -57,6 +57,7 @@ part 'invoice_parties.dart';
 part 'business_reports.dart';
 part 'customer_sales_report.dart';
 part 'product_invoice_movement.dart';
+part 'movement_product_picker.dart';
 part 'invoice_lookup.dart';
 part 'account_statements.dart';
 part 'staff_purchases.dart';
@@ -7922,56 +7923,18 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
     return '';
   }
 
-  Future<void> _chooseMovementProduct(List<QueryDocumentSnapshot<Map<String,dynamic>>> products) async {
-    var query = '';
-    final selected = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final q = query.trim().toLowerCase();
-          final filtered = products.where((d) =>
-            (d.data()['name']?.toString() ?? '').toLowerCase().contains(q)).toList();
-          return Directionality(textDirection: TextDirection.rtl, child: AlertDialog(
-            title: const Text('ابحث عن منتج', textAlign: TextAlign.right,
-              style: TextStyle(color: vibNeonBlue, fontWeight: FontWeight.bold)),
-            content: SizedBox(
-              width: MediaQuery.sizeOf(context).width * .92,
-              height: MediaQuery.sizeOf(context).height * .62,
-              child: Column(children: [
-                TextField(
-                  autofocus: true,
-                  textDirection: TextDirection.rtl,
-                  textAlign: TextAlign.right,
-                  decoration: const InputDecoration(
-                    prefixIcon: Icon(Icons.search, color: vibNeonBlue),
-                    hintText: 'اكتب اسم المنتج',
-                  ),
-                  onChanged: (value) => setDialogState(() => query = value),
-                ),
-                const SizedBox(height: 8),
-                Expanded(
-                  child: filtered.isEmpty
-                    ? const Center(child: Text('لا توجد منتجات مطابقة'))
-                    : ListView.builder(
-                        itemCount: filtered.length,
-                        itemBuilder: (context, index) {
-                          final product = filtered[index];
-                          return ListTile(
-                            minVerticalPadding: 12,
-                            title: Align(alignment: AlignmentDirectional.centerEnd,
-                              child: Text(product.data()['name']?.toString() ?? '', textAlign: TextAlign.right,
-                                style: const TextStyle(color: vibNeonBlue, fontSize: 17, fontWeight: FontWeight.w600))),
-                            onTap: () => Navigator.pop(dialogContext, product.id),
-                          );
-                        },
-                      ),
-                ),
-              ]),
-            ),
-          ));
-        },
-      ),
-    );
+  Future<void> _chooseMovementProduct(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> products) async {
+    final options = <VibMovementProductChoice>[
+      for (final product in products)
+        (
+          id: product.id,
+          name: (product.data()['name'] ?? product.id).toString(),
+          code: (product.data()['code'] ?? product.data()['sku'] ??
+              product.data()['barcode'] ?? product.id).toString(),
+        ),
+    ];
+    final selected = await showVibMovementProductPicker(context, options);
     if (selected != null && mounted) setState(() => productId = selected);
   }
 
@@ -8012,7 +7975,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                 child: InputDecorator(
                   decoration: _vibInvoiceInput('اختر المنتج', icon: Icons.inventory_2_outlined)
                       .copyWith(suffixIcon: const Icon(Icons.search, color: vibNeonBlue)),
-                  child: Text(selectedName, textAlign: TextAlign.right, maxLines: 1, overflow: TextOverflow.ellipsis,
+                  child: Text(selectedName, textAlign: TextAlign.right, maxLines: 2, overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: selected.isEmpty ? Colors.white54 : vibNeonBlue, fontSize: 16, fontWeight: FontWeight.w600)),
                 ),
               );
@@ -8040,10 +8003,14 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
               width: double.infinity,
               child: FilledButton.icon(
                 onPressed: products.isEmpty ? null : () {
-                  if (productId == null) setState(() => productId = products.first.id);
+                  if (productId == null) {
+                    _chooseMovementProduct(products);
+                  } else {
+                    setState(() {});
+                  }
                 },
                 icon: const Icon(Icons.manage_search_rounded),
-                label: Text(productId == null ? 'عرض تقرير أول منتج' : 'تحديث تقرير المنتج'),
+                label: Text(productId == null ? 'اختار صنف لعرض حركته' : 'تحديث تقرير المنتج'),
               ),
             ),
           ]),
