@@ -6511,9 +6511,15 @@ Future<void> printTestPage(BuildContext context, String paper, {String? bluetoot
 }
 
 Future<void> invoiceActions(BuildContext context, String type, String id, Map<String, dynamic> data, {bool canReturn = true}) async {
-  try{data=await numberedInvoiceData(type,id,data);}catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر تخصيص رقم الفاتورة: $e');return;}
+  // Opening invoice actions is read-only; don't backfill serial numbers here.
   final returned = data['status'] == 'returned' || data['status'] == 'cancelled';
-  final profile = (await db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid).get()).data();
+  // The cached signed-in role is enough to expose an existing PDF. Restrict
+  // privileged invoice edits/returns when the role cannot be verified.
+  Map<String, dynamic>? profile;
+  try {
+    profile = (await db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid)
+      .get(const GetOptions(source: Source.cache))).data();
+  } catch (_) {}
   if (!context.mounted) return;
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
@@ -6987,20 +6993,17 @@ Future<void> selectInvoicePaper(BuildContext context, String type, String id, Ma
 
 Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> data,
     {String? paperChoice, Map<String, dynamic>? settingsOverride}) async {
-  if (settingsOverride == null && data['internalNumber'] is! int) {
-    try {
-      data = await numberedInvoiceData(type,id,data)
-          .timeout(const Duration(seconds: 4));
-    } catch (error) {
-      if (!isTemporaryFirestoreOffline(error)) rethrow;
-      // Preserve the locally available invoice number for offline viewing.
-    }
-  }
+  // Viewing or sharing an existing invoice PDF must never start a Firestore
+  // transaction merely to backfill its number; this fails when quota is full.
+  // invoiceDisplayNumber keeps the saved invoiceNumber as fallback.
+
   Map<String, dynamic> settings = settingsOverride ?? {};
   if (settingsOverride == null) {
     try {
-      settings = (await db.collection('settings').doc('invoiceBranding').get()).data() ?? {};
-      if (settings.isEmpty) settings = (await db.collection('settings').doc('main').get()).data() ?? {};
+      settings = (await db.collection('settings').doc('invoiceBranding')
+        .get(const GetOptions(source: Source.cache))).data() ?? {};
+      if (settings.isEmpty) settings = (await db.collection('settings').doc('main')
+        .get(const GetOptions(source: Source.cache))).data() ?? {};
     } catch (_) { /* Authorized staff can print with the bundled VIB brand if settings are unavailable. */ }
   }
   final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
@@ -7029,7 +7032,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   final phones = ['phone', 'phone2', 'whatsapp'].map((key) => configured(key, '')).where((x) => x.isNotEmpty).toSet().toList();
   final footer = configured('invoiceFooter', 'شكراً لتعاملكم معنا');
   final number=invoiceDisplayNumber(type,id,data);
-  final barcode='${data['invoiceBarcode']??''}';
+  final barcode='${data['invoiceBarcode'] ?? invoiceSerialCache[serialKey(type,id)]?['invoiceBarcode'] ?? ''}';
   final items = <Map<String, dynamic>>[];
   if (data['items'] is List) {
     for (final raw in data['items'] as List) { if (raw is Map) items.add(Map<String, dynamic>.from(raw)); }
@@ -7042,14 +7045,11 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   final paid = (data['paid'] as num?)?.toDouble() ?? (isSale ? total : 0);
   final due = (data['due'] as num?)?.toDouble() ?? total - paid;
   final receiptPaid = (data['receiptPaid'] as num?)?.toDouble() ?? 0;
-  num? supplierBalance = ((data['revision'] as num?)?.toInt() ?? 0) == 0 ? data['supplierBalanceAfter'] as num? : null;
-  bool liveSupplierBalance = false;
-  if (!isSale && supplierBalance == null && settingsOverride == null && '${data['supplierId'] ?? ''}'.isNotEmpty) {
-    try {
-      supplierBalance = (await db.collection('suppliers').doc('${data['supplierId']}').get()).data()?['balance'] as num?;
-      liveSupplierBalance = true;
-    } catch (_) { /* Keep missing historical balances explicit instead of printing zero. */ }
-  }
+  // Historical invoice PDFs must not display live/stale supplier balances as
+  // though they were the original balance on the invoice.
+  final num? supplierBalance = ((data['revision'] as num?)?.toInt() ?? 0) == 0
+    ? data['supplierBalanceAfter'] as num? : null;
+  const liveSupplierBalance = false;
   return createStyledA4InvoicePdf(font: font, logo: logo, isSale: isSale,
     number: number, barcode: barcode, data: data, items: items, company: company,
     address: address, taxNumber: taxNumber, commercialRegister: commercialRegister,
@@ -7058,11 +7058,20 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
 }
 
 Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<String, dynamic> data,{String paperChoice='a4'}) async {
+  Uint8List bytes;
   try {
-    final bytes = await createInvoicePdf(type,id,data,paperChoice:paperChoice);
-    await Printing.sharePdf(bytes: bytes, filename: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf');
+    bytes = await createInvoicePdf(type,id,data,paperChoice:paperChoice);
   } catch (e) {
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر إنشاء PDF: $e')));
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تعذر إنشاء PDF: $e')));
+    return;
+  }
+  try {
+    await Printing.sharePdf(bytes: bytes,
+      filename: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf');
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تم تجهيز PDF لكن تعذر فتح المشاركة: $e')));
   }
 }
 
@@ -7075,7 +7084,17 @@ Future<void> printInvoice(BuildContext context, String type, String id, Map<Stri
     } else {
       await Printing.layoutPdf(name: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf', format: invoicePageFormat(paperChoice ?? 'a4'), dynamicLayout: false, onLayout: (_) async => bytes);
     }
-    await db.collection(type).doc(id).set({'printedAt': FieldValue.serverTimestamp(), 'printedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
+    // Printing and the optional printedAt server audit are separate outcomes.
+    try {
+      await db.collection(type).doc(id).set({
+        'printedAt': FieldValue.serverTimestamp(),
+        'printedBy': FirebaseAuth.instance.currentUser!.uid,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      if (!isFirestoreQuotaExhausted(e) && !isTemporaryFirestoreOffline(e)) rethrow;
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم إرسال الفاتورة للطباعة؛ تسجيل التاريخ ينتظر Firebase.')));
+    }
   } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e'))); }
 }
 
