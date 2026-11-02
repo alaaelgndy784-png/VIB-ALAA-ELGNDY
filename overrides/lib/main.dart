@@ -1452,6 +1452,85 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
   );
 }
 
+// Gross profit uses original item cost snapshots, not current catalog prices.
+// Negative salesReturns adjust both revenue and original cost.
+class DashboardGrossProfitMetric extends StatelessWidget {
+  final DateTime from, to;
+  const DashboardGrossProfitMetric({super.key, required this.from, required this.to});
+
+  @override Widget build(BuildContext context) {
+    final start = _dashboardStartOfDay(from);
+    final endDay = _dashboardStartOfDay(to);
+    final end = DateTime(endDay.year, endDay.month, endDay.day + 1);
+    final startStamp = Timestamp.fromDate(start);
+    final endStamp = Timestamp.fromDate(end);
+    return Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: db.collection('sales')
+        .where('createdAt', isGreaterThanOrEqualTo: startStamp)
+        .where('createdAt', isLessThan: endStamp).snapshots(),
+      builder: (context, salesSnap) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: db.collection('salesReturns')
+          .where('createdAt', isGreaterThanOrEqualTo: startStamp)
+          .where('createdAt', isLessThan: endStamp).snapshots(),
+        builder: (context, returnsSnap) {
+          String value = '—';
+          var hasMissingCost = false;
+          if (salesSnap.hasData && returnsSnap.hasData) {
+            double revenue = 0;
+            double cost = 0;
+            void includeInvoice(Map<String, dynamic> data, double sign) {
+              if (!visibleAfterReset(data)) return;
+              revenue += sign * ((data['total'] as num?)?.toDouble() ?? 0);
+              final rawItems = data['items'];
+              if (rawItems is List && rawItems.isNotEmpty) {
+                for (final raw in rawItems) {
+                  if (raw is! Map) continue;
+                  final quantity = (raw['quantity'] as num?)?.toDouble() ?? 0;
+                  final atSaleCost = (raw['purchasePriceAtSale'] as num?)?.toDouble();
+                  if (atSaleCost == null || !atSaleCost.isFinite || atSaleCost < 0) {
+                    hasMissingCost = true;
+                  } else {
+                    cost += sign * quantity * atSaleCost;
+                  }
+                }
+              } else {
+                final quantity = (data['quantity'] as num?)?.toDouble() ?? 0;
+                final atSaleCost = (data['purchasePriceAtSale'] as num?)?.toDouble();
+                if (atSaleCost == null || !atSaleCost.isFinite || atSaleCost < 0) {
+                  hasMissingCost = true;
+                } else {
+                  cost += sign * quantity * atSaleCost;
+                }
+              }
+            }
+            for (final doc in salesSnap.data!.docs) { includeInvoice(doc.data(), 1); }
+            for (final doc in returnsSnap.data!.docs) { includeInvoice(doc.data(), -1); }
+            value = hasMissingCost ? 'غير مكتمل' : (revenue - cost).toStringAsFixed(2);
+          }
+          return Padding(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.trending_up_outlined, color: Color(0xFFFFC857), size: 25),
+              const SizedBox(height: 5),
+              const Text('إجمالي الأرباح', textAlign: TextAlign.center, maxLines: 2,
+                style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
+              const SizedBox(height: 4),
+              Tooltip(
+                message: hasMissingCost ? 'بعض الفواتير لا تحتوي على تكلفة الشراء وقت البيع' :
+                  'الربح الإجمالي بعد مرتجعات الفترة، قبل المصروفات',
+                child: FittedBox(fit: BoxFit.scaleDown, child: Text(value,
+                  style: const TextStyle(color: Color(0xFFFFC857),
+                    fontSize: 17, fontWeight: FontWeight.w800))),
+              ),
+              if (salesSnap.hasError || returnsSnap.hasError)
+                const Icon(Icons.info_outline, color: Colors.orangeAccent, size: 12),
+            ]),
+          );
+        },
+      ),
+    ));
+  }
+}
+
 class DashboardSummaryCard extends StatefulWidget {
   final bool owner;
   final String? actorId;
@@ -1507,6 +1586,8 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
               accent: const Color(0xFF55B8FF), icon: Icons.shopping_cart_outlined),
             _divider(),
             DashboardCustomerPaymentsMetric(from: selectedFrom, to: selectedTo),
+            _divider(),
+            DashboardGrossProfitMetric(from: selectedFrom, to: selectedTo),
           ]
         : <Widget>[
             DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', actorId: widget.actorId, selectedDay: metricDay,
@@ -1984,6 +2065,7 @@ class OwnerDashboard extends StatelessWidget {
             tile('المحادثة', Icons.forum, () => openStaffChat(context, owner: true), accent: const Color(0xFFB866FF)),
             tile('حركة السداد', Icons.volunteer_activism, () => openPage('حركة السداد', const CustomerPaymentReport(owner: true)), accent: const Color(0xFF31E59A)),
             tile('زيارات الموظفين', Icons.location_on, () => openPage('زيارات الموظفين', const EmployeeVisitReport()), accent: const Color(0xFF38A9FF)),
+            tile('تجميع النواقص', Icons.inventory_2_outlined, () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EmployeeVisitShortagesPage())), accent: const Color(0xFFFFC857)),
             tile('مواعيد الشيكات', Icons.event_note, () => openPage('مواعيد الشيكات', ChequeAgenda(uid: uid)), accent: const Color(0xFFFFC857)),
             PendingApprovalDashboardTile(sales: true,
               onTap: () => openPage('اعتماد فواتير المبيعات',
@@ -4282,7 +4364,7 @@ class PurchaseSettlementPanel extends StatelessWidget {
         Expanded(flex: 3, child: Text(label, style: const TextStyle(fontSize: 12))),
         const SizedBox(width: 6), Expanded(flex: 2, child: Align(alignment: Alignment.centerLeft,
           child: FittedBox(fit: BoxFit.scaleDown, child: Text('${value.toStringAsFixed(2)} ج.م',
-            style: TextStyle(fontSize: bold ? 16 : 13, color: bold ? gold : Colors.white,
+            style: TextStyle(fontSize: bold ? 16 : 13, color: salesMode ? (credit ? const Color(0xFFFF5252) : const Color(0xFF39FF14)) : (bold ? gold : Colors.white),
               fontWeight: bold ? FontWeight.bold : FontWeight.normal))))),
       ]));
     return _vibInvoicePanel(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -4294,8 +4376,8 @@ class PurchaseSettlementPanel extends StatelessWidget {
             color: salesMode ? Colors.black : null)),
           backgroundColor: salesMode ? const Color(0xFF39FF14) : null,
           selectedColor: salesMode ? const Color(0xFF39FF14) : null,
-          side: salesMode ? BorderSide(color: !credit ? Colors.white : Colors.black45,
-            width: !credit ? 2.5 : 0.8) : null,
+          side: salesMode ? BorderSide(color: !credit ? const Color(0xFF123F82) : Colors.black45,
+            width: !credit ? 3.5 : 0.8) : null,
           showCheckmark: false, selected: !credit,
           onSelected: enabled ? (_) => onModeChanged(false) : null)),
         const SizedBox(width: 6),
@@ -4305,8 +4387,8 @@ class PurchaseSettlementPanel extends StatelessWidget {
             color: salesMode ? Colors.white : null)),
           backgroundColor: salesMode ? const Color(0xFFE53935) : null,
           selectedColor: salesMode ? const Color(0xFFE53935) : null,
-          side: salesMode ? BorderSide(color: credit ? Colors.white : Colors.black45,
-            width: credit ? 2.5 : 0.8) : null,
+          side: salesMode ? BorderSide(color: credit ? const Color(0xFF123F82) : Colors.black45,
+            width: credit ? 3.5 : 0.8) : null,
           showCheckmark: false, selected: credit,
           onSelected: enabled ? (_) => onModeChanged(true) : null)),
       ]),
