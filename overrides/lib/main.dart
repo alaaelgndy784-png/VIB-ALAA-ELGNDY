@@ -6358,7 +6358,8 @@ Future<void> printTestPage(BuildContext context, String paper, {String? bluetoot
 }
 
 Future<void> invoiceActions(BuildContext context, String type, String id, Map<String, dynamic> data, {bool canReturn = true}) async {
-  try{data=await numberedInvoiceData(type,id,data);}catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر تخصيص رقم الفاتورة: $e');return;}
+  // Opening invoice actions is not an accounting mutation and must remain
+  // available when number backfill or Firestore quota writes are unavailable.
   final returned = data['status'] == 'returned';
   final profile = (await db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid).get()).data();
   if (!context.mounted) return;
@@ -6826,20 +6827,20 @@ Future<void> selectInvoicePaper(BuildContext context, String type, String id, Ma
 
 Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> data,
     {String? paperChoice, Map<String, dynamic>? settingsOverride}) async {
-  if (settingsOverride == null && data['internalNumber'] is! int) {
-    try {
-      data = await numberedInvoiceData(type,id,data)
-          .timeout(const Duration(seconds: 4));
-    } catch (error) {
-      if (!isTemporaryFirestoreOffline(error)) rethrow;
-      // Preserve the locally available invoice number for offline viewing.
-    }
-  }
+  // Rendering an existing invoice is READ ONLY.  In particular, never run
+  // ensureInvoiceSerial() (a Firestore transaction) before producing its PDF:
+  // old invoice numbers may be missing while Firebase is resource-exhausted.
+  // invoiceDisplayNumber() below keeps the saved invoiceNumber/id as fallback.
+
   Map<String, dynamic> settings = settingsOverride ?? {};
   if (settingsOverride == null) {
     try {
-      settings = (await db.collection('settings').doc('invoiceBranding').get()).data() ?? {};
-      if (settings.isEmpty) settings = (await db.collection('settings').doc('main').get()).data() ?? {};
+      // Cached settings or bundled branding are sufficient for an invoice.
+      // A quota-limited server must not make PDFs unavailable.
+      settings = (await db.collection('settings').doc('invoiceBranding')
+        .get(const GetOptions(source: Source.cache))).data() ?? {};
+      if (settings.isEmpty) settings = (await db.collection('settings').doc('main')
+        .get(const GetOptions(source: Source.cache))).data() ?? {};
     } catch (_) { /* Authorized staff can print with the bundled VIB brand if settings are unavailable. */ }
   }
   final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
@@ -6868,7 +6869,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   final phones = ['phone', 'phone2', 'whatsapp'].map((key) => configured(key, '')).where((x) => x.isNotEmpty).toSet().toList();
   final footer = configured('invoiceFooter', 'شكراً لتعاملكم معنا');
   final number=invoiceDisplayNumber(type,id,data);
-  final barcode='${data['invoiceBarcode']??''}';
+  final barcode='${data['invoiceBarcode'] ?? invoiceSerialCache[serialKey(type,id)]?['invoiceBarcode'] ?? ''}';
   final items = <Map<String, dynamic>>[];
   if (data['items'] is List) {
     for (final raw in data['items'] as List) { if (raw is Map) items.add(Map<String, dynamic>.from(raw)); }
@@ -6885,7 +6886,8 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   bool liveSupplierBalance = false;
   if (!isSale && supplierBalance == null && settingsOverride == null && '${data['supplierId'] ?? ''}'.isNotEmpty) {
     try {
-      supplierBalance = (await db.collection('suppliers').doc('${data['supplierId']}').get()).data()?['balance'] as num?;
+      supplierBalance = (await db.collection('suppliers').doc('${data['supplierId']}')
+        .get(const GetOptions(source: Source.cache))).data()?['balance'] as num?;
       liveSupplierBalance = true;
     } catch (_) { /* Keep missing historical balances explicit instead of printing zero. */ }
   }
