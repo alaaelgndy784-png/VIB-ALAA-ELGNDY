@@ -8,6 +8,7 @@ import '../lib/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(initializeChequeTimeZones);
 
   final products = <VibMovementProductChoice>[
     (id: 'a1', name: 'سماعة شطاف جروهي نيكل', code: 'G-10'),
