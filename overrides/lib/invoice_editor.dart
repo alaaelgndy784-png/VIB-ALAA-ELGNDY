@@ -10,9 +10,10 @@ class InvoiceEditorFrame extends StatelessWidget {
   final Widget body;
   final Widget? toolbar;
   final Widget? headerAction;
+  final Widget? entryStatus;
   final List<Widget> actions;
   const InvoiceEditorFrame({super.key,required this.title,required this.checkout,required this.total,
-    required this.body,required this.actions,this.toolbar,this.headerAction,this.tableMode=false,
+    required this.body,required this.actions,this.toolbar,this.headerAction,this.entryStatus,this.tableMode=false,
     this.itemCount=0,this.quantityCount=0,this.invoiceNumber='يُخصص عند الحفظ'});
   @override Widget build(BuildContext context) => tableMode ? _tableFrame(context) : Dialog(
     backgroundColor:const Color(0xFF080808),insetPadding:const EdgeInsets.symmetric(horizontal:6,vertical:10),
@@ -49,6 +50,7 @@ class InvoiceEditorFrame extends StatelessWidget {
               Text(DateFormat('yyyy-MM-dd').format(DateTime.now()), textDirection: TextDirection.ltr, style: const TextStyle(fontSize: 12)),
             ])),
           if(toolbar != null) Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: toolbar!),
+          if (entryStatus != null) entryStatus!,
           const InvoiceCompactTableHeader(),
         ],
         Expanded(child: checkout ? body : Container(color: Colors.white,
@@ -66,6 +68,43 @@ class InvoiceEditorFrame extends StatelessWidget {
 
 }
 
+
+// Kept at the top of the staff entry screen: before pressing Save/Review.
+class EmployeeSaleEntryBalanceStrip extends StatelessWidget {
+  final String customerName;
+  final double? previousBalance;
+  final double invoiceTotal;
+  final int itemCount;
+  final VoidCallback onChooseCustomer;
+  const EmployeeSaleEntryBalanceStrip({super.key,required this.customerName,
+    required this.previousBalance,required this.invoiceTotal,
+    required this.itemCount,required this.onChooseCustomer});
+  @override Widget build(BuildContext context) {
+    final name=customerName.trim();
+    return Container(
+      key:const ValueKey('staff-sale-entry-balances'),
+      padding:const EdgeInsets.symmetric(horizontal:8,vertical:5),
+      decoration:const BoxDecoration(color:Color(0xFF142235)),
+      child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+        Row(children:[
+          Expanded(child:Text(name.isEmpty ? 'العميل: لم يتم اختياره' : 'العميل: $name',
+            maxLines:1,overflow:TextOverflow.ellipsis,
+            style:const TextStyle(color:Colors.white,fontSize:12))),
+          TextButton.icon(
+            onPressed:onChooseCustomer,
+            icon:const Icon(Icons.person_search,size:17),
+            label:const Text('اختيار عميل'),
+            style:TextButton.styleFrom(visualDensity:VisualDensity.compact),
+          ),
+        ]),
+        Text('عدد البنود: $itemCount    إجمالي البنود: ${invoiceTotal.toStringAsFixed(2)} ج.م',
+          style:const TextStyle(color:Color(0xFFFFD477),fontWeight:FontWeight.bold,fontSize:12)),
+        Text('الرصيد السابق للعميل: ${previousBalance == null ? 'اختر العميل لعرض الرصيد' : '${previousBalance!.toStringAsFixed(2)} ج.م'}',
+          style:const TextStyle(color:Color(0xFF90EEB4),fontSize:12)),
+      ]),
+    );
+  }
+}
 
 class EmployeeSaleCheckoutSummary extends StatelessWidget {
   final List<({String name, int quantity, double unitPrice})> items;
