@@ -171,6 +171,16 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
               DateTime(now.year, now.month, now.day), includeYesterday:true)); },
           icon: const Icon(Icons.today, size: 15), label: const Text('اليوم وأمس', maxLines: 1))),
       ])),
+    if (sales) Padding(
+      padding: const EdgeInsets.fromLTRB(10, 0, 10, 5),
+      child: SizedBox(width: double.infinity, child: OutlinedButton.icon(
+        key: const ValueKey('customer-withdrawals-report-action'),
+        onPressed: () => openVibReport(context, 'تقرير مسحوبات عميل',
+          const CustomerSalesWithdrawalsPage()),
+        icon: const Icon(Icons.person_search, size: 17),
+        label: const Text('تقرير مسحوبات عميل — العملاء فقط'),
+      )),
+    ),
     Padding(padding: const EdgeInsets.fromLTRB(12, 0, 12, 4), child: Row(children: [
       Expanded(child: TextField(
         controller: partySearchController,
