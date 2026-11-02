@@ -1,0 +1,48 @@
+name: Publish VIB Manager 0.2.48 preview direct APK
+on:
+  push:
+    branches:
+      - feature/customer-sales-movements-20261102
+    paths:
+      - .github/workflows/publish-vib-manager-preview-20261102.yml
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify tested manager build is successful and exact source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          result="$(gh api "repos/$REPO/actions/runs/41400385493" --jq '[.head_sha, .conclusion] | join(" ")')"
+          test "$result" = 'ba6d1b5ecb20d51ec7cac774e659fdce08c8f4f7 success'
+      - name: Download verified Android APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p dist
+          gh run download 41400385493 --repo "$REPO" --name VIB-SALES-MANAGER-APK --dir dist
+      - name: Validate APK and package checksum
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          apk = Path('dist/VIB-SALES-MANAGER.apk')
+          assert apk.is_file() and apk.stat().st_size > 10_000_000
+          with zipfile.ZipFile(apk) as z:
+              assert z.testzip() is None
+              assert 'AndroidManifest.xml' in z.namelist()
+              assert 'classes.dex' in z.namelist()
+          PY
+          cd dist
+          sha256sum VIB-SALES-MANAGER.apk > SHA256SUMS.txt
+      - name: Publish direct public preview download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release create vib-manager-0.2.48-preview-fixed-tiles-20261102             dist/VIB-SALES-MANAGER.apk dist/SHA256SUMS.txt             --repo "$REPO"             --target ba6d1b5ecb20d51ec7cac774e659fdce08c8f4f7             --title 'VIB Manager 0.2.48 — preview with fixed home tiles'             --notes 'تجريبي: توحيد مربعات الرئيسية ومحاولة تقليل اهتزاز الشاشة، وتقرير مسحوبات العميل. اجتاز اختبارات CI وبناء APK، لكنه لم يختبر على جهاز حقيقي وما زال تقرير العميل يحتاج التحقق من بيانات الإنتاج. لا تمسح البرنامج القديم أو بياناته، ولا تثبت قبل مزامنة الفواتير المعلقة وعمل نسخة احتياطية.'             --prerelease

@@ -55,6 +55,7 @@ part 'invoice_serials.dart';
 part 'invoice_a4.dart';
 part 'invoice_parties.dart';
 part 'business_reports.dart';
+part 'customer_sales_report.dart';
 part 'invoice_lookup.dart';
 part 'account_statements.dart';
 part 'staff_purchases.dart';
@@ -1206,7 +1207,7 @@ class DashboardActionTile extends StatelessWidget {
   final VoidCallback onTap;
   const DashboardActionTile({super.key, required this.title, required this.icon, required this.accent, required this.onTap});
   @override
-  Widget build(BuildContext context) => Material(
+  Widget build(BuildContext context) => RepaintBoundary(child: Material(
     color: Colors.transparent,
     borderRadius: BorderRadius.circular(16),
     child: InkWell(
@@ -1260,8 +1261,68 @@ class DashboardActionTile extends StatelessWidget {
           ),
         ),
       ),
-    ),
+    )),
   );
+}
+
+// Badges show requests awaiting review; approved, rejected and hidden
+// invoices do not produce notifications.
+int pendingHomeApprovalCount(Iterable<Map<String, dynamic>> requests,
+    {required bool sales}) =>
+    requests.where((data) => data['status'] == 'pending' &&
+      (!sales || pendingSaleIsVisible(data))).length;
+
+// Keep each approval stream alive as long as its home tile stays mounted.
+// Only the badge rebuilds after a status change; the tile's layout is fixed.
+class PendingApprovalDashboardTile extends StatefulWidget {
+  final bool sales;
+  final VoidCallback onTap;
+  const PendingApprovalDashboardTile({super.key, required this.sales,
+    required this.onTap});
+  @override State<PendingApprovalDashboardTile> createState() => _PendingApprovalDashboardTileState();
+}
+
+class _PendingApprovalDashboardTileState extends State<PendingApprovalDashboardTile> {
+  late Stream<QuerySnapshot<Map<String, dynamic>>> requests;
+  @override void initState() {
+    super.initState();
+    _listen();
+  }
+  void _listen() {
+    requests = (widget.sales ? pendingSalesQuery(true) : pendingReceiptQuery(true))
+      .snapshots();
+  }
+  @override void didUpdateWidget(covariant PendingApprovalDashboardTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.sales != oldWidget.sales) _listen();
+  }
+  @override Widget build(BuildContext context) =>
+    StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: requests,
+      builder: (context, snapshot) {
+        final count = snapshot.hasData ? pendingHomeApprovalCount(
+          snapshot.data!.docs.map((d) => d.data()), sales: widget.sales) : 0;
+        return Stack(clipBehavior: Clip.none, children: [
+          Positioned.fill(child: DashboardActionTile(
+            title: widget.sales ? 'اعتماد فواتير المبيعات' : 'اعتماد سندات القبض',
+            icon: widget.sales ? Icons.fact_check_outlined : Icons.approval_outlined,
+            accent: widget.sales ? const Color(0xFFFFC857) : const Color(0xFF32E69B),
+            onTap: widget.onTap)),
+          if (count > 0) Positioned(
+            top: -5, right: -2,
+            child: IgnorePointer(child: Container(
+              constraints: const BoxConstraints(minWidth: 25, minHeight: 25),
+              alignment: Alignment.center,
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(color: const Color(0xFFDD4141),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: const Color(0xFF071321), width: 2)),
+              child: Text(count > 99 ? '99+' : '$count',
+                style: const TextStyle(color: Colors.white, fontSize: 12,
+                  fontWeight: FontWeight.bold))))),
+        ]);
+      },
+    );
 }
 
 DateTime _dashboardStartOfDay([DateTime? day]) {
@@ -1379,8 +1440,11 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
                 FittedBox(fit: BoxFit.scaleDown, child: Text(amount,
                   style: const TextStyle(color: Color(0xFF45D483),
                     fontSize: 17, fontWeight: FontWeight.w800))),
-                if(warning != null) Tooltip(message: warning,
-                  child: const Icon(Icons.info_outline, size: 12, color: Colors.orangeAccent)),
+                // Reserve warning space to stop the entire action grid jumping
+                // when Firestore switches from cached to server data.
+                SizedBox(height: 12, child: warning == null ? const SizedBox.shrink() :
+                  Tooltip(message: warning,
+                    child: const Icon(Icons.info_outline, size: 12, color: Colors.orangeAccent))),
               ]));
           },
         ),
@@ -1491,7 +1555,7 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
             )),
           ]),
         ),
-        Row(children: metrics),
+        SizedBox(height: 115, child: Row(children: metrics)),
       ]),
     );
   }
@@ -1819,6 +1883,24 @@ class StaffDashboard extends StatelessWidget {
       ),
       DashboardSummaryCard(owner: false, actorId: uid),
       Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+        child: Column(children: [
+          DashboardActionTile(
+            title: 'فواتيري المعلقة ومتابعة الاعتماد',
+            icon: Icons.pending_actions,
+            accent: const Color(0xFFFFC857),
+            onTap: () => openPage('فواتير الموظف',
+              const PendingSalesPage(owner: false))),
+          const SizedBox(height: 7),
+          DashboardActionTile(
+            title: 'سندات القبض',
+            icon: Icons.payments_outlined,
+            accent: const Color(0xFF32E69B),
+            onTap: () => openPage('سندات القبض',
+              ReceiptVouchers(owner: false, branchId: branchId))),
+        ]),
+      ),
+      Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: GridView.count(
           shrinkWrap: true,
@@ -1828,8 +1910,6 @@ class StaffDashboard extends StatelessWidget {
           crossAxisSpacing: 8,
           childAspectRatio: 2.05,
           children: [
-            DashboardActionTile(title: 'سند قبض', icon: Icons.volunteer_activism, accent: const Color(0xFF32E69B),
-              onTap: () => openPage('سندات القبض', ReceiptVouchers(owner: false, branchId: branchId))),
             DashboardActionTile(title: 'فاتورة مبيعات', icon: Icons.shopping_cart, accent: const Color(0xFFFF922E),
               onTap: () => openPage('المبيعات', Sales(owner: false, branchId: branchId))),
             DashboardActionTile(title: 'العملاء', icon: Icons.groups, accent: const Color(0xFF38A9FF),
@@ -1846,7 +1926,6 @@ class StaffDashboard extends StatelessWidget {
           ],
         ),
       ),
-      DashboardRecentSales(owner: false, actorId: uid, branchId: branchId),
     ],
   );
 }
@@ -1887,17 +1966,16 @@ class OwnerDashboard extends StatelessWidget {
       const DashboardSummaryCard(owner: true),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: const PendingSalesShortcut(owner: true, compact: true),
-      ),
-      Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: GridView.count(
+        child: GridView(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
-          childAspectRatio: 2.05,
+          // The delegate supports fixed main-axis extents on Flutter 3.38.
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            mainAxisExtent: 90,
+          ),
           children: [
             tile('المبيعات', Icons.insert_chart, () => openPage('المبيعات', Sales(owner: true, branchId: branchId)), accent: const Color(0xFF31E59A)),
             tile('المشتريات', Icons.shopping_cart, () => openPage('المشتريات', const Purchases()), accent: const Color(0xFFFF922E)),
@@ -1907,26 +1985,24 @@ class OwnerDashboard extends StatelessWidget {
             tile('حركة السداد', Icons.volunteer_activism, () => openPage('حركة السداد', const CustomerPaymentReport(owner: true)), accent: const Color(0xFF31E59A)),
             tile('زيارات الموظفين', Icons.location_on, () => openPage('زيارات الموظفين', const EmployeeVisitReport()), accent: const Color(0xFF38A9FF)),
             tile('مواعيد الشيكات', Icons.event_note, () => openPage('مواعيد الشيكات', ChequeAgenda(uid: uid)), accent: const Color(0xFFFFC857)),
+            PendingApprovalDashboardTile(sales: true,
+              onTap: () => openPage('اعتماد فواتير المبيعات',
+                const PendingSalesPage(owner: true))),
+            PendingApprovalDashboardTile(sales: false,
+              onTap: () => openPage('اعتماد سندات القبض',
+                const PendingReceiptPage(owner: true))),
+            tile('سندات القبض', Icons.receipt_long,
+              () => openPage('سندات القبض', ReceiptVouchers(owner: true, branchId: branchId)),
+              accent: const Color(0xFF45D483)),
+            tile('سندات صرف الموردين', Icons.receipt,
+              () => openPage('سندات صرف الموردين', const SupplierPaymentVouchers()),
+              accent: const Color(0xFFFFC857)),
+            tile('حركة المنتجات', Icons.sync_alt,
+              () => openPage('حركة المنتجات', const ItemMovementReport()),
+              accent: const Color(0xFF51F2B0)),
           ],
         ),
       ),
-      DashboardRecentSales(owner: true),
-      Padding(padding: const EdgeInsets.symmetric(horizontal: 16),
-        child: ExpansionTile(
-          collapsedShape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: managerBorder)),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16), side: const BorderSide(color: managerBorder)),
-          collapsedBackgroundColor: managerSurface, backgroundColor: managerSurface,
-          iconColor: gold, collapsedIconColor: gold,
-          title: const Text('إجراءات إضافية', style: TextStyle(color: gold, fontWeight: FontWeight.bold)),
-          children: [
-            ListTile(leading: const Icon(Icons.receipt_long, color: Color(0xFF45D483)),
-              title: const Text('سندات القبض'), onTap: () => openPage('سندات القبض', ReceiptVouchers(owner: true, branchId: branchId))),
-            ListTile(leading: const Icon(Icons.receipt, color: gold),
-              title: const Text('سندات صرف الموردين'), onTap: () => openPage('سندات صرف الموردين', const SupplierPaymentVouchers())),
-            ListTile(leading: const Icon(Icons.sync_alt, color: const Color(0xFF51F2B0)),
-              title: const Text('حركة المنتجات'), onTap: () => openPage('حركة المنتجات', const ItemMovementReport())),
-          ],
-        )),
     ],
   );
 }
@@ -2729,7 +2805,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 if (c.mounted) Navigator.pop(c);
                 if (context.mounted) await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
                   title:const Text('تم إرسال الفاتورة للمدير'),
-                  content:const Text('في انتظار الاعتماد. لم يتم خصم المخزون أو تسجيل الحسابات بعد. تابع الحالة من المبيعات ← فواتير الموظف.'),
+                  content:const Text('في انتظار الاعتماد. لم يتم خصم المخزون أو تسجيل الحسابات بعد. تابع الحالة من الرئيسية ← فواتيري المعلقة ومتابعة الاعتماد.'),
                   actions:[TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('تم'))]));
                 return;
               }
@@ -2864,30 +2940,43 @@ class _SalesState extends State<Sales> {
         .toList()
       ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
     return Column(children: [
-      Padding(padding: const EdgeInsets.fromLTRB(8,3,8,2), child: Row(children: [
-        Expanded(child: FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact,
-          minimumSize: const Size(0, 34), textStyle: const TextStyle(fontSize: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 4)),
-          icon: const Icon(Icons.add_shopping_cart, size: 15),
-          label: const Text('فاتورة جديدة', maxLines: 1, overflow: TextOverflow.ellipsis),
-          onPressed: () => newSaleDialog(context, owner, branchId))),
-        const SizedBox(width: 5),
-        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
-          minimumSize: const Size(0, 34), textStyle: const TextStyle(fontSize: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 4)),
-          icon: const Icon(Icons.payments_outlined, size: 15),
-          label: const Text('سند قبض', maxLines: 1, overflow: TextOverflow.ellipsis),
-          onPressed:()=>createReceiptVoucher(context,branchId,owner:owner))),
-      ])),
-      Padding(padding:const EdgeInsets.symmetric(horizontal:10),child: PendingSalesShortcut(owner:owner, compact:true)),
+      // Keep invoice actions focused on the invoice; receipt and approval
+      // shortcuts are available separately on the home dashboard.
+      Padding(padding: const EdgeInsets.fromLTRB(8, 3, 8, 2),
+        child: SizedBox(width: double.infinity, child: FilledButton.icon(
+          style: FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            minimumSize: const Size(0, 36)),
+          icon: const Icon(Icons.add_shopping_cart, size: 17),
+          label: const Text('فاتورة جديدة'),
+          onPressed: () => newSaleDialog(context, owner, branchId)))),
       if(!owner) const EmployeeOfflineSaleNotice(),
       MovementPeriodControls(key:ValueKey('${selectedFrom.toIso8601String()}-${selectedTo.toIso8601String()}'),from:selectedFrom,to:selectedTo,enabled:true,compact:true,onConfirm:(from,to)=>setState(() {selectedFrom=from;selectedTo=to;})),
-      if (owner) Padding(padding: const EdgeInsets.fromLTRB(10,0,10,2), child: Row(children: [
-        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.summarize_outlined, size:18), label: const Text('تقرير المبيعات', maxLines:1, overflow:TextOverflow.ellipsis),
-          onPressed: () => openVibReport(context, 'تقرير حركة المبيعات', const InvoiceMovementReportPage(type: 'sales')))),
-        const SizedBox(width:6),
-        Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal: 4)), icon: const Icon(Icons.edit_note, size:18), label: const Text('تعديل فاتورة', maxLines:1, overflow:TextOverflow.ellipsis), onPressed: () => editSaleByNumber(context))),
-      ])),
+      if (owner) Padding(padding: const EdgeInsets.fromLTRB(10, 0, 10, 2),
+        child: Row(children: [
+          Expanded(child: FilledButton.icon(
+            style: FilledButton.styleFrom(visualDensity: VisualDensity.compact,
+              minimumSize: const Size(0, 36), padding: const EdgeInsets.symmetric(horizontal: 6)),
+            icon: const Icon(Icons.person_search, size: 18),
+            label: const Text('تقرير مسحوبات عميل', maxLines: 1, overflow: TextOverflow.ellipsis),
+            onPressed: () => openVibReport(context, 'تقرير مسحوبات عميل', const CustomerSalesReportPage()))),
+          const SizedBox(width: 5),
+          PopupMenuButton<String>(
+            tooltip: 'تقارير وتعديل',
+            icon: const Icon(Icons.more_horiz, color: gold),
+            onSelected: (value) {
+              if (value == 'report') {
+                openVibReport(context, 'تقرير حركة المبيعات', const InvoiceMovementReportPage(type: 'sales'));
+              } else if (value == 'edit') {
+                editSaleByNumber(context);
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(value: 'report', child: Text('تقرير حركة المبيعات')),
+              PopupMenuItem(value: 'edit', child: Text('تعديل فاتورة')),
+            ],
+          ),
+        ])),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 3),
         child: Text('الفواتير: ${rows.length} • الإجمالي: ${movementReportMoney(rows.fold<int>(0,(sum,row){final value=row.data()['total'];return value is num && value.isFinite ? sum+(value*100).round() : sum;}))}',
           maxLines: 1, overflow: TextOverflow.ellipsis, textAlign: TextAlign.center,
@@ -5261,24 +5350,10 @@ class Accounts extends StatelessWidget {
   final bool startWithSuppliers;
   const Accounts({super.key, this.startWithSuppliers = false});
 
+  // Customers and suppliers have independent directories; don't expose the
+  // opposite account type via a tab inside a search screen.
   @override
-  Widget build(BuildContext context) => DefaultTabController(
-    length: 2,
-    initialIndex: startWithSuppliers ? 1 : 0,
-    child: Column(children: [
-      Material(
-        color: Theme.of(context).colorScheme.surface,
-        child: const TabBar(tabs: [
-          Tab(icon: Icon(Icons.people_outline), text: 'العملاء'),
-          Tab(icon: Icon(Icons.business_outlined), text: 'الموردون'),
-        ]),
-      ),
-      const Expanded(child: TabBarView(children: [
-        AccountDirectory(suppliers: false),
-        AccountDirectory(suppliers: true),
-      ])),
-    ]),
-  );
+  Widget build(BuildContext context) => AccountDirectory(suppliers: startWithSuppliers);
 }
 
 class AccountDirectoryRow extends StatelessWidget {
@@ -5316,12 +5391,17 @@ class AccountDirectoryRow extends StatelessWidget {
   );
 }
 
-class AccountDirectory extends StatelessWidget {
+class AccountDirectory extends StatefulWidget {
   final bool suppliers;
   const AccountDirectory({super.key, required this.suppliers});
+  @override State<AccountDirectory> createState() => _AccountDirectoryState();
+}
 
+class _AccountDirectoryState extends State<AccountDirectory> {
+  String query = '';
   @override
   Widget build(BuildContext context) {
+    final suppliers = widget.suppliers;
     final collection = suppliers ? 'suppliers' : 'customers';
     return Column(children: [
       Padding(padding: const EdgeInsets.fromLTRB(10,8,10,4), child: Column(children: [
@@ -5350,6 +5430,16 @@ class AccountDirectory extends StatelessWidget {
         ))),
         if(suppliers) Padding(padding:const EdgeInsets.only(top:4),child:FilledButton.icon(style: FilledButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:12)),
           onPressed: () => createAccountDialog(context, collection, suppliers), icon: const Icon(Icons.person_add, size:18), label: const Text('إضافة مورد'))),
+        const SizedBox(height: 6),
+        TextField(
+          key: ValueKey(suppliers ? 'suppliers-only-search' : 'customers-only-search'),
+          onChanged: (value) => setState(() => query = invoiceSearchText(value.trim())),
+          decoration: InputDecoration(
+            isDense: true,
+            prefixIcon: const Icon(Icons.search),
+            hintText: suppliers ? 'بحث في الموردين فقط بالاسم أو الهاتف' : 'بحث في العملاء فقط بالاسم أو الهاتف',
+          ),
+        ),
       ])),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: db.collection(collection).snapshots(),
@@ -5357,10 +5447,17 @@ class AccountDirectory extends StatelessWidget {
           if (snapshot.hasError) return const Center(child: Text('تعذر تحميل الحسابات'));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
           final docs = snapshot.data!.docs
-              .where((d) => d.data()['active'] != false)
+              .where((d) {
+                if (d.data()['active'] == false) return false;
+                final record = d.data();
+                final haystack = invoiceSearchText('${record['name'] ?? ''} ${record['phone'] ?? ''}');
+                return query.isEmpty || haystack.contains(query);
+              })
               .toList()
             ..sort((a, b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
-          if (docs.isEmpty) return Center(child: Text(suppliers ? 'لا يوجد موردون مسجلون' : 'لا يوجد عملاء مسجلون'));
+          if (docs.isEmpty) return Center(child: Text(query.isNotEmpty
+            ? (suppliers ? 'لا يوجد مورد مطابق للبحث' : 'لا يوجد عميل مطابق للبحث')
+            : (suppliers ? 'لا يوجد موردون مسجلون' : 'لا يوجد عملاء مسجلون')));
           return ListView.builder(itemCount: docs.length, itemBuilder: (context, index) {
             final d = docs[index], account = d.data();
             final balance=(account['balance'] as num?) ?? 0;
