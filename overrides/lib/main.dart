@@ -6361,8 +6361,20 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
   // Opening invoice actions is not an accounting mutation and must remain
   // available when number backfill or Firestore quota writes are unavailable.
   final returned = data['status'] == 'returned';
-  final profile = (await db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid).get()).data();
+  // Keep read-only invoice actions accessible even if Firebase quota is full.
+  Map<String, dynamic>? profile;
+  try {
+    final userRef = db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid);
+    try {
+      profile = (await userRef.get(const GetOptions(source: Source.cache))).data();
+    } catch (_) {
+      profile = (await userRef.get(const GetOptions(source: Source.server))).data();
+    }
+  } catch (error) {
+    if (!isFirestoreQuotaExhausted(error) && !isTemporaryFirestoreOffline(error)) rethrow;
+  }
   if (!context.mounted) return;
+  // Restricted actions remain disabled if we cannot verify the permission.
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
     ListTile(leading: const Icon(Icons.receipt_long_outlined, color: gold), title: const Text('عرض تفاصيل الفاتورة'),
@@ -6916,7 +6928,19 @@ Future<void> printInvoice(BuildContext context, String type, String id, Map<Stri
     } else {
       await Printing.layoutPdf(name: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf', format: invoicePageFormat(paperChoice ?? 'a4'), dynamicLayout: false, onLayout: (_) async => bytes);
     }
-    await db.collection(type).doc(id).set({'printedAt': FieldValue.serverTimestamp(), 'printedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
+    // The PDF has already been handed to the printer at this point.
+    // A server quota failure updating the optional "printedAt" audit flag
+    // must NEVER be reported as a printer failure.
+    try {
+      await db.collection(type).doc(id).set({
+        'printedAt': FieldValue.serverTimestamp(),
+        'printedBy': FirebaseAuth.instance.currentUser!.uid,
+      }, SetOptions(merge: true));
+    } catch (error) {
+      if (!isFirestoreQuotaExhausted(error) && !isTemporaryFirestoreOffline(error)) rethrow;
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم إرسال الفاتورة للطابعة، لكن تسجيل تاريخ الطباعة ينتظر عودة Firebase.')));
+    }
   } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e'))); }
 }
 
