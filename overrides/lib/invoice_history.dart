@@ -171,6 +171,16 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
               DateTime(now.year, now.month, now.day), includeYesterday:true)); },
           icon: const Icon(Icons.today, size: 15), label: const Text('اليوم وأمس', maxLines: 1))),
       ])),
+    if (!staffApp) Padding(padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+      child: SizedBox(width: double.infinity, child: OutlinedButton.icon(
+        style: OutlinedButton.styleFrom(minimumSize: const Size(0, 34),
+          visualDensity: VisualDensity.compact),
+        icon: const Icon(Icons.inventory_2_outlined, size: 17),
+        label: Text(sales ? 'تقرير حركة صنف في فواتير المبيعات'
+          : 'تقرير حركة صنف في فواتير المشتريات'),
+        onPressed: () => openVibReport(context,
+          sales ? 'حركة صنف - المبيعات' : 'حركة صنف - المشتريات',
+          ProductInvoiceMovementPage(type: widget.type))))),
     Padding(padding: const EdgeInsets.fromLTRB(12, 0, 12, 4), child: Row(children: [
       Expanded(child: TextField(
         controller: partySearchController,
