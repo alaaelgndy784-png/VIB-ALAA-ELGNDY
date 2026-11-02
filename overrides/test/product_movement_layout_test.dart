@@ -1,3 +1,5 @@
+import 'dart:io';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_test/flutter_test.dart';
@@ -73,6 +75,8 @@ void main() {
       hits: buys, font: font, allDates: true);
     expect(buyingPdf.sublist(0, 4), [37, 80, 68, 70]);
     expect(buyingPdf.length, greaterThan(2000));
+    Directory('dist').createSync(recursive: true);
+    File('dist/VIB-PURCHASE-PRODUCT-A4.pdf').writeAsBytesSync(buyingPdf);
     final sellingPdf = await createVibProductInvoiceReportPdf(
       productName: 'خلاط', type: 'sales',
       hits: [VibProductInvoiceHit(id: 'sale-id',
@@ -84,5 +88,32 @@ void main() {
       from: DateTime(2026, 10, 1), to: DateTime(2026, 10, 31));
     expect(sellingPdf.sublist(0, 4), [37, 80, 68, 70]);
     expect(sellingPdf.length, greaterThan(2000));
+    File('dist/VIB-SALES-PRODUCT-A4.pdf').writeAsBytesSync(sellingPdf);
+    final movementPdf = await createProductTracePdf(
+      'خلاط', [
+        {
+          'id': 'internal-doc-id-should-not-display',
+          'kind': 'purchase',
+          'quantity': 4,
+          'balanceAfter': 4,
+          'createdAt': Timestamp.fromDate(time),
+        },
+        {
+          'id': 'another-internal-doc-id',
+          'kind': 'sale',
+          'quantity': -2,
+          'balanceAfter': 2,
+          'createdAt': Timestamp.fromDate(time.add(const Duration(days: 1))),
+        },
+      ],
+      {
+        'internal-doc-id-should-not-display': 'المورد: أحمد\\nفاتورة: 431',
+        'another-internal-doc-id': 'العميل: محمود\\nفاتورة: 1223',
+      },
+      ProductPeriodTotals(0, 2, 2, 4, 2, 0),
+      font,
+    );
+    expect(movementPdf.sublist(0, 4), [37, 80, 68, 70]);
+    File('dist/VIB-STOCK-MOVEMENT-A4.pdf').writeAsBytesSync(movementPdf);
   });
 }
