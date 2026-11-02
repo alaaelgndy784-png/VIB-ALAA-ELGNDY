@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../lib/main.dart';
 
@@ -18,6 +19,32 @@ void main() {
     'due': due, 'receiptPaid': receiptPaid, 'onlinePaymentEver': onlineEver,
     'onlinePaid': 0,
   };
+
+  test('invoice monetary fingerprint ignores irrelevant map key order and display metadata', () {
+    final a=invoice()..['customerId']='c-22'..['branchId']='main'
+      ..['items']=[{'productId':'p1','quantity':2,'unitPrice':50,'lineTotal':100}];
+    final b=invoice()..['branchId']='main'..['customerId']='c-22'
+      ..['printedAt']=Timestamp.now()
+      ..['items']=[{'lineTotal':100.0,'unitPrice':50.0,'quantity':2,'productId':'p1'}];
+    expect(saleCancellationFinancialSnapshot(a),saleCancellationFinancialSnapshot(b));
+    b['items']=[{'productId':'p1','quantity':3,'unitPrice':50,'lineTotal':150}];
+    expect(saleCancellationFinancialSnapshot(a),isNot(saleCancellationFinancialSnapshot(b)));
+  });
+
+  testWidgets('employee checkout shows every item and old/new balance in the review', (tester) async {
+    await tester.pumpWidget(const MaterialApp(home:Scaffold(body:SingleChildScrollView(
+      child:EmployeeSaleCheckoutSummary(
+        items:[(name:'خلاط',quantity:2,unitPrice:100.0),
+               (name:'خرطوم شطاف',quantity:3,unitPrice:50.0)],
+        previousBalance:700,total:350,paid:100,customerName:'عميل تجريبي',
+      ),
+    ))));
+    expect(find.byKey(const ValueKey('employee-sale-checkout-review')), findsOneWidget);
+    expect(find.textContaining('خلاط'),findsOneWidget);
+    expect(find.textContaining('خرطوم شطاف'),findsOneWidget);
+    expect(find.textContaining('الرصيد بعد الفاتورة'),findsOneWidget);
+    expect(find.textContaining('950.00'),findsOneWidget);
+  });
 
   test('only a completed sale is eligible for mistaken-invoice cancellation', () {
     expect(saleInvoiceCanBeCancelled(invoice()), isTrue);
