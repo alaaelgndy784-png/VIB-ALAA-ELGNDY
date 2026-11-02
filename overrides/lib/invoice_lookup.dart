@@ -71,42 +71,46 @@ class _MovementPeriodControlsState extends State<MovementPeriodControls> {
     // showing duplicate text inputs, calendar buttons and a third action row.
     if (widget.compact) {
       final canApply = widget.enabled && startInputValid && endInputValid && !end.isBefore(start);
-      return Padding(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Row(children: [
-            Expanded(child: OutlinedButton.icon(
-              onPressed: widget.enabled ? () => pick(true) : null,
-              style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
-                minimumSize: const Size(0, 38), padding: const EdgeInsets.symmetric(horizontal: 5)),
-              icon: const Icon(Icons.date_range, size: 16),
-              label: Text('من ' + _format(start), maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12)))),
-            const SizedBox(width: 5),
-            Expanded(child: OutlinedButton.icon(
-              onPressed: widget.enabled ? () => pick(false) : null,
-              style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
-                minimumSize: const Size(0, 38), padding: const EdgeInsets.symmetric(horizontal: 5)),
-              icon: const Icon(Icons.date_range, size: 16),
-              label: Text('إلى ' + _format(end), maxLines: 1, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12)))),
-          ]),
-          Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-            TextButton.icon(
-              onPressed: widget.enabled ? () {
-                final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
-                final today = DateTime(now.year, now.month, now.day);
-                _setDate(true, today);
-                _setDate(false, today);
-                widget.onConfirm(today, today);
-              } : null,
-              icon: const Icon(Icons.today, size: 16),
-              label: const Text('اليوم')),
-            FilledButton.icon(
-              key: const ValueKey('period-apply-button'), onPressed: canApply ? () => widget.onConfirm(start, end) : null,
-              style: FilledButton.styleFrom(visualDensity: VisualDensity.compact,
-                minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 12)),
-              icon: const Icon(Icons.check, size: 16), label: const Text('تطبيق')),
-          ]),
+      // One toolbar row on a phone: two date pickers, Today and Apply.
+      // Avoid duplicate text inputs and calendar rows above the invoice list.
+      Widget dateButton(String label, DateTime value, bool first) =>
+        Expanded(child: OutlinedButton(
+          onPressed: widget.enabled ? () => pick(first) : null,
+          style: OutlinedButton.styleFrom(
+            minimumSize: const Size(0, 36),
+            padding: const EdgeInsets.symmetric(horizontal: 2),
+            visualDensity: VisualDensity.compact),
+          child: FittedBox(fit: BoxFit.scaleDown, child: Text(
+            '$label ${DateFormat('dd/MM/yy').format(value)}',
+            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)))));
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        child: Row(children: [
+          dateButton('من', start, true),
+          const SizedBox(width: 4),
+          dateButton('إلى', end, false),
+          SizedBox(width: 36, child: IconButton(
+            tooltip: 'عرض اليوم',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            onPressed: widget.enabled ? () {
+              final now = tz.TZDateTime.now(tz.getLocation('Africa/Cairo'));
+              final today = DateTime(now.year, now.month, now.day);
+              setState(() {
+                start = end = today;
+                startText.text = endText.text = _format(today);
+                startInputValid = endInputValid = true;
+              });
+              widget.onConfirm(today, today);
+            } : null,
+            icon: const Icon(Icons.today, size: 20))),
+          SizedBox(width: 38, child: IconButton.filled(
+            key: const ValueKey('period-apply-button'),
+            tooltip: 'تطبيق الفترة',
+            visualDensity: VisualDensity.compact,
+            padding: EdgeInsets.zero,
+            onPressed: canApply ? () => widget.onConfirm(start, end) : null,
+            icon: const Icon(Icons.check, size: 20))),
         ]));
     }
     return Padding(padding: EdgeInsets.all(widget.compact ? 5 : 12),
