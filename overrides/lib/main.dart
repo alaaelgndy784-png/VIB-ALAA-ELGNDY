@@ -6911,11 +6911,20 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
 }
 
 Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<String, dynamic> data,{String paperChoice='a4'}) async {
+  Uint8List bytes;
   try {
-    final bytes = await createInvoicePdf(type,id,data,paperChoice:paperChoice);
-    await Printing.sharePdf(bytes: bytes, filename: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf');
-  } catch (e) {
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر إنشاء PDF: $e')));
+    bytes = await createInvoicePdf(type,id,data,paperChoice:paperChoice);
+  } catch (error) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تعذر تجهيز PDF: $error')));
+    return;
+  }
+  try {
+    await Printing.sharePdf(bytes: bytes,
+      filename: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf');
+  } catch (error) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تم تجهيز PDF لكن تعذر فتح المشاركة: $error')));
   }
 }
 
