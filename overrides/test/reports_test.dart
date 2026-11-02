@@ -42,6 +42,28 @@ void main() {
     expect(profitQueryEnd(now),now);
   });
 
+  test('sales customer withdrawals never mix supplier records or another customer ID', () {
+    expect(customerWithdrawalMatches({'customerId':'c1','customerName':'شركة النور'},'c1','شركة النور'), isTrue);
+    expect(customerWithdrawalMatches({'customerId':'c2','customerName':'شركة النور'},'c1','شركة النور'), isFalse);
+    expect(customerWithdrawalMatches({'supplierId':'s1','supplierName':'شركة النور'},'c1','شركة النور'), isFalse);
+    expect(customerWithdrawalMatches({'customerName':'شركة النور'},'c1','شركة النور'), isTrue);
+    expect(customerWithdrawalMatches({'customerName':'شركة النور  '},'c1','شركة النور'), isTrue);
+    expect(customerWithdrawalMatches({'customerName':'شركة النور القديمة'},'c1','شركة النور'), isFalse);
+    expect(customerWithdrawalMatches({'customerName':'شركة النور'},'','شركة النور'), isFalse);
+  });
+
+  test('customer withdrawals report PDF supports a customer-specific heading', () async {
+    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final selectedDate = DateTime(2026,10,4);
+    final report = summarizeInvoiceMovement([
+      {'id':'s1','displayNumber':'1201','customerName':'عميل الاختبار','total':200,
+       'paid':50,'due':150,'createdAt':Timestamp.fromDate(movementReportBoundary(selectedDate))}
+    ], selectedDate, selectedDate, type:'sales');
+    final bytes = await createInvoiceMovementReportPdf(report,font,
+      reportTitle:'تقرير مسحوبات عميل',reportCustomer:'عميل الاختبار');
+    expect(bytes.length, greaterThan(1000));
+  });
+
   final day=DateTime(2026,10,4);
   testWidgets('typed sales report dates are applied when the period button is pressed', (tester) async {
     DateTime? appliedFrom, appliedTo;
