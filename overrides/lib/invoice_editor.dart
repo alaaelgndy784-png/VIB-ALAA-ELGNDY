@@ -106,7 +106,7 @@ class EmployeeSaleCheckoutSummary extends StatelessWidget {
           moneyRow('باقي الفاتورة',due,emph:true),
           moneyRow('رصيد العميل السابق',previousBalance),
           moneyRow('الرصيد بعد الفاتورة',previousBalance+due,emph:true),
-        ]))),
+        ])),
     );
   }
 }
