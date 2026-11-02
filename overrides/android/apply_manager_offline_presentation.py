@@ -28,8 +28,8 @@ source = replace_once(source, sales_list_anchor,
             style:TextStyle(color:Colors.orangeAccent,fontSize:11),textAlign:TextAlign.center)),
 """ + sales_list_anchor)
 source = replace_once(source,
-    "Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${sale['partialReturnTotal']} ج.م' : ''}'),",
-    "Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${sale['partialReturnTotal']} ج.م' : ''}',style:const TextStyle(color:Colors.redAccent)),")
+    "Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'cancelled' ? ' • ملغاة بالخطأ' : sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${sale['partialReturnTotal']} ج.م' : ''}'),",
+    "Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'cancelled' ? ' • ملغاة بالخطأ' : sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${sale['partialReturnTotal']} ج.م' : ''}',style:const TextStyle(color:Colors.redAccent)),")
 source = replace_once(source,
     "trailing: Text('${sale['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),",
     "trailing: Text('${sale['total'] ?? 0} ج.م', style: const TextStyle(color: Colors.lightBlueAccent, fontWeight: FontWeight.bold)),")
