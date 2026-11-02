@@ -57,6 +57,7 @@ part 'invoice_parties.dart';
 part 'business_reports.dart';
 part 'customer_sales_report.dart';
 part 'product_invoice_movement.dart';
+part 'product_invoice_pdf.dart';
 part 'movement_product_picker.dart';
 part 'invoice_lookup.dart';
 part 'account_statements.dart';
