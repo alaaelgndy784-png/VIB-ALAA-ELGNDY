@@ -290,16 +290,9 @@ class _EmployeeVisitsPageState extends State<EmployeeVisitsPage> {
 class EmployeeVisitReport extends StatelessWidget {
   const EmployeeVisitReport({super.key});
   @override Widget build(BuildContext context) => Column(children: [
-    Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
-      child: Row(children: [
-        const Expanded(child: Text('زيارات الموظفين', style: TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 17))),
-        OutlinedButton.icon(
-          onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EmployeeVisitShortagesPage())),
-          icon: const Icon(Icons.inventory_2_outlined),
-          label: const Text('تجميع النواقص'),
-        ),
-      ]),
+    const Padding(
+      padding: EdgeInsets.fromLTRB(12, 10, 12, 4),
+      child: Text('زيارات الموظفين', style: TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 17)),
     ),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: db.collection('employeeVisits').orderBy('createdAt', descending: true).limit(500).snapshots(),
