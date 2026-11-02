@@ -20,6 +20,7 @@ jobs:
     steps:
       - name: Verify exactly which staff build passed
         run: |
+          gh run watch "$TESTED_STAFF_RUN" --repo "$REPO" --exit-status --interval 15
           actual="$(gh api "repos/$REPO/actions/runs/$TESTED_STAFF_RUN" --jq '[.head_sha, .conclusion] | join(" ")')"
           test "$actual" = "$EXPECTED_SHA success"
 
