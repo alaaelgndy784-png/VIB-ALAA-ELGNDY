@@ -190,7 +190,7 @@ class _CustomerSalesReportPageState extends State<CustomerSalesReportPage> {
                   final row = report.rows[index];
                   final items = vibCustomerInvoiceLines(row.data);
                   return Card(child: ExpansionTile(
-                    title: Text('فاتورة ' + row.number + (row.returned ? ' • مرتجعة بالكامل' : '')),
+                    title: Text('فاتورة ' + row.number + (row.data['status']=='cancelled' ? ' • ملغاة' : row.returned ? ' • مرتجعة بالكامل' : '')),
                     subtitle: Text(movementReportDate(row.date) + ' • ' + movementReportMoney(row.totalCents)),
                     children: [
                       for (final item in items) ListTile(
@@ -265,7 +265,7 @@ Future<Uint8List> createCustomerSalesReportPdf(
       for (var i = 0; i < report.rows.length; i++) ...[
         if (i > 0) pw.NewPage(),
         pw.Text('فاتورة ' + report.rows[i].number + ' | ' + movementReportDate(report.rows[i].date) +
-          (report.rows[i].returned ? ' | مرتجعة بالكامل' : ''),
+          (report.rows[i].data['status']=='cancelled' ? ' | ملغاة' : report.rows[i].returned ? ' | مرتجعة بالكامل' : ''),
           style: pw.TextStyle(fontWeight: pw.FontWeight.bold, fontSize: 12)),
         itemTable(report.rows[i].data),
         pw.Text('إجمالي الفاتورة: ' + movementReportMoney(report.rows[i].totalCents) +
