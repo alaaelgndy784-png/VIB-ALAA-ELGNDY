@@ -454,6 +454,8 @@ service cloud.firestore {
     }
     match /stock/{id} {
       allow read: if owner() || (employee() && resource.data.branchId == branch());
+      // Staff may list ONLY the shared main inventory with a branchId==main query.
+      allow list: if employee() && resource.data.branchId == 'main';
       // Staff browse shared inventory; validated atomic writes preserve stock and balances.
       allow get: if employee() && id.matches('main_.*');
       allow delete: if false;
