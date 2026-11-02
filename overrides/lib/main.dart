@@ -58,6 +58,7 @@ part 'business_reports.dart';
 part 'customer_sales_report.dart';
 part 'product_invoice_movement.dart';
 part 'product_invoice_pdf.dart';
+part 'receipt_payment_detail_pdf.dart';
 part 'movement_product_picker.dart';
 part 'invoice_lookup.dart';
 part 'account_statements.dart';
@@ -5035,6 +5036,47 @@ ReceiptDayReport filterReceiptReportByCustomer(ReceiptDayReport report, String q
     matches.fold<int>(0, (sum, c) => sum + c.amountCents));
 }
 
+// Use recorded account IDs rather than matching only similar display names.
+String vibReceiptPartySelectionKey(ReceiptCustomerTotal customer) {
+  final id = customer.id.trim();
+  if (id.isNotEmpty) return 'customer:' + id;
+  return 'receipt:' + customer.receipts.first['id'].toString();
+}
+
+ReceiptDayReport vibSelectReceiptParty(
+    ReceiptDayReport report, String query, String? partyKey) {
+  if (partyKey == null) return filterReceiptReportByCustomer(report, query);
+  final matched = report.customers.where(
+      (customer) => vibReceiptPartySelectionKey(customer) == partyKey).toList();
+  return ReceiptDayReport(
+    matched,
+    matched.fold<int>(0, (sum, c) => sum + c.receipts.length),
+    matched.fold<int>(0, (sum, c) => sum + c.amountCents),
+  );
+}
+
+// A fresh server snapshot may be printed only if it exactly matches visible rows.
+String vibReceiptReportFingerprint(ReceiptDayReport report) {
+  final records = <String>[];
+  for (final party in report.customers) {
+    for (final row in party.receipts) {
+      final date = receiptEffectiveTimestamp(row);
+      records.add([
+        row['id'] ?? '',
+        row['customerId'] ?? '',
+        row['customerName'] ?? '',
+        ((row['amount'] as num) * 100).round(),
+        date?.millisecondsSinceEpoch ?? -1,
+        row['receiptNumber'] ?? '',
+        row['note'] ?? '',
+        row['paymentMethod'] ?? '',
+      ].join('§'));
+    }
+  }
+  records.sort();
+  return records.join('\n');
+}
+
 List<Map<String,dynamic>> receiptRowsForCustomer(List<Map<String,dynamic>> rows,String customerId)=>
   rows.where((row)=>'${row['customerId']??''}'==customerId).toList();
 
@@ -5077,6 +5119,7 @@ class CustomerPaymentReport extends StatefulWidget {
 
 class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
   final customerSearch = TextEditingController();
+  String? selectedPaymentPartyKey;
   late DateTime day, endDay, draftDay, draftEndDay;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> receipts;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> cancellations;
@@ -5094,6 +5137,85 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
     cancellations = widget.owner
         ? db.collection('voucherCancellations').snapshots(includeMetadataChanges: true)
         : const Stream<QuerySnapshot<Map<String, dynamic>>>.empty();
+  }
+
+  Future<void> _choosePaymentParty(ReceiptDayReport allReceipts) async {
+    final nameFilter = TextEditingController(text: customerSearch.text);
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialog) => StatefulBuilder(
+        builder: (dialog, refresh) {
+          final keyword = invoiceSearchText(nameFilter.text);
+          final customers = allReceipts.customers.where((c) =>
+              invoiceSearchText(c.name).contains(keyword) ||
+              invoiceSearchText(c.id).contains(keyword)).toList();
+          return AlertDialog(
+            title: Text(widget.suppliers ? 'اختار المورد' : 'اختار العميل',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            contentPadding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+            content: SizedBox(
+              width: MediaQuery.sizeOf(dialog).width * .9,
+              height: MediaQuery.sizeOf(dialog).height * .55,
+              child: Column(children: [
+                TextField(
+                  controller: nameFilter,
+                  autofocus: true,
+                  textAlign: TextAlign.right,
+                  textDirection: TextDirection.rtl,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    hintText: 'اكتب الاسم واختاره من النتائج',
+                    prefixIcon: Icon(Icons.search, size: 20)),
+                  onChanged: (_) => refresh(() {}),
+                ),
+                const SizedBox(height: 8),
+                Expanded(child: customers.isEmpty
+                  ? const Center(child: Text('مفيش سندات للاسم ده في الفترة المحددة'))
+                  : ListView.separated(
+                    itemCount: customers.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (context, i) {
+                      final customer = customers[i];
+                      return ListTile(
+                        dense: true,
+                        title: Text(customer.name, textAlign: TextAlign.right,
+                          maxLines: 2),
+                        subtitle: Text(customer.receipts.length.toString() +
+                          ' سند • ' + receiptReportMoney(customer.amountCents),
+                          textAlign: TextAlign.right),
+                        onTap: () => Navigator.pop(dialog,
+                          vibReceiptPartySelectionKey(customer)),
+                      );
+                    },
+                  ),
+                ),
+              ]),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialog, '__all__'),
+                child: const Text('عرض كل العملاء')),
+              TextButton(
+                onPressed: () => Navigator.pop(dialog),
+                child: const Text('إلغاء')),
+            ],
+          );
+        },
+      ),
+    );
+    nameFilter.dispose();
+    if (selected == null || !mounted) return;
+    setState(() {
+      if (selected == '__all__') {
+        selectedPaymentPartyKey = null;
+        customerSearch.clear();
+      } else {
+        final customer = allReceipts.customers.firstWhere(
+          (c) => vibReceiptPartySelectionKey(c) == selected);
+        selectedPaymentPartyKey = selected;
+        customerSearch.text = customer.name;
+      }
+    });
   }
 
   @override void dispose() {
@@ -5162,13 +5284,13 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
           TextField(
             key: const ValueKey('receipt-customer-search'),
             controller: customerSearch,
-            onChanged: (_) => setState(() {}),
+            onChanged: (_) => setState(() => selectedPaymentPartyKey = null),
             decoration: InputDecoration(
               isDense: true, hintText: widget.suppliers ? 'بحث عن مورد' : 'بحث عن عميل',
               prefixIcon: const Icon(Icons.search, size: 19),
               suffixIcon: customerSearch.text.trim().isEmpty ? null : IconButton(
                 icon: const Icon(Icons.close, size: 18), tooltip: 'مسح البحث',
-                onPressed: () { customerSearch.clear(); setState(() {}); }),
+                onPressed: () { customerSearch.clear(); setState(() => selectedPaymentPartyKey = null); }),
               contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
             ),
           ),
@@ -5213,8 +5335,9 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                   if(!widget.suppliers)return <String,dynamic>{...source,'id':d.id};
                   return supplierPaymentReportRow(d.id,source);
                 }).toList();
-              final report = filterReceiptReportByCustomer(
-                summarizeReceiptPeriod(rows, day, endDay), customerSearch.text);
+              final allReceipts = summarizeReceiptPeriod(rows, day, endDay);
+              final report = vibSelectReceiptParty(
+                allReceipts, customerSearch.text, selectedPaymentPartyKey);
               final pending = snapshot.data!.metadata.hasPendingWrites || (widget.owner && cancelSnapshot.data!.metadata.hasPendingWrites);
               final cached = snapshot.data!.metadata.isFromCache || (widget.owner && cancelSnapshot.data!.metadata.isFromCache);
               return Column(children: [
@@ -5245,16 +5368,30 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                     ]),
                   ),
                 ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 0, 8, 5),
+                  child: SizedBox(width: double.infinity, child: OutlinedButton.icon(
+                    onPressed: allReceipts.receiptCount == 0 ? null : () => _choosePaymentParty(allReceipts),
+                    icon: const Icon(Icons.person_search, size: 19),
+                    label: Text(selectedPaymentPartyKey == null
+                      ? (widget.suppliers ? 'اختيار مورد من قائمة الأسماء' : 'اختيار عميل من قائمة الأسماء')
+                      : 'العميل المحدد: ' + customerSearch.text),
+                  )),
+                ),
                 Row(children: [
                   Expanded(child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(vertical: 6)),
                     onPressed: report.receiptCount == 0 || cached || pending ? null :
-                      () => printCustomerPaymentReport(context, day, report, owner: widget.owner, to: endDay,suppliers:widget.suppliers),
+                      () => printCustomerPaymentReport(context, day, report, owner: widget.owner,
+                      to: endDay, suppliers: widget.suppliers,
+                      customerQuery: customerSearch.text, selectedPartyKey: selectedPaymentPartyKey),
                     icon: const Icon(Icons.picture_as_pdf), label: const Text('طباعة A4'))),
                   Expanded(child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(vertical: 6)),
                     onPressed: report.receiptCount == 0 || cached || pending ? null :
-                      () => printCustomerPaymentReport(context, day, report, owner: widget.owner, thermal: true, to: endDay,suppliers:widget.suppliers),
+                      () => printCustomerPaymentReport(context, day, report, owner: widget.owner, thermal: true,
+                      to: endDay, suppliers: widget.suppliers,
+                      customerQuery: customerSearch.text, selectedPartyKey: selectedPaymentPartyKey),
                     icon: const Icon(Icons.receipt_long), label: const Text('طباعة 80 مم'))),
                 ]),
                 Expanded(child: report.receiptCount == 0
@@ -5293,73 +5430,14 @@ String receiptReportStamp(Map<String,dynamic> row,DateTime? to) {
   return to==null ? DateFormat('HH:mm').format(at.toLocal()) : DateFormat('dd/MM/yyyy HH:mm').format(tz.TZDateTime.from(at,tz.getLocation('Africa/Cairo')));
 }
 
-Future<Uint8List> createCustomerPaymentReportPdf(DateTime day, ReceiptDayReport report, pw.Font font, {required bool owner, bool thermal = false,DateTime? to,bool suppliers=false}) async {
-  final pdf = pw.Document();
-  final period=to==null ? 'اليوم: ${DateFormat('yyyy/MM/dd').format(day)}' : 'من ${DateFormat('dd/MM/yyyy').format(day)} إلى ${DateFormat('dd/MM/yyyy').format(to)} (شامل اليوم الأخير)';
-  final party=suppliers?'الموردين':'العملاء', voucher=suppliers?'سندات الصرف':'سندات القبض';
-  if (thermal) {
-    pw.Widget line(String value, {bool bold = false}) => pw.Text(value, textAlign: pw.TextAlign.right,
-      style: pw.TextStyle(fontSize: bold ? 10 : 8, fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal));
-    final rollHeight = (150 + report.customers.length * 14).clamp(150, 4000).toDouble();
-    pdf.addPage(pw.Page(pageFormat: PdfPageFormat(80 * PdfPageFormat.mm, rollHeight * PdfPageFormat.mm,
-        marginAll: 4 * PdfPageFormat.mm),
-      theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
-      build: (_) => pw.Column(mainAxisSize: pw.MainAxisSize.min, crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-        line('VIB للتجارة والتوزيع', bold: true), line('حركة سداد $party', bold: true),
-        line(period),
-        line(owner ? (suppliers?'مدفوعات المدير وجميع الموظفين':'تحصيلات المدير وجميع الموظفين') : 'حركاتي فقط'),
-        line('عدد $party: ${report.customers.length} • عدد $voucher: ${report.receiptCount}'), pw.Divider(),
-        for (var i = 0; i < report.customers.length; i++) ...[
-          line('${i + 1}. ${report.customers[i].name}', bold: true),
-          line('إجمالي السداد: ${receiptReportMoney(report.customers[i].amountCents)} • عدد السندات: ${report.customers[i].receipts.length}'),
-          pw.Divider(),
-        ],
-        line(to==null ? 'إجمالي الحركة اليوم' : 'إجمالي الحركة للفترة', bold: true), line(receiptReportMoney(report.totalCents), bold: true),
-      ])));
-    return pdf.save();
-  }
-  const navy = PdfColor.fromInt(0xFF14263D), accent = PdfColor.fromInt(0xFFB58A38);
-  pw.Widget cell(String value, {bool header = false}) => pw.Padding(
-    padding: const pw.EdgeInsets.all(6), child: pw.Text(value, textAlign: pw.TextAlign.right,
-      style: pw.TextStyle(fontSize: 10, color: header ? PdfColors.white : PdfColors.black)));
-  final movements = report.customers.expand((c) => c.receipts).toList();
-  pdf.addPage(pw.MultiPage(pageFormat: PdfPageFormat.a4, maxPages: 1000,
-    theme: pw.ThemeData.withFont(base: font, bold: font), textDirection: pw.TextDirection.rtl,
-    footer: (context) => pw.Text('${context.pageNumber} / ${context.pagesCount}', textAlign: pw.TextAlign.center),
-    build: (_) => [
-      pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 22, color: navy)),
-      pw.SizedBox(height: 12), pw.Text('تقرير حركة سداد $party', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: 18)),
-      pw.Text(period),
-      pw.Text(owner ? '$voucher من جميع الموظفين والمدير' : '$voucher التي سجلتها فقط'),
-      pw.Text('عدد $party: ${report.customers.length} • عدد السندات: ${report.receiptCount}'),
-      pw.SizedBox(height: 12),
-      pw.Table(border: pw.TableBorder.all(color: accent, width: .5), columnWidths: {
-        0: const pw.FlexColumnWidth(2), 1: const pw.FlexColumnWidth(1), 2: const pw.FlexColumnWidth(4), 3: const pw.FlexColumnWidth(.5)},
-        children: [
-          pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
-            children: ['إجمالي الحركة', 'عدد السندات', 'اسم $party', 'م'].map((v) => cell(v, header: true)).toList()),
-          for (var i = 0; i < report.customers.length; i++) pw.TableRow(children: [
-            cell(receiptReportMoney(report.customers[i].amountCents)), cell('${report.customers[i].receipts.length}'),
-            cell(report.customers[i].name), cell('${i + 1}')]),
-        ]),
-      pw.SizedBox(height: 10), pw.Text('إجمالي الحركة للفترة: ${receiptReportMoney(report.totalCents)}',
-        style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold)),
-      pw.SizedBox(height: 16), pw.Text('تفاصيل حركة السداد'), pw.SizedBox(height: 6),
-      pw.Table(border: pw.TableBorder.all(color: accent, width: .5), columnWidths: {
-        0: const pw.FlexColumnWidth(1.5), 1: const pw.FlexColumnWidth(2), 2: const pw.FlexColumnWidth(2.5),
-        3: const pw.FlexColumnWidth(3), 4: const pw.FlexColumnWidth(2)}, children: [
-          pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
-            children: ['المبلغ', 'المسؤول', 'رقم السند', 'الطرف', to==null ? 'الوقت' : 'التاريخ / الوقت'].map((v) => cell(v, header: true)).toList()),
-          for (final row in movements) pw.TableRow(children: [
-            cell(receiptReportMoney(((row['amount'] as num) * 100).round())), cell('${row['actorName'] ?? ''}'),
-            cell('${row['id']}'), cell('${row['customerName'] ?? ''}'),
-            cell(receiptReportStamp(row,to))]),
-        ]),
-    ]));
-  return pdf.save();
-}
+Future<Uint8List> createCustomerPaymentReportPdf(DateTime day,
+    ReceiptDayReport report, pw.Font font, {required bool owner,
+    bool thermal = false, DateTime? to, bool suppliers = false}) =>
+  createVibCustomerPaymentDetailPdf(day, report, font,
+    owner: owner, thermal: thermal, to: to, suppliers: suppliers);
 
-Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, ReceiptDayReport report, {required bool owner, bool thermal = false,DateTime? to,bool suppliers=false}) async {
+Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, ReceiptDayReport report, {required bool owner, bool thermal = false,DateTime? to,bool suppliers=false,
+    String customerQuery = '', String? selectedPartyKey}) async {
   try {
     Query<Map<String,dynamic>> query=suppliers
       ? db.collection('accountMovements').where('accountType',isEqualTo:'suppliers')
@@ -5380,7 +5458,11 @@ Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, Rece
       if(!suppliers)return <String,dynamic>{...source,'id':d.id};
       return supplierPaymentReportRow(d.id,source);
     }).toList();
-    final confirmed=to==null ? summarizeReceiptDay(rows,day) : summarizeReceiptPeriod(rows,day,to);
+    final allConfirmed=to==null ? summarizeReceiptDay(rows,day) : summarizeReceiptPeriod(rows,day,to);
+    final confirmed=vibSelectReceiptParty(allConfirmed,customerQuery,selectedPartyKey);
+    if(vibReceiptReportFingerprint(confirmed)!=vibReceiptReportFingerprint(report)) {
+      throw StateError('بيانات السداد اتغيرت بعد عرض التقرير. افتح التقرير من جديد قبل الطباعة.');
+    }
     if(confirmed.receiptCount==0) throw StateError('لا توجد حركات سداد في الفترة المحددة');
     final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
     final bytes = await createCustomerPaymentReportPdf(day, confirmed, font, owner: owner, thermal: thermal,to:to,suppliers:suppliers);
