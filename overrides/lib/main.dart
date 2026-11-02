@@ -2016,6 +2016,25 @@ class Products extends StatefulWidget {
 }
 class _ProductsState extends State<Products> {
   String query = '';
+  bool catalogRefreshing = false;
+  String? catalogRefreshMessage;
+  Future<void> refreshEmployeeCatalogue() async {
+    if(catalogRefreshing)return;
+    setState(()=>catalogRefreshing=true);
+    try {
+      final response = await db.collection('products')
+        .get(const GetOptions(source:Source.server))
+        .timeout(const Duration(seconds:12));
+      final count=response.docs.where((doc)=>doc.data()['active']==true).length;
+      if(!mounted)return;
+      setState(()=>catalogRefreshMessage='تم تحميل $count صنف نشط من جرد المدير. افتح فاتورة جديدة لرؤية الأصناف المحدثة.');
+    } catch(error) {
+      if(!mounted)return;
+      setState(()=>catalogRefreshMessage='تعذر تحميل القائمة من السيرفر: $error. راجع الإنترنت وحصة Firebase، ولا تحذف بيانات التطبيق.');
+    } finally {
+      if(mounted)setState(()=>catalogRefreshing=false);
+    }
+  }
   bool get owner => widget.owner;
   String get branchId => widget.branchId;
   Widget _compactProductAction({required String label,required String tooltip,required IconData icon,required VoidCallback onPressed,bool primary=false}) {
@@ -2036,9 +2055,27 @@ class _ProductsState extends State<Products> {
     builder: (context, snap) {
       if (snap.hasError) return const Center(child: Text('تعذر تحميل المنتجات'));
       if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-      final docs = snap.data!.docs.where((d) => d.data()['active'] == true && '${d.data()['name'] ?? ''}'.toLowerCase().contains(query)).toList()
+      final activeProducts = snap.data!.docs.where((d)=>d.data()['active']==true).toList();
+      final docs = activeProducts.where((d) => '${d.data()['name'] ?? ''}'.toLowerCase().contains(query)).toList()
         ..sort((a,b) => '${a.data()['name'] ?? ''}'.compareTo('${b.data()['name'] ?? ''}'));
       return Column(children: [
+        if(!owner) Padding(padding:const EdgeInsets.fromLTRB(12,5,12,0),child:Column(children:[
+          Row(children:[
+            Expanded(child:Text('أصناف جرد المدير النشطة: ${activeProducts.length} • المعروض: ${docs.length}',
+              style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold,fontSize:12))),
+            OutlinedButton.icon(
+              onPressed:catalogRefreshing ? null : refreshEmployeeCatalogue,
+              icon:catalogRefreshing
+                ? const SizedBox(width:14,height:14,child:CircularProgressIndicator(strokeWidth:2))
+                : const Icon(Icons.sync,size:17),
+              label:const Text('مزامنة الأصناف'),),
+          ]),
+          if(snap.data!.metadata.isFromCache)
+            const Text('البيانات من ذاكرة الجهاز — قد لا تشمل أصناف المدير الجديدة',
+              style:TextStyle(color:Colors.orangeAccent,fontSize:12)),
+          if(catalogRefreshMessage!=null)
+            Text(catalogRefreshMessage!,style:const TextStyle(color:Colors.white70,fontSize:11)),
+        ])),
         Padding(padding: const EdgeInsets.all(12), child: TextField(decoration: const InputDecoration(labelText: 'بحث عن منتج — اكتب أي حرف', prefixIcon: Icon(Icons.search)), onChanged: (value) => setState(() => query = value.trim().toLowerCase()))),
         if (owner) Padding(padding:const EdgeInsets.fromLTRB(12,2,12,8),child:Row(children:[
           Expanded(child:_compactProductAction(label:'إضافة منتج',tooltip:'إضافة منتج',icon:Icons.add,onPressed:()=>productDialog(context),primary:true)),
