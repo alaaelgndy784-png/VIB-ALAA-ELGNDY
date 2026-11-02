@@ -1,0 +1,55 @@
+name: Publish VIB Manager compact report preview APK
+on:
+  push:
+    branches: [feature/customer-sales-movements-20261102]
+    paths:
+      - .github/workflows/publish-vib-manager-compact-report-20261102.yml
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Await exact tested Manager build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh run watch 41403803717 --repo "$REPO" --exit-status --interval 10
+          result="$(gh api "repos/$REPO/actions/runs/41403803717" --jq '[.head_sha, .conclusion] | join(" ")')"
+          test "$result" = 'a17d9522a6709c480001024cc835f832aa0ac7d6 success'
+      - name: Fetch tested manager Android APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          mkdir -p dist
+          gh run download 41403803717 --repo "$REPO" --name VIB-SALES-MANAGER-APK --dir dist
+          test -f dist/VIB-SALES-MANAGER.apk
+      - name: Verify archive and checksums
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          p=Path('dist/VIB-SALES-MANAGER.apk')
+          assert p.stat().st_size>10_000_000, 'APK unexpectedly small'
+          with zipfile.ZipFile(p) as z:
+              assert z.testzip() is None
+              assert 'AndroidManifest.xml' in z.namelist()
+              assert 'classes.dex' in z.namelist()
+          PY
+          cd dist
+          sha256sum VIB-SALES-MANAGER.apk > SHA256SUMS.txt
+      - name: Publish mobile direct APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          gh release create vib-manager-0.2.48-preview-compact-report-20261102 \
+            dist/VIB-SALES-MANAGER.apk dist/SHA256SUMS.txt \
+            --repo "$REPO" \
+            --target a17d9522a6709c480001024cc835f832aa0ac7d6 \
+            --title 'VIB Manager 0.2.48 — compact invoice report (preview)' \
+            --notes 'تجربة جديدة: شاشة تقرير حركة المبيعات والمشتريات بمحدد تاريخ صف واحد، وملخص PDF مدمج، لعرض الفواتير مبكرًا. تتضمن أيضًا فصل بحث العملاء عن الموردين وبدء كل فاتورة في تقرير مسحوبات العميل في صفحة PDF مستقلة. اجتازت اختبارات GitHub والبناء لكن يلزم اختبارها على جهاز حقيقي. تحذير: لا تمسح التطبيق القديم أو بياناته؛ اعمل نسخة احتياطية وتأكد من مزامنة الفواتير المعلقة.' \
+            --prerelease
