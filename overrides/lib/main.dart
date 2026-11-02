@@ -1452,6 +1452,85 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
   );
 }
 
+// Gross profit uses original item cost snapshots, not current catalog prices.
+// Negative salesReturns adjust both revenue and original cost.
+class DashboardGrossProfitMetric extends StatelessWidget {
+  final DateTime from, to;
+  const DashboardGrossProfitMetric({super.key, required this.from, required this.to});
+
+  @override Widget build(BuildContext context) {
+    final start = _dashboardStartOfDay(from);
+    final endDay = _dashboardStartOfDay(to);
+    final end = DateTime(endDay.year, endDay.month, endDay.day + 1);
+    final startStamp = Timestamp.fromDate(start);
+    final endStamp = Timestamp.fromDate(end);
+    return Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: db.collection('sales')
+        .where('createdAt', isGreaterThanOrEqualTo: startStamp)
+        .where('createdAt', isLessThan: endStamp).snapshots(),
+      builder: (context, salesSnap) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: db.collection('salesReturns')
+          .where('createdAt', isGreaterThanOrEqualTo: startStamp)
+          .where('createdAt', isLessThan: endStamp).snapshots(),
+        builder: (context, returnsSnap) {
+          String value = '—';
+          var hasMissingCost = false;
+          if (salesSnap.hasData && returnsSnap.hasData) {
+            double revenue = 0;
+            double cost = 0;
+            void includeInvoice(Map<String, dynamic> data, double sign) {
+              if (!visibleAfterReset(data)) return;
+              revenue += sign * ((data['total'] as num?)?.toDouble() ?? 0);
+              final rawItems = data['items'];
+              if (rawItems is List && rawItems.isNotEmpty) {
+                for (final raw in rawItems) {
+                  if (raw is! Map) continue;
+                  final quantity = (raw['quantity'] as num?)?.toDouble() ?? 0;
+                  final atSaleCost = (raw['purchasePriceAtSale'] as num?)?.toDouble();
+                  if (atSaleCost == null || !atSaleCost.isFinite || atSaleCost < 0) {
+                    hasMissingCost = true;
+                  } else {
+                    cost += sign * quantity * atSaleCost;
+                  }
+                }
+              } else {
+                final quantity = (data['quantity'] as num?)?.toDouble() ?? 0;
+                final atSaleCost = (data['purchasePriceAtSale'] as num?)?.toDouble();
+                if (atSaleCost == null || !atSaleCost.isFinite || atSaleCost < 0) {
+                  hasMissingCost = true;
+                } else {
+                  cost += sign * quantity * atSaleCost;
+                }
+              }
+            }
+            for (final doc in salesSnap.data!.docs) { includeInvoice(doc.data(), 1); }
+            for (final doc in returnsSnap.data!.docs) { includeInvoice(doc.data(), -1); }
+            value = hasMissingCost ? 'غير مكتمل' : (revenue - cost).toStringAsFixed(2);
+          }
+          return Padding(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.trending_up_outlined, color: Color(0xFFFFC857), size: 25),
+              const SizedBox(height: 5),
+              const Text('إجمالي الأرباح', textAlign: TextAlign.center, maxLines: 2,
+                style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
+              const SizedBox(height: 4),
+              Tooltip(
+                message: hasMissingCost ? 'بعض الفواتير لا تحتوي على تكلفة الشراء وقت البيع' :
+                  'الربح الإجمالي بعد مرتجعات الفترة، قبل المصروفات',
+                child: FittedBox(fit: BoxFit.scaleDown, child: Text(value,
+                  style: const TextStyle(color: Color(0xFFFFC857),
+                    fontSize: 17, fontWeight: FontWeight.w800))),
+              ),
+              if (salesSnap.hasError || returnsSnap.hasError)
+                const Icon(Icons.info_outline, color: Colors.orangeAccent, size: 12),
+            ]),
+          );
+        },
+      ),
+    ));
+  }
+}
+
 class DashboardSummaryCard extends StatefulWidget {
   final bool owner;
   final String? actorId;
@@ -1507,6 +1586,8 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
               accent: const Color(0xFF55B8FF), icon: Icons.shopping_cart_outlined),
             _divider(),
             DashboardCustomerPaymentsMetric(from: selectedFrom, to: selectedTo),
+            _divider(),
+            DashboardGrossProfitMetric(from: selectedFrom, to: selectedTo),
           ]
         : <Widget>[
             DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', actorId: widget.actorId, selectedDay: metricDay,
@@ -1984,6 +2065,7 @@ class OwnerDashboard extends StatelessWidget {
             tile('المحادثة', Icons.forum, () => openStaffChat(context, owner: true), accent: const Color(0xFFB866FF)),
             tile('حركة السداد', Icons.volunteer_activism, () => openPage('حركة السداد', const CustomerPaymentReport(owner: true)), accent: const Color(0xFF31E59A)),
             tile('زيارات الموظفين', Icons.location_on, () => openPage('زيارات الموظفين', const EmployeeVisitReport()), accent: const Color(0xFF38A9FF)),
+            tile('تجميع النواقص', Icons.inventory_2_outlined, () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => const EmployeeVisitShortagesPage())), accent: const Color(0xFFFFC857)),
             tile('مواعيد الشيكات', Icons.event_note, () => openPage('مواعيد الشيكات', ChequeAgenda(uid: uid)), accent: const Color(0xFFFFC857)),
             PendingApprovalDashboardTile(sales: true,
               onTap: () => openPage('اعتماد فواتير المبيعات',
@@ -4282,7 +4364,7 @@ class PurchaseSettlementPanel extends StatelessWidget {
         Expanded(flex: 3, child: Text(label, style: const TextStyle(fontSize: 12))),
         const SizedBox(width: 6), Expanded(flex: 2, child: Align(alignment: Alignment.centerLeft,
           child: FittedBox(fit: BoxFit.scaleDown, child: Text('${value.toStringAsFixed(2)} ج.م',
-            style: TextStyle(fontSize: bold ? 16 : 13, color: bold ? gold : Colors.white,
+            style: TextStyle(fontSize: bold ? 16 : 13, color: salesMode ? (credit ? const Color(0xFFFF5252) : const Color(0xFF39FF14)) : (bold ? gold : Colors.white),
               fontWeight: bold ? FontWeight.bold : FontWeight.normal))))),
       ]));
     return _vibInvoicePanel(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -4294,8 +4376,8 @@ class PurchaseSettlementPanel extends StatelessWidget {
             color: salesMode ? Colors.black : null)),
           backgroundColor: salesMode ? const Color(0xFF39FF14) : null,
           selectedColor: salesMode ? const Color(0xFF39FF14) : null,
-          side: salesMode ? BorderSide(color: !credit ? Colors.white : Colors.black45,
-            width: !credit ? 2.5 : 0.8) : null,
+          side: salesMode ? BorderSide(color: !credit ? const Color(0xFF123F82) : Colors.black45,
+            width: !credit ? 3.5 : 0.8) : null,
           showCheckmark: false, selected: !credit,
           onSelected: enabled ? (_) => onModeChanged(false) : null)),
         const SizedBox(width: 6),
@@ -4305,8 +4387,8 @@ class PurchaseSettlementPanel extends StatelessWidget {
             color: salesMode ? Colors.white : null)),
           backgroundColor: salesMode ? const Color(0xFFE53935) : null,
           selectedColor: salesMode ? const Color(0xFFE53935) : null,
-          side: salesMode ? BorderSide(color: credit ? Colors.white : Colors.black45,
-            width: credit ? 2.5 : 0.8) : null,
+          side: salesMode ? BorderSide(color: credit ? const Color(0xFF123F82) : Colors.black45,
+            width: credit ? 3.5 : 0.8) : null,
           showCheckmark: false, selected: credit,
           onSelected: enabled ? (_) => onModeChanged(true) : null)),
       ]),
@@ -6339,6 +6421,13 @@ PdfPageFormat invoicePageFormat(String paper) => switch (paper) {
 const _thermalPrinterMacKey = 'vib.thermal.printer.mac';
 const _thermalPrinterNameKey = 'vib.thermal.printer.name';
 
+// Paired headphones and speakers are not compatible thermal receipt printers.
+bool _isBluetoothAudioDevice(String name) {
+  final lower = name.toLowerCase();
+  return const ['airpods', 'earbuds', 'headphone', 'headset', 'galaxy buds',
+    'soundcore', 'earphone', 'speaker', 'سماعة'].any(lower.contains);
+}
+
 Future<bool> _ensureThermalBluetoothPermission(BuildContext context) async {
   if (!Platform.isAndroid) return true;
   try {
@@ -6376,10 +6465,11 @@ Future<({String mac, String name})?> _chooseBluetoothThermalPrinter(BuildContext
       if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('شغّل البلوتوث واقرن طابعة XP-P323B بالموبايل أولًا.')));
       return null;
     }
-    final printers = await PrintBluetoothThermal.pairedBluetooths;
+    final printers = (await PrintBluetoothThermal.pairedBluetooths)
+        .where((device) => !_isBluetoothAudioDevice(device.name)).toList();
     if (!context.mounted) return null;
     if (printers.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('مافيش طابعة مقترنة. افتح إعدادات البلوتوث واقرن XP-P323B، ثم جرّب تاني.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('مافيش طابعة حرارية مقترنة. اقرن طابعة 80 مم من إعدادات البلوتوث. السماعات مش هتظهر ضمن الطابعات.')));
       return null;
     }
     final selectedMac = await showDialog<String>(
@@ -6415,14 +6505,15 @@ Future<void> _printPdfOnBluetoothThermal(
   Uint8List pdfBytes, {
   String? printerMac,
 }) async {
-  if (!await _ensureThermalBluetoothPermission(context)) return;
+  if (!await _ensureThermalBluetoothPermission(context)) throw StateError('لم يتم السماح بالاتصال بطابعة البلوتوث.');
   if (!await PrintBluetoothThermal.bluetoothEnabled) throw StateError('شغّل البلوتوث على الموبايل.');
   var mac = printerMac;
   var name = '';
-  final printers = await PrintBluetoothThermal.pairedBluetooths;
+  final printers = (await PrintBluetoothThermal.pairedBluetooths)
+        .where((device) => !_isBluetoothAudioDevice(device.name)).toList();
   if (mac == null || !printers.any((printer) => printer.macAdress == mac)) {
     final selected = await _chooseBluetoothThermalPrinter(context);
-    if (selected == null) return;
+    if (selected == null) throw StateError('لم يتم اختيار طابعة حرارية؛ لم تُطبع الفاتورة.');
     mac = selected.mac;
     name = selected.name;
   } else {
@@ -6433,60 +6524,57 @@ Future<void> _printPdfOnBluetoothThermal(
   }
   try {
     final pages = await Printing.raster(pdfBytes, dpi: 203).toList();
-    if (pages.length != 1) {
-      throw StateError('تم إيقاف الطباعة لأن ملف الإيصال يحتوي على أكثر من صفحة.');
-    }
+    if (pages.isEmpty) throw StateError('ملف الفاتورة لا يحتوي على صفحات للطباعة.');
     final profile = await esc.CapabilityProfile.load();
     final generator = esc.Generator(esc.PaperSize.mm80, profile);
-    final resized = img.copyResize(pages.single.asImage(), width: 576);
-    final bitmap = img.Image(width: resized.width, height: resized.height, numChannels: 3);
-    img.fill(bitmap, color: img.ColorRgb8(255, 255, 255));
-    img.compositeImage(bitmap, resized);
-
-    // Threshold the raster and remember ink density per row.
-    final rowInk = List<int>.filled(bitmap.height, 0);
-    for (var y = 0; y < bitmap.height; y++) {
-      var darkPixels = 0;
-      for (var x = 0; x < bitmap.width; x++) {
-        final pixel = bitmap.getPixel(x, y);
-        final luminance = (pixel.r * 299 + pixel.g * 587 + pixel.b * 114) / 1000;
-        final channel = luminance < 230 ? 0 : 255;
-        bitmap.setPixelRgb(x, y, channel, channel, channel);
-        if (channel == 0) darkPixels++;
+    if (!await PrintBluetoothThermal.writeBytes(generator.reset())) {
+      throw StateError('تعذر تهيئة طابعة 80 مم.');
+    }
+    var printedAnyInk = false;
+    // Each thermal PDF page must be printed in order, never discarded.
+    // Use small raster bands to avoid overflowing the printer buffer.
+    for (final page in pages) {
+      final resized = img.copyResize(page.asImage(), width: 576);
+      final bitmap = img.Image(width: resized.width, height: resized.height, numChannels: 3);
+      img.fill(bitmap, color: img.ColorRgb8(255, 255, 255));
+      img.compositeImage(bitmap, resized);
+      final rowInk = List<int>.filled(bitmap.height, 0);
+      for (var y = 0; y < bitmap.height; y++) {
+        var darkPixels = 0;
+        for (var x = 0; x < bitmap.width; x++) {
+          final pixel = bitmap.getPixel(x, y);
+          final luminance = (pixel.r * 299 + pixel.g * 587 + pixel.b * 114) / 1000;
+          final channel = luminance < 230 ? 0 : 255;
+          bitmap.setPixelRgb(x, y, channel, channel, channel);
+          if (channel == 0) darkPixels++;
+        }
+        rowInk[y] = darkPixels;
       }
-      rowInk[y] = darkPixels;
+      var lastInkRow = -1;
+      var rollingInk = 0;
+      for (var y = 0; y < rowInk.length; y++) {
+        rollingInk += rowInk[y];
+        if (y >= 7) rollingInk -= rowInk[y - 7];
+        if (y >= 6 && rollingInk >= 260) lastInkRow = y;
+      }
+      if (lastInkRow < 0) continue;
+      final height = (lastInkRow + 32).clamp(1, bitmap.height).toInt();
+      printedAnyInk = true;
+      for (var top = 0; top < height; top += 128) {
+        final bandHeight = (height - top).clamp(1, 128).toInt();
+        final band = img.copyCrop(bitmap, x: 0, y: top, width: bitmap.width, height: bandHeight);
+        if (!await PrintBluetoothThermal.writeBytes(
+          generator.imageRaster(band, align: esc.PosAlign.center))) {
+          throw StateError('الطابعة ما استقبلتش كل بيانات الفاتورة.');
+        }
+        await Future.delayed(const Duration(milliseconds: 70));
+      }
     }
-
-    // Crop after the last real text/line cluster; isolated sensor specks don't extend the receipt.
-    var lastInkRow = -1;
-    var rollingInk = 0;
-    for (var y = 0; y < rowInk.length; y++) {
-      rollingInk += rowInk[y];
-      if (y >= 7) rollingInk -= rowInk[y - 7];
-      if (y >= 6 && rollingInk >= 260) lastInkRow = y;
+    if (!printedAnyInk) throw StateError('صفحات الفاتورة فارغة.');
+    if (!await PrintBluetoothThermal.writeBytes(generator.feed(2))) {
+      throw StateError('تعذر إنهاء طباعة الفاتورة.');
     }
-    final cropHeight = (lastInkRow < 0 ? 1 : lastInkRow + 48)
-        .clamp(1, bitmap.height)
-        .toInt();
-    final printBitmap = img.copyCrop(
-      bitmap,
-      x: 0,
-      y: 0,
-      width: bitmap.width,
-      height: cropHeight,
-    );
-
-    // Keep the printer's compatible raster image mode and send the cropped receipt as one job.
-    final commands = <int>[
-      ...generator.reset(),
-      ...generator.imageRaster(printBitmap, align: esc.PosAlign.center),
-      ...generator.feed(2),
-    ];
-    if (!await PrintBluetoothThermal.writeBytes(commands)) {
-      throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');
-    }
-    // Keep Bluetooth connected while the printer drains its receive buffer.
-    await Future.delayed(const Duration(seconds: 3));
+    await Future.delayed(const Duration(seconds: 2));
   } finally {
     await PrintBluetoothThermal.disconnect;
   }
@@ -6511,9 +6599,21 @@ Future<void> printTestPage(BuildContext context, String paper, {String? bluetoot
 }
 
 Future<void> invoiceActions(BuildContext context, String type, String id, Map<String, dynamic> data, {bool canReturn = true}) async {
-  try{data=await numberedInvoiceData(type,id,data);}catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر تخصيص رقم الفاتورة: $e');return;}
+  // Opening invoice actions is read-only; don't backfill serial numbers here.
   final returned = data['status'] == 'returned' || data['status'] == 'cancelled';
-  final profile = (await db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid).get()).data();
+  // The cached signed-in role is enough to expose an existing PDF. Restrict
+  // privileged invoice edits/returns when the role cannot be verified.
+  Map<String, dynamic>? profile;
+  final userRef = db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid);
+  try {
+    profile = (await userRef.get(const GetOptions(source: Source.cache))).data();
+  } catch (_) {}
+  if (profile == null) {
+    try {
+      profile = (await userRef.get(const GetOptions(source: Source.server))
+        .timeout(const Duration(seconds: 3))).data();
+    } catch (_) { /* With no verified role, only read-only actions are shown. */ }
+  }
   if (!context.mounted) return;
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
@@ -6987,20 +7087,17 @@ Future<void> selectInvoicePaper(BuildContext context, String type, String id, Ma
 
 Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> data,
     {String? paperChoice, Map<String, dynamic>? settingsOverride}) async {
-  if (settingsOverride == null && data['internalNumber'] is! int) {
-    try {
-      data = await numberedInvoiceData(type,id,data)
-          .timeout(const Duration(seconds: 4));
-    } catch (error) {
-      if (!isTemporaryFirestoreOffline(error)) rethrow;
-      // Preserve the locally available invoice number for offline viewing.
-    }
-  }
+  // Viewing or sharing an existing invoice PDF must never start a Firestore
+  // transaction merely to backfill its number; this fails when quota is full.
+  // invoiceDisplayNumber keeps the saved invoiceNumber as fallback.
+
   Map<String, dynamic> settings = settingsOverride ?? {};
   if (settingsOverride == null) {
     try {
-      settings = (await db.collection('settings').doc('invoiceBranding').get()).data() ?? {};
-      if (settings.isEmpty) settings = (await db.collection('settings').doc('main').get()).data() ?? {};
+      settings = (await db.collection('settings').doc('invoiceBranding')
+        .get(const GetOptions(source: Source.cache))).data() ?? {};
+      if (settings.isEmpty) settings = (await db.collection('settings').doc('main')
+        .get(const GetOptions(source: Source.cache))).data() ?? {};
     } catch (_) { /* Authorized staff can print with the bundled VIB brand if settings are unavailable. */ }
   }
   final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
@@ -7029,7 +7126,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   final phones = ['phone', 'phone2', 'whatsapp'].map((key) => configured(key, '')).where((x) => x.isNotEmpty).toSet().toList();
   final footer = configured('invoiceFooter', 'شكراً لتعاملكم معنا');
   final number=invoiceDisplayNumber(type,id,data);
-  final barcode='${data['invoiceBarcode']??''}';
+  final barcode='${data['invoiceBarcode'] ?? invoiceSerialCache[serialKey(type,id)]?['invoiceBarcode'] ?? ''}';
   final items = <Map<String, dynamic>>[];
   if (data['items'] is List) {
     for (final raw in data['items'] as List) { if (raw is Map) items.add(Map<String, dynamic>.from(raw)); }
@@ -7042,14 +7139,11 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   final paid = (data['paid'] as num?)?.toDouble() ?? (isSale ? total : 0);
   final due = (data['due'] as num?)?.toDouble() ?? total - paid;
   final receiptPaid = (data['receiptPaid'] as num?)?.toDouble() ?? 0;
-  num? supplierBalance = ((data['revision'] as num?)?.toInt() ?? 0) == 0 ? data['supplierBalanceAfter'] as num? : null;
-  bool liveSupplierBalance = false;
-  if (!isSale && supplierBalance == null && settingsOverride == null && '${data['supplierId'] ?? ''}'.isNotEmpty) {
-    try {
-      supplierBalance = (await db.collection('suppliers').doc('${data['supplierId']}').get()).data()?['balance'] as num?;
-      liveSupplierBalance = true;
-    } catch (_) { /* Keep missing historical balances explicit instead of printing zero. */ }
-  }
+  // Historical invoice PDFs must not display live/stale supplier balances as
+  // though they were the original balance on the invoice.
+  final num? supplierBalance = ((data['revision'] as num?)?.toInt() ?? 0) == 0
+    ? data['supplierBalanceAfter'] as num? : null;
+  const liveSupplierBalance = false;
   return createStyledA4InvoicePdf(font: font, logo: logo, isSale: isSale,
     number: number, barcode: barcode, data: data, items: items, company: company,
     address: address, taxNumber: taxNumber, commercialRegister: commercialRegister,
@@ -7058,11 +7152,20 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
 }
 
 Future<void> exportInvoicePdf(BuildContext context, String type, String id, Map<String, dynamic> data,{String paperChoice='a4'}) async {
+  Uint8List bytes;
   try {
-    final bytes = await createInvoicePdf(type,id,data,paperChoice:paperChoice);
-    await Printing.sharePdf(bytes: bytes, filename: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf');
+    bytes = await createInvoicePdf(type,id,data,paperChoice:paperChoice);
   } catch (e) {
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر إنشاء PDF: $e')));
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تعذر إنشاء PDF: $e')));
+    return;
+  }
+  try {
+    await Printing.sharePdf(bytes: bytes,
+      filename: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf');
+  } catch (e) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تم تجهيز PDF لكن تعذر فتح المشاركة: $e')));
   }
 }
 
@@ -7073,9 +7176,24 @@ Future<void> printInvoice(BuildContext context, String type, String id, Map<Stri
       final prefs = await SharedPreferences.getInstance();
       await _printPdfOnBluetoothThermal(context, bytes, printerMac: prefs.getString(_thermalPrinterMacKey));
     } else {
-      await Printing.layoutPdf(name: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf', format: invoicePageFormat(paperChoice ?? 'a4'), dynamicLayout: false, onLayout: (_) async => bytes);
+      final sentToPrinter = await Printing.layoutPdf(
+        name: 'VIB-${type=='sales'?'SALE':'PURCHASE'}-${invoiceDisplayNumber(type,id,data)}-$paperChoice.pdf',
+        format: invoicePageFormat(paperChoice ?? 'a4'),
+        dynamicLayout: false,
+        onLayout: (_) async => bytes);
+      if (!sentToPrinter) return; // No print audit after cancelled OS dialog.
     }
-    await db.collection(type).doc(id).set({'printedAt': FieldValue.serverTimestamp(), 'printedBy': FirebaseAuth.instance.currentUser!.uid}, SetOptions(merge: true));
+    // Printing and the optional printedAt server audit are separate outcomes.
+    try {
+      await db.collection(type).doc(id).set({
+        'printedAt': FieldValue.serverTimestamp(),
+        'printedBy': FirebaseAuth.instance.currentUser!.uid,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      if (!isFirestoreQuotaExhausted(e) && !isTemporaryFirestoreOffline(e)) rethrow;
+      if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم إرسال الفاتورة للطباعة؛ تسجيل التاريخ ينتظر Firebase.')));
+    }
   } catch (e) { if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر الطباعة: $e'))); }
 }
 

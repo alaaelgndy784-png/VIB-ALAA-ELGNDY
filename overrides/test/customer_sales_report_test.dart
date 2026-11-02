@@ -6,6 +6,16 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(initializeChequeTimeZones);
 
+  test('withdrawal picker excludes supplier-labelled and inactive entries only', () {
+    expect(vibIsCustomerAccountForWithdrawals({'name':'عميل صحيح','active':true}), isTrue);
+    expect(vibIsCustomerAccountForWithdrawals({'name':'تاجر يعمل عميل ومورد','accountType':'customer'}), isTrue);
+    expect(vibIsCustomerAccountForWithdrawals({'name':'مورد خاطئ','accountType':'suppliers'}), isFalse);
+    expect(vibIsCustomerAccountForWithdrawals({'name':'مورد خاطئ','partyType':'supplier'}), isFalse);
+    expect(vibIsCustomerAccountForWithdrawals({'name':'مورد خاطئ','type':'مورد'}), isFalse);
+    expect(vibIsCustomerAccountForWithdrawals({'name':'عميل موقوف','active':false}), isFalse);
+    expect(vibIsCustomerAccountForWithdrawals({'name':'  '}), isFalse);
+  });
+
   test('customer id takes precedence over equal display names', () {
     expect(vibCustomerInvoiceMatches('c1', 'شركة النور',
       {'customerId': 'c1', 'customerName': 'شركة النور'}), isTrue);

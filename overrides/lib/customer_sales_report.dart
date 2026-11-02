@@ -2,6 +2,20 @@ part of 'main.dart';
 
 // Customer-specific invoice withdrawals report. Reads historical sale lines,
 // never modifies invoices, inventory or payments.
+// Only genuine, active customer accounts appear in the withdrawals picker.
+// Some legacy imports placed a supplier-tagged entry in the customers collection.
+// Do not classify by name alone: a business can legitimately be both.
+bool vibIsCustomerAccountForWithdrawals(Map<String, dynamic> data) {
+  if (data['active'] == false) return false;
+  for (final key in ['accountType', 'partyType', 'type', 'role']) {
+    final label = '${data[key] ?? ''}'.trim().toLowerCase();
+    if (const ['supplier', 'suppliers', 'مورد', 'الموردين', 'موردين'].contains(label)) {
+      return false;
+    }
+  }
+  return '${data['name'] ?? ''}'.trim().isNotEmpty;
+}
+
 bool vibCustomerInvoiceMatches(String customerId, String customerName, Map<String, dynamic> invoice) {
   final recordedId = (invoice['customerId'] ?? '').toString().trim();
   if (recordedId.isNotEmpty) return recordedId == customerId;
@@ -52,7 +66,7 @@ class _CustomerSalesReportPageState extends State<CustomerSalesReportPage> {
         SafeArea(child: Padding(
           padding: EdgeInsets.only(bottom: MediaQuery.viewInsetsOf(sheet).bottom),
           child: SizedBox(height: MediaQuery.sizeOf(sheet).height * .72, child: Column(children: [
-            const Padding(padding: EdgeInsets.all(12), child: Text('اختيار العميل', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold))),
+            const Padding(padding: EdgeInsets.all(12), child: Text('اختيار عميل من سجل العملاء فقط', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
             Padding(padding: const EdgeInsets.symmetric(horizontal: 12),
               child: TextField(controller: search, autofocus: true,
                 decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'ابحث باسم العميل'),
@@ -65,7 +79,8 @@ class _CustomerSalesReportPageState extends State<CustomerSalesReportPage> {
                 final needle = invoiceSearchText(search.text);
                 final choices = snapshot.data!.docs.where((d) {
                   final name = (d.data()['name'] ?? '').toString().trim();
-                  return name.isNotEmpty && invoiceSearchText(name).contains(needle);
+                  return vibIsCustomerAccountForWithdrawals(d.data()) &&
+                    invoiceSearchText(name).contains(needle);
                 }).toList()..sort((a,b) => (a.data()['name'] ?? '').toString()
                     .compareTo((b.data()['name'] ?? '').toString()));
                 if (choices.isEmpty) return const Center(child: Text('لا يوجد عميل بهذا الاسم'));
