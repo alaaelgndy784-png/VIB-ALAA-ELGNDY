@@ -13,8 +13,8 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       REPO: ${{ github.repository }}
-      TESTED_RUN: "41422976980"
-      EXPECTED_SHA: "e2a6dfa930cd0fe17d5c1f7d17d90322996443c8"
+      TESTED_RUN: "41423311568"
+      EXPECTED_SHA: "dcbd862ec9fc1263afa88bb6468f26b005b6b5e8"
     steps:
       - name: Await exact tested manager source build
         run: |
