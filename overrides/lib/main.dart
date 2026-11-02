@@ -1966,14 +1966,16 @@ class OwnerDashboard extends StatelessWidget {
       const DashboardSummaryCard(owner: true),
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
-        child: GridView.count(
+        child: GridView(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          crossAxisCount: 2,
-          mainAxisSpacing: 8,
-          crossAxisSpacing: 8,
-          // Fixed tile height prevents startup data updates from shifting icons.
-          mainAxisExtent: 90,
+          // The delegate supports fixed main-axis extents on Flutter 3.38.
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 2,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            mainAxisExtent: 90,
+          ),
           children: [
             tile('المبيعات', Icons.insert_chart, () => openPage('المبيعات', Sales(owner: true, branchId: branchId)), accent: const Color(0xFF31E59A)),
             tile('المشتريات', Icons.shopping_cart, () => openPage('المشتريات', const Purchases()), accent: const Color(0xFFFF922E)),
