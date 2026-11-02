@@ -2050,6 +2050,23 @@ class _ProductsState extends State<Products> {
         ])),
         if (!owner) Padding(padding: const EdgeInsets.all(12), child: SizedBox(width: double.infinity, child: FilledButton.icon(onPressed: () => newSaleDialog(context, false, branchId), icon: const Icon(Icons.add_shopping_cart), label: const Text('فاتورة بيع جديدة')))),
         Expanded(child: docs.isEmpty ? const Center(child: Text('لا توجد منتجات بعد'))
+          : !owner ? ListView.builder(itemCount: docs.length, itemBuilder: (context, i) {
+              // Existing production rules permit staff to GET main_<productId>.
+              // A broad stock collection listener is denied for employees.
+              // ListView.builder subscribes only to visible product cards.
+              final d = docs[i], p = d.data();
+              return StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
+                key: ValueKey('employee-stock-main-${d.id}'),
+                stream: db.collection('stock').doc('main_${d.id}').snapshots(includeMetadataChanges:true),
+                builder: (context, stock) => InventoryProductCard(
+                  employee:true, number:i+1,name:'${p['name'] ?? ''}',
+                  quantity: stock.hasError || !stock.hasData ? null
+                    : (stock.data!.data()?['quantity'] as num?)?.toInt() ?? 0,
+                  quantityMessage:stock.hasError ? 'تعذر قراءة الكمية' : 'جارٍ تحميل رصيد المخزون',
+                  unitPrice:p['price'] as num?,
+                  onTap:()=>productDetails(context,d.id,employee:true),actions:const []),
+              );
+            })
           : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
               stream: db.collection('stock').where('branchId', isEqualTo: 'main').snapshots(includeMetadataChanges: true),
               builder: (context, stock) {
@@ -2062,13 +2079,13 @@ class _ProductsState extends State<Products> {
                 return ListView.builder(itemCount: docs.length, itemBuilder: (context, i) {
                   final d = docs[i], p = d.data();
                   final quantity = stock.hasError ? null : stock.hasData ? (quantities[d.id] ?? 0) : null;
-                  return InventoryProductCard(employee:!owner,number: i + 1, name: '${p['name'] ?? ''}', quantity: quantity,
+                  return InventoryProductCard(employee:false,number: i + 1, name: '${p['name'] ?? ''}', quantity: quantity,
                     quantityMessage: stock.hasError ? 'تعذر التحميل' : 'جارٍ التحميل', unitPrice: p['price'] as num?,
-                    onTap: () => productDetails(context, d.id,employee:!owner), actions: owner ? [
+                    onTap: () => productDetails(context, d.id,employee:false), actions: [
                       IconButton(tooltip: 'تعديل', icon: const Icon(Icons.edit), onPressed: () => productDialog(context, id: d.id, data: p)),
                       IconButton(tooltip: 'المخزون الرئيسي', icon: const Icon(Icons.warehouse), onPressed: () => mainStockDialog(context, d.id, '${p['name']}')),
                       IconButton(tooltip: 'حذف المنتج', icon: const Icon(Icons.delete_forever, color: Colors.redAccent), onPressed: () => archiveProduct(context, d.id, '${p['name'] ?? ''}')),
-                    ] : const []);
+                    ]);
                 });
               })),
       ]);
