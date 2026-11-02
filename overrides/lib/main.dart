@@ -56,6 +56,7 @@ part 'invoice_a4.dart';
 part 'invoice_parties.dart';
 part 'business_reports.dart';
 part 'customer_sales_report.dart';
+part 'product_invoice_movement.dart';
 part 'invoice_lookup.dart';
 part 'account_statements.dart';
 part 'staff_purchases.dart';
@@ -3189,6 +3190,14 @@ class _SalesState extends State<Sales> {
             label: const Text('تقرير مسحوبات عميل', maxLines: 1, overflow: TextOverflow.ellipsis),
             onPressed: () => openVibReport(context, 'تقرير مسحوبات عميل', const CustomerSalesReportPage()))),
           const SizedBox(width: 5),
+          Expanded(child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+              minimumSize: const Size(0, 36), padding: const EdgeInsets.symmetric(horizontal: 4)),
+            icon: const Icon(Icons.inventory_2_outlined, size: 17),
+            label: const Text('حركة صنف', maxLines: 1, overflow: TextOverflow.ellipsis),
+            onPressed: () => openVibReport(context, 'حركة صنف - المبيعات',
+              const ProductInvoiceMovementPage(type: 'sales')))),
+          const SizedBox(width: 5),
           PopupMenuButton<String>(
             tooltip: 'تقارير وتعديل',
             icon: const Icon(Icons.more_horiz, color: gold),
@@ -3866,6 +3875,14 @@ class _PurchasesState extends State<Purchases>{
         const SizedBox(width:6),
         Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)), onPressed: () => scannedPurchaseDialog(context), icon: const Icon(Icons.camera_alt, size:18), label: const Text('تصوير فاتورة', maxLines:1, overflow:TextOverflow.ellipsis))),
       ])),
+      if(owner) Padding(padding: const EdgeInsets.only(top: 4),
+        child: SizedBox(width: double.infinity, child: OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact,
+            minimumSize: const Size(0, 36)),
+          icon: const Icon(Icons.inventory_2_outlined, size: 18),
+          label: const Text('تقرير حركة صنف في المشتريات'),
+          onPressed: () => openVibReport(context, 'حركة صنف - المشتريات',
+            const ProductInvoiceMovementPage(type: 'purchases'))))),
     ])),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _purchaseStream,
