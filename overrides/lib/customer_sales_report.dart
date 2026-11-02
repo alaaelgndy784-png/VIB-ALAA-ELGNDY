@@ -3,7 +3,7 @@ part of 'main.dart';
 // Explicitly read ONLY the customers collection for the customer selector.
 // Old sales without customerId are matched only by exact saved customerName;
 // a sale belonging to a different known customerId is never attributed by name.
-bool _customerWithdrawalMatches(Map<String, dynamic> data, String customerId, String customerName) {
+bool customerWithdrawalMatches(Map<String, dynamic> data, String customerId, String customerName) {
   if (customerId.trim().isEmpty) return false;
   final savedId = '${data['customerId'] ?? ''}'.trim();
   if (savedId.isNotEmpty) return savedId == customerId;
@@ -58,12 +58,12 @@ class _CustomerSalesWithdrawalsPageState extends State<CustomerSalesWithdrawalsP
   ) {
     final selectedSales = invoiceDocs.where((doc) =>
       visibleAfterReset(doc.data()) &&
-      _customerWithdrawalMatches(doc.data(), customerId, customerName)).toList();
+      customerWithdrawalMatches(doc.data(), customerId, customerName)).toList();
     final matchingInvoiceIds = selectedSales.map((doc) => doc.id).toSet();
     final selectedReturns = returnDocs.where((doc) {
       final data = doc.data();
       if (!visibleAfterReset(data)) return false;
-      if (_customerWithdrawalMatches(data, customerId, customerName)) return true;
+      if (customerWithdrawalMatches(data, customerId, customerName)) return true;
       // Older returns may have a sourceInvoiceId but no customer fields.
       return matchingInvoiceIds.contains('${data['sourceInvoiceId'] ?? ''}');
     }).toList();
