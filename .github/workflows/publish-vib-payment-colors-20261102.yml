@@ -1,0 +1,87 @@
+name: Publish VIB Sales Cash/Credit Colors APKs
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/publish-vib-payment-colors-20261102.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout merged and tested source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify manager and staff were built from the tested source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TESTED_SHA: 53c176faf96d6d88394426346fe1f65d3dd17ee7
+        shell: bash
+        run: |
+          set -euo pipefail
+          git merge-base --is-ancestor "$TESTED_SHA" HEAD
+          for run_id in 41456766476 41456766346; do
+            actual="$(gh api "repos/$REPO/actions/runs/$run_id" --jq '[.head_sha,.conclusion] | join(" ")')"
+            test "$actual" = "$TESTED_SHA success" || {
+              echo "Unexpected tested build: $run_id $actual"
+              exit 1
+            }
+          done
+
+      - name: Download tested manager APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          run-id: 41456766476
+          github-token: ${{ github.token }}
+          path: release
+
+      - name: Download tested staff APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-STAFF-APK
+          run-id: 41456766346
+          github-token: ${{ github.token }}
+          path: release
+
+      - name: Validate APK archives and checksums
+        run: |
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          for filename in ('VIB-SALES-MANAGER.apk', 'VIB-SALES-STAFF.apk'):
+              path = Path('release') / filename
+              assert path.is_file() and path.stat().st_size > 1_000_000, filename
+              with zipfile.ZipFile(path) as apk:
+                  assert apk.testzip() is None, filename
+                  assert 'AndroidManifest.xml' in apk.namelist(), filename
+          PY
+          cd release
+          sha256sum VIB-SALES-MANAGER.apk VIB-SALES-STAFF.apk > SHA256SUMS.txt
+
+      - name: Publish direct APK downloads
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-sales-payment-colors-20261102
+          name: VIB Sales 0.2.47 - Payment Button Colors
+          target_commitish: ${{ github.sha }}
+          body: |
+            Cash is neon green and credit is red in the sales invoice checkout of both the manager and staff apps.
+            Selected payment mode is indicated with a white border. Purchase screens and financial calculations are unchanged.
+            Both Android APKs were built and tested successfully from commit 53c176faf96d6d88394426346fe1f65d3dd17ee7.
+            Install over the matching existing manager/staff application; back up important business data before updating.
+          files: |
+            release/VIB-SALES-MANAGER.apk
+            release/VIB-SALES-STAFF.apk
+            release/SHA256SUMS.txt
+          fail_on_unmatched_files: true
+          overwrite_files: true
+          make_latest: false

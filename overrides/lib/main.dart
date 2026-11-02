@@ -2628,7 +2628,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         body:checkout ? ListView(children:[
           if(!owner && lines.length > 4) const Padding(padding:EdgeInsets.all(8),child:Text('أكثر من ٤ بنود: تُرسل للمدير، ولا تخصم المخزون أو تسجل الحسابات حتى الاعتماد.')),
           PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
-            paid:paid,enabled:!saving,partyLabel:'العميل',
+            paid:paid,enabled:!saving,partyLabel:'العميل',salesMode:true,
             onModeChanged:(value)=>update(() => credit=value),onChanged:()=>update(() {})),
           if(!owner) _employeeTenderPanel(instaPay:instaPay,vodafoneCash:vodafoneCash,
             cashAmount:cashAmount,enabled:!saving,onChanged:()=>update(() {})),
@@ -4030,13 +4030,14 @@ class _PurchaseInvoiceLineState extends State<PurchaseInvoiceLine> {
 
 class PurchaseSettlementPanel extends StatelessWidget {
   final double total, previousBalance;
-  final bool credit, enabled;
+  final bool credit, enabled, salesMode;
   final TextEditingController paid;
   final ValueChanged<bool> onModeChanged;
   final VoidCallback onChanged;
   final String partyLabel;
   const PurchaseSettlementPanel({super.key, required this.total, required this.previousBalance,
-    required this.credit, required this.paid, required this.enabled, required this.onModeChanged, required this.onChanged,this.partyLabel = 'المورد'});
+    required this.credit, required this.paid, required this.enabled, required this.onModeChanged, required this.onChanged,
+    this.partyLabel = 'المورد', this.salesMode = false});
   @override
   Widget build(BuildContext context) {
     final payment = purchaseInvoicePayment(total, credit, paid.text);
@@ -4052,11 +4053,27 @@ class PurchaseSettlementPanel extends StatelessWidget {
     return _vibInvoicePanel(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
       money('إجمالي الفاتورة', total, bold: true),
       Row(children: [
-        Expanded(child: ChoiceChip(label: const Text('نقدي', style: TextStyle(fontSize: 12)),
-          showCheckmark: false, selected: !credit, onSelected: enabled ? (_) => onModeChanged(false) : null)),
+        Expanded(child: ChoiceChip(
+          label: Text('نقدي', style: TextStyle(fontSize: 12,
+            fontWeight: salesMode ? FontWeight.bold : null,
+            color: salesMode ? Colors.black : null)),
+          backgroundColor: salesMode ? const Color(0xFF39FF14) : null,
+          selectedColor: salesMode ? const Color(0xFF39FF14) : null,
+          side: salesMode ? BorderSide(color: !credit ? Colors.white : Colors.black45,
+            width: !credit ? 2.5 : 0.8) : null,
+          showCheckmark: false, selected: !credit,
+          onSelected: enabled ? (_) => onModeChanged(false) : null)),
         const SizedBox(width: 6),
-        Expanded(child: ChoiceChip(label: const Text('آجل', style: TextStyle(fontSize: 12)),
-          showCheckmark: false, selected: credit, onSelected: enabled ? (_) => onModeChanged(true) : null)),
+        Expanded(child: ChoiceChip(
+          label: Text('آجل', style: TextStyle(fontSize: 12,
+            fontWeight: salesMode ? FontWeight.bold : null,
+            color: salesMode ? Colors.white : null)),
+          backgroundColor: salesMode ? const Color(0xFFE53935) : null,
+          selectedColor: salesMode ? const Color(0xFFE53935) : null,
+          side: salesMode ? BorderSide(color: credit ? Colors.white : Colors.black45,
+            width: credit ? 2.5 : 0.8) : null,
+          showCheckmark: false, selected: credit,
+          onSelected: enabled ? (_) => onModeChanged(true) : null)),
       ]),
       if (credit) TextField(controller: paid, enabled: enabled, style: const TextStyle(fontSize: 13),
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
