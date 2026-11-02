@@ -2,6 +2,7 @@ part of 'main.dart';
 
 final invoiceSerialCache = <String, Map<String,dynamic>>{};
 final _serialPreparations = <String, Future<void>>{};
+final _serialQuotaPauseUntil = <String, DateTime>{};
 String serialKey(String type, String id) => '${type}_$id';
 String invoiceDisplayNumber(String type, String id, Map<String,dynamic> data) {
   final n = data['internalNumber'] ?? invoiceSerialCache[serialKey(type,id)]?['internalNumber'];
@@ -38,6 +39,16 @@ Future<Map<String,dynamic>> ensureInvoiceSerial(String type, String id) async {
 }
 Future<void> prepareInvoiceSerials(String type) {
   final key='${FirebaseAuth.instance.currentUser!.uid}:$type';
+  // If a background backfill hit a Firestore quota, repeated navigation must
+  // not start hundreds of more transactions. Keep the call FAILED while paused
+  // so numbering setup never assumes backfill completed successfully.
+  final pauseUntil = _serialQuotaPauseUntil[key];
+  if (pauseUntil != null && DateTime.now().isBefore(pauseUntil)) {
+    return Future<void>.error(FirebaseException(
+      plugin: 'cloud_firestore', code: 'resource-exhausted',
+      message: 'تم تأجيل مراجعة أرقام الفواتير بسبب ضغط Firestore؛ حاول لاحقًا.',
+    ));
+  }
   return _serialPreparations.putIfAbsent(key,() async {
     try {
       final markers=await db.collection('settings').where('kind',isEqualTo:'invoiceSerial_$type').get(const GetOptions(source:Source.server));
@@ -48,7 +59,15 @@ Future<void> prepareInvoiceSerials(String type) {
         final cmp=left.compareTo(right);return cmp==0?a.id.compareTo(b.id):cmp;
       });
       for(final row in rows){if(!invoiceSerialCache.containsKey(serialKey(type,row.id)))await ensureInvoiceSerial(type,row.id);}
-    }finally{_serialPreparations.remove(key);}
+      _serialQuotaPauseUntil.remove(key);
+    } catch (error) {
+      if (isFirestoreQuotaExhausted(error)) {
+        _serialQuotaPauseUntil[key] = DateTime.now().add(const Duration(minutes: 30));
+      }
+      rethrow;
+    } finally {
+      _serialPreparations.remove(key);
+    }
   });
 }
 Future<Map<String,dynamic>> numberedInvoiceData(String type,String id,Map<String,dynamic> data) async {
