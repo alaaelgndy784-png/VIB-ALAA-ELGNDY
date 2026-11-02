@@ -42,7 +42,10 @@ Future<Uint8List> createVibCustomerPaymentDetailPdf(
   final total = receiptReportMoney(report.totalCents);
 
   if (thermal) {
-    final rollHeight = (108 + entries.length * 31).clamp(120, 4100).toDouble();
+    // Size thermal roll by actual rows rather than reserving excessive white paper.
+    final estimatedHeight = 55 + entries.fold<double>(0, (sum, row) =>
+      sum + (single == null ? 18 : 13) + (details(row).length > 30 ? 6 : 0));
+    final rollHeight = estimatedHeight.clamp(95, 4100).toDouble();
     pw.Widget line(String value, {bool strong = false, double size = 9}) =>
       pw.Text(value, textAlign: pw.TextAlign.right,
         style: pw.TextStyle(font: font, fontSize: size,
