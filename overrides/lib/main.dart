@@ -2007,6 +2007,21 @@ class OwnerDashboard extends StatelessWidget {
   );
 }
 
+// Compares only ACTIVE product ids. Zero stock is still a visible item.
+({List<String> newlyAvailable, List<String> noLongerActive})
+    compareActiveVibCatalogues(
+      Map<String, String> cachedActive, Map<String, String> serverActive) {
+  final newlyAvailable = <String>[
+    for (final id in serverActive.keys)
+      if (!cachedActive.containsKey(id)) serverActive[id]!,
+  ]..sort();
+  final noLongerActive = <String>[
+    for (final id in cachedActive.keys)
+      if (!serverActive.containsKey(id)) cachedActive[id]!,
+  ]..sort();
+  return (newlyAvailable:newlyAvailable,noLongerActive:noLongerActive);
+}
+
 class Products extends StatefulWidget {
   final bool owner;
   final String uid, branchId;
@@ -2016,21 +2031,57 @@ class Products extends StatefulWidget {
 }
 class _ProductsState extends State<Products> {
   String query = '';
+  final searchController = TextEditingController();
   bool catalogRefreshing = false;
   String? catalogRefreshMessage;
+  @override void dispose() {searchController.dispose();super.dispose();}
   Future<void> refreshEmployeeCatalogue() async {
     if(catalogRefreshing)return;
     setState(()=>catalogRefreshing=true);
     try {
-      final response = await db.collection('products')
-        .get(const GetOptions(source:Source.server))
+      final productsRef = db.collection('products');
+      final cachedActive=<String,String>{};
+      try {
+        final cached=await productsRef.get(const GetOptions(source:Source.cache));
+        for(final product in cached.docs) {
+          if(product.data()['active']==true) {
+            cachedActive[product.id]='${product.data()['name'] ?? product.id}';
+          }
+        }
+      } catch(_) {
+        // Empty cache is normal on a newly installed employee phone.
+      }
+      final latest=await productsRef.get(const GetOptions(source:Source.server))
         .timeout(const Duration(seconds:12));
-      final count=response.docs.where((doc)=>doc.data()['active']==true).length;
+      if(latest.metadata.isFromCache) {
+        throw StateError('السيرفر غير متاح؛ لم يتم تأكيد قائمة الأصناف');
+      }
+      final serverActive=<String,String>{};
+      for(final product in latest.docs) {
+        if(product.data()['active']==true) {
+          serverActive[product.id]='${product.data()['name'] ?? product.id}';
+        }
+      }
+      final delta=compareActiveVibCatalogues(cachedActive,serverActive);
+      final newNames=delta.newlyAvailable;
+      final retiredNames=delta.noLongerActive;
+      // Reset search, otherwise a leftover keyword looks like missing items.
       if(!mounted)return;
-      setState(()=>catalogRefreshMessage='تم تحميل $count صنف نشط من جرد المدير. افتح فاتورة جديدة لرؤية الأصناف المحدثة.');
+      searchController.clear();
+      setState(() {
+        query='';
+        catalogRefreshMessage=
+          'تمت مطابقة الأصناف النشطة مع بيانات السيرفر: ${serverActive.length} صنف. '
+          'كان بالموبايل ${cachedActive.length} صنف. '
+          'الجديد على الجهاز: ${newNames.length}. '
+          'لم يعد نشطًا: ${retiredNames.length}.'
+          '${newNames.isEmpty ? '' : '\\nالأصناف اللي وصلت: ${newNames.take(8).join('، ')}${newNames.length>8 ? '…' : ''}'}'
+          '\\nافتح فاتورة جديدة بعد المزامنة لظهور القائمة المحدثة.';
+      });
     } catch(error) {
       if(!mounted)return;
-      setState(()=>catalogRefreshMessage='تعذر تحميل القائمة من السيرفر: $error. راجع الإنترنت وحصة Firebase، ولا تحذف بيانات التطبيق.');
+      setState(()=>catalogRefreshMessage=
+        'المزامنة لم تتأكد من السيرفر: $error. تأكد من النت ولا تمسح بيانات التطبيق أو الفواتير المعلقة.');
     } finally {
       if(mounted)setState(()=>catalogRefreshing=false);
     }
@@ -2076,7 +2127,7 @@ class _ProductsState extends State<Products> {
           if(catalogRefreshMessage!=null)
             Text(catalogRefreshMessage!,style:const TextStyle(color:Colors.white70,fontSize:11)),
         ])),
-        Padding(padding: const EdgeInsets.all(12), child: TextField(decoration: const InputDecoration(labelText: 'بحث عن منتج — اكتب أي حرف', prefixIcon: Icon(Icons.search)), onChanged: (value) => setState(() => query = value.trim().toLowerCase()))),
+        Padding(padding: const EdgeInsets.all(12), child: TextField(controller:searchController,decoration: InputDecoration(labelText: 'بحث عن منتج — اكتب أي حرف', prefixIcon: const Icon(Icons.search),suffixIcon:query.isNotEmpty ? IconButton(tooltip:'عرض كل الأصناف',icon:const Icon(Icons.close),onPressed:(){searchController.clear();setState(()=>query='');}) : null),onChanged: (value) => setState(() => query = value.trim().toLowerCase()))),
         if (owner) Padding(padding:const EdgeInsets.fromLTRB(12,2,12,8),child:Row(children:[
           Expanded(child:_compactProductAction(label:'إضافة منتج',tooltip:'إضافة منتج',icon:Icons.add,onPressed:()=>productDialog(context),primary:true)),
           const SizedBox(width:8),
