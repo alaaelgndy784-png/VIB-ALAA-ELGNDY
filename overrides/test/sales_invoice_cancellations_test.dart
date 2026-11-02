@@ -4,6 +4,7 @@ import '../lib/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(() => initializeChequeTimeZones());
 
   Map<String, dynamic> invoice({
     String status = 'completed',
