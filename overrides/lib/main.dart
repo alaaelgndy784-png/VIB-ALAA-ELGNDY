@@ -2709,6 +2709,18 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         tableMode:true,invoiceNumber:draftNumber,itemCount:lines.length,
         quantityCount:lines.fold<int>(0,(sum,row)=>sum+(int.tryParse(row.quantity.text) ?? 0)),
         headerAction:IgnorePointer(ignoring:saving,child:ChatShortcut(owner:owner)),
+        entryStatus:!owner ? EmployeeSaleEntryBalanceStrip(
+          customerName:'${selectedCustomer?['name'] ?? ''}',
+          previousBalance:selectedCustomer == null ? null : previousBalance,
+          invoiceTotal:previewTotal,itemCount:lines.length,
+          onChooseCustomer:() async {
+            if(saving)return;
+            final id=await selectRegisteredCustomer(c);
+            if(id==null||!c.mounted)return;
+            final refreshed=await _getInvoiceDataWithCacheFallback(db.collection('customers'));
+            if(c.mounted)update(() {customersSnap=refreshed;customerId=id;});
+          },
+        ) : null,
         toolbar:InvoiceProductsBar(inlineSearch:true,saleScreen:true,
           unitCosts:{for(final product in products) product.id:product.data()['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
           products:[for(final product in products) if(!lines.any((row)=>row.productId == product.id))
@@ -2757,9 +2769,24 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
             if(allowShortage || allowBelowCost) TextField(controller:reason,enabled:!saving,decoration:_vibInvoiceInput('سبب الاستثناء (إلزامي)')),
           ]),
         ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
-          for(var i=0;i<lines.length;i++) InvoiceCompactTableLine(
-            key:ObjectKey(lines[i]),number:i+1,name:'${productDoc(lines[i].productId!).data()['name'] ?? ''}',
-            price:lines[i].price,quantity:lines[i].quantity,onEdit:saving ? null : ()=>editSelected(lines[i]),
+          for(var i=0;i<lines.length;i++) Column(
+            key:ObjectKey(lines[i]),crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+              InvoiceCompactTableLine(
+                number:i+1,name:'${productDoc(lines[i].productId!).data()['name'] ?? ''}',
+                price:lines[i].price,quantity:lines[i].quantity,
+                onEdit:saving ? null : ()=>editSelected(lines[i]),
+              ),
+              if(!owner) StreamBuilder<int?>(
+                stream:invoiceMainStock(lines[i].productId!),
+                builder:(context,available) => Container(
+                  padding:const EdgeInsets.fromLTRB(12,3,12,5),
+                  color:const Color(0xFFE5F3FF),
+                  child:Text('رصيد الصنف بالمخزون الرئيسي: ${available.hasError ? 'تعذر قراءة الرصيد — افتح المنتجات للتأكد من الاتصال' : !available.hasData ? 'جارٍ التحميل' : available.data}',
+                    style:TextStyle(fontSize:12,fontWeight:FontWeight.bold,
+                      color:available.hasError ? Colors.red : const Color(0xFF126A45))),
+                ),
+              ),
+            ],
           ),
         ]),
         actions: [
