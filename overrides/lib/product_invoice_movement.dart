@@ -3,6 +3,12 @@ part of 'main.dart';
 // Read-only invoice line tracing. Historical grouped invoices and older single-
 // item invoices are both supported. No inventory, balance or invoice writes.
 String vibInvoiceProductSearchText(String value) => invoiceSearchText(value);
+String vibReadableProductInvoiceNumber(String type, String id,
+    Map<String, dynamic> invoice) {
+  final displayed = invoiceDisplayNumber(type, id, invoice).trim();
+  // Legacy invoices without a serial should never show an opaque Firestore ID.
+  return displayed.isEmpty || displayed == id ? 'غير مرقمة' : displayed;
+}
 
 List<Map<String, dynamic>> vibInvoiceProductLines(Map<String, dynamic> invoice) {
   final raw = invoice['items'];
@@ -228,7 +234,7 @@ class _ProductInvoiceMovementPageState extends State<ProductInvoiceMovementPage>
               selectedProductName: selectedName);
           for (final item in rows) {
             matches.add(VibProductInvoiceHit(
-              id: doc.id, number: invoiceDisplayNumber(widget.type, doc.id, invoice),
+              id: doc.id, number: vibReadableProductInvoiceNumber(widget.type, doc.id, invoice),
               party: (invoice[_sales ? 'customerName' : 'supplierName'] ?? 'غير مسجل').toString(),
               type: widget.type, date: date, invoice: invoice, item: item));
           }
