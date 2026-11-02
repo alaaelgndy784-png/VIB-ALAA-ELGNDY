@@ -171,9 +171,10 @@ class _InvoiceMovementReportPageState extends State<InvoiceMovementReportPage> {
     }
   }
   @override Widget build(BuildContext context) => Column(children: [
-    MovementPeriodControls(from: from, to: to, enabled: !exporting,
+    MovementPeriodControls(
+      key: ValueKey('${from.toIso8601String()}-${to.toIso8601String()}'),
+      compact: true, from: from, to: to, enabled: !exporting,
       onConfirm: (start, end) => setState(() => selectRange(start, end))),
-    Text('${DateFormat('yyyy/MM/dd').format(from)} - ${DateFormat('yyyy/MM/dd').format(to)}'),
     if (numbering) const LinearProgressIndicator(),
     if (numberError.isNotEmpty) TextButton(onPressed: exporting ? null : prepareNumbers, child: Text('$numberError — إعادة المحاولة')),
     Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: invoices, builder: (context, snapshot) {
@@ -194,19 +195,52 @@ class _InvoiceMovementReportPageState extends State<InvoiceMovementReportPage> {
       final confirmed = !snapshot.data!.metadata.isFromCache && !snapshot.data!.metadata.hasPendingWrites && !returnSnapshot.data!.metadata.isFromCache && !returnSnapshot.data!.metadata.hasPendingWrites;
       final enabled = confirmed && !numbering && numberError.isEmpty && !exporting;
       return Column(children: [
-        Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(children: [
-          Text('عدد الفواتير: ${report.rows.length} • مرتجعات الفترة: ${report.returnedCount}'),
-          Text('الإجمالي: ${movementReportMoney(report.totalCents)}', style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 19)),
-          Text('مرتجعات الفترة: ${movementReportMoney(report.returnCents)}'),
-          Text('صافي الحركة: ${movementReportMoney(report.netCents)}', style: const TextStyle(color: Colors.greenAccent, fontWeight:FontWeight.bold)),
-          if (!confirmed) const Text('انتظر تأكيد البيانات من الخادم قبل الإرسال'),
-        ]))),
-        Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: FilledButton.icon(
-          onPressed: !enabled || (report.rows.isEmpty && report.returns.isEmpty) ? null : () => output(report),
-          icon: exporting ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.share),
-          label: Text(exporting ? 'جاري تجهيز PDF…' : 'إرسال التقرير كامل PDF / واتساب'))),
-        const Padding(padding: EdgeInsets.all(8), child: Text(movementReportNote, style: TextStyle(fontSize: 11), textAlign: TextAlign.center)),
-        if(report.returns.isNotEmpty) Padding(padding:const EdgeInsets.symmetric(horizontal:12),child:Text('مرتجعات الفترة: ${report.returns.map((r)=>'${r.number}: ${movementReportMoney(r.totalCents)}').take(3).join(' • ')}${report.returns.length>3 ? ' • باقي المرتجعات في PDF' : ''}')),
+        // A compact report toolbar keeps the first invoice visible near the
+        // top of narrow Android screens. All accounting data stays unchanged.
+        Padding(padding: const EdgeInsets.fromLTRB(6, 1, 6, 4),
+          child: Row(children: [
+            Expanded(child: Card(margin: EdgeInsets.zero,
+              child: Padding(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 5),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text('فواتير: ${report.rows.length} • مرتجعات: ${report.returnedCount}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 11)),
+                  Text('الإجمالي: ${movementReportMoney(report.totalCents)}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: gold, fontSize: 13, fontWeight: FontWeight.bold)),
+                  Text('صافي الحركة: ${movementReportMoney(report.netCents)}',
+                    maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.greenAccent, fontSize: 12, fontWeight: FontWeight.bold)),
+                ])))),
+            IconButton(
+              tooltip: 'شرح حساب التقرير والمرتجعات',
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+              onPressed: () => showDialog<void>(context: context, builder: (dialog) => AlertDialog(
+                title: const Text('تفاصيل تقرير الحركة'),
+                content: SingleChildScrollView(child: Text(
+                  '$movementReportNote\n\n'
+                  'قيمة المرتجعات: ${movementReportMoney(report.returnCents)}\n'
+                  '${report.returns.isEmpty ? 'لا توجد مرتجعات في الفترة.' : report.returns.map((r) => '${r.number}: ${movementReportMoney(r.totalCents)}').join(' • ')}')),
+                actions: [TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إغلاق'))])),
+              icon: const Icon(Icons.info_outline, size: 21)),
+            SizedBox(width: 58, height: 55, child: FilledButton(
+              style: FilledButton.styleFrom(padding: EdgeInsets.zero,
+                visualDensity: VisualDensity.compact),
+              onPressed: !enabled || (report.rows.isEmpty && report.returns.isEmpty)
+                ? null : () => output(report),
+              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                if (exporting) const SizedBox(width: 18, height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+                else const Icon(Icons.picture_as_pdf, size: 22),
+                const Text('PDF', style: TextStyle(fontSize: 11)),
+              ]))),
+          ])),
+        if (!confirmed) const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 9, vertical: 2),
+          child: Text('انتظر تأكيد البيانات من الخادم قبل الإرسال',
+            style: TextStyle(fontSize: 10))),
         Expanded(child: report.rows.isEmpty ? const Center(child: Text('لا توجد فواتير في الفترة المختارة')) :
           ListView.builder(itemCount: report.rows.length, itemBuilder: (context, index) {
             final row = report.rows[index];
