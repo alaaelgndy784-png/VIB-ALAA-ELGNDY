@@ -69,7 +69,7 @@ InvoiceMovementReport summarizeInvoiceMovement(List<Map<String, dynamic>> invoic
     final originalDue = recordedDue ?? total - basePaid;
     if(basePaid < 0 || basePaid > total || (basePaid + originalDue - total).abs() > 1)
       throw StateError('المدفوع والباقي لا يطابقان إجمالي الفاتورة $id');
-    final returned = invoice['status'] == 'returned';
+    final returned = invoice['status'] == 'returned' || invoice['status'] == 'cancelled';
     final due = originalDue - receipts;
     if (!returned && due < 0) throw StateError('السداد يتجاوز باقي الفاتورة $id؛ راجع بياناتها');
     final name = '${invoice[sales ? 'customerName' : 'supplierName'] ?? ''}'.trim();
@@ -245,7 +245,7 @@ class _InvoiceMovementReportPageState extends State<InvoiceMovementReportPage> {
           ListView.builder(itemCount: report.rows.length, itemBuilder: (context, index) {
             final row = report.rows[index];
             return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Text('${index + 1}. فاتورة ${row.number}${row.returned ? ' • مرتجعة بالكامل' : ''}'),
+              Text('${index + 1}. فاتورة ${row.number}${row.data['status']=='cancelled' ? ' • ملغاة' : row.returned ? ' • مرتجعة بالكامل' : ''}'),
               Text(row.customer, style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
               Text(movementReportDate(row.date)),
               Text('الإجمالي: ${movementReportMoney(row.totalCents)}'),
@@ -292,7 +292,7 @@ Future<Uint8List> createInvoiceMovementReportPdf(InvoiceMovementReport report, p
             cell(movementReportMoney(report.rows[i].dueCents)), cell(movementReportMoney(report.rows[i].paidCents)),
             cell(movementReportMoney(report.rows[i].totalCents)),
             cell(DateFormat('dd/MM/yyyy').format(tz.TZDateTime.from(report.rows[i].date, tz.getLocation('Africa/Cairo')))),
-            cell('${report.rows[i].customer}${report.rows[i].returned ? '\nمرتجعة بالكامل' : ''}', customer: true),
+            cell('${report.rows[i].customer}${report.rows[i].data['status']=='cancelled' ? '\nملغاة' : report.rows[i].returned ? '\nمرتجعة بالكامل' : ''}', customer: true),
             cell(report.rows[i].number), cell('${i + 1}')]),
         ]),
       pw.SizedBox(height: 12),
@@ -465,7 +465,7 @@ class InvoiceOverviewContent extends StatelessWidget {
       Text('المدفوع مع السداد المرتبط: ${money(paid+receipt)} ج.م'),
       if(sales) for(final method in salePaymentMethodLabels.keys)
         if((tender[method]??0)>0) Text('${salePaymentMethodLabels[method]}: ${money(tender[method])} ج.م'),
-      Text(data['status']=='returned' ? 'الفاتورة مرتجعة بالكامل' : 'باقي الفاتورة: ${money(due-receipt)} ج.م'),
+      Text(data['status']=='cancelled' ? 'الفاتورة ملغاة — أُنشئت بالخطأ' : data['status']=='returned' ? 'الفاتورة مرتجعة بالكامل' : 'باقي الفاتورة: ${money(due-receipt)} ج.م'),
     ]);
   }
 }
@@ -494,7 +494,7 @@ Future<void> showInvoiceOverview(BuildContext context, String type, String id,
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (page) =>
       Directionality(textDirection: TextDirection.rtl, child: Scaffold(
         appBar: AppBar(
-          title: Text(type == 'sales' ? 'فاتورة المبيعات' : 'فاتورة المشتريات'),
+          title: Text(type == 'sales' ? 'فاتورة المبيعات${data['status']=='cancelled' ? ' — ملغاة' : ''}' : 'فاتورة المشتريات'),
           actions: [
             IconButton(
               tooltip: 'إجراءات الفاتورة: تعديل وطباعة ومرتجعات',
@@ -526,14 +526,28 @@ Future<void> showInvoiceOverview(BuildContext context, String type, String id,
         ),
         bottomNavigationBar: SafeArea(child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Row(children: [
-            Expanded(child: FilledButton.icon(
-              onPressed: () => exportInvoicePdf(page, type, id, data),
-              icon: const Icon(Icons.share), label: const Text('إرسال PDF'))),
-            const SizedBox(width: 10),
-            Expanded(child: OutlinedButton.icon(
-              onPressed: () => Navigator.pop(page),
-              icon: const Icon(Icons.close), label: const Text('إغلاق'))),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (type == 'sales' && !staffApp && saleInvoiceCanBeCancelled(data))
+              Padding(padding: const EdgeInsets.only(bottom: 6),
+                child: SizedBox(width: double.infinity, height: 38,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
+                    icon: const Icon(Icons.cancel_outlined, size: 17),
+                    label: const Text('إلغاء الفاتورة المنشأة بالخطأ'),
+                    onPressed: () async {
+                      final cancelled = await confirmSalesInvoiceCancellation(page, id);
+                      if (cancelled && page.mounted) Navigator.pop(page);
+                    },
+                  ))),
+            Row(children: [
+              Expanded(child: FilledButton.icon(
+                onPressed: () => exportInvoicePdf(page, type, id, data),
+                icon: const Icon(Icons.share), label: const Text('إرسال PDF'))),
+              const SizedBox(width: 10),
+              Expanded(child: OutlinedButton.icon(
+                onPressed: () => Navigator.pop(page),
+                icon: const Icon(Icons.close), label: const Text('إغلاق'))),
+            ]),
           ]),
         )),
       )),
