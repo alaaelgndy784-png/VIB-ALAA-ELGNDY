@@ -74,7 +74,7 @@ jobs:
               data=Path(path).read_text()
               row=next((line for line in data.splitlines() if line.startswith('package:')),None)
               assert row, f'No package information in {path}'
-              values=dict(re.findall(r"(?:^|\\s)(name|versionCode|versionName)='([^']+)'",row))
+              values=dict(re.findall(r"(?:^|\s)(name|versionCode|versionName)='([^']+)'",row))
               return values
           old=identity('dist/old-package.txt')
           new=identity('dist/new-package.txt')
