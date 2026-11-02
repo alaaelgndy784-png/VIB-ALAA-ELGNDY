@@ -219,7 +219,8 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
           final number=invoiceDisplayNumber(widget.type,row.id,data);
           final party = '${data[sales ? 'customerName' : 'supplierName'] ?? ''}'.trim();
           final total = ((data['total'] as num?) ?? 0).toStringAsFixed(2);
-          final returned = data['status'] == 'returned';
+          final cancelled = sales && data['status'] == 'cancelled';
+           final returned = data['status'] == 'returned' || cancelled;
           return Card(
             margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             color: dayColor.withOpacity(0.14),
@@ -234,7 +235,7 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
                   style:TextStyle(color:dayColor,fontWeight:FontWeight.bold,fontSize:16)),
                 Text('رقم الفاتورة: ${invoiceDisplayNumber(widget.type,row.id,data)}'),
               ])),
-              subtitle: Text('${formatDate(data['createdAt'])}${sales ? ' • فرع: ${data['branchId'] ?? ''}' : ''}${returned ? '\nفاتورة مرتجعة' : ''}'),
+              subtitle: Text('${formatDate(data['createdAt'])}${sales ? ' • فرع: ${data['branchId'] ?? ''}' : ''}${cancelled ? '\nفاتورة ملغاة بالخطأ' : returned ? '\nفاتورة مرتجعة' : ''}'),
               trailing: Text('$total ج.م', style: TextStyle(color: returned ? Colors.redAccent : dayColor, fontWeight: FontWeight.bold)),
               onTap: () => showInvoiceOverview(context, widget.type, row.id, initialData: data),
             ),
