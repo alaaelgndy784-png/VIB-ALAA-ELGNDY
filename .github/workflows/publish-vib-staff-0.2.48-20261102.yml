@@ -52,7 +52,11 @@ jobs:
           test -x "$BUILD_TOOLS/aapt"
           "$BUILD_TOOLS/apksigner" verify --print-certs dist/VIB-SALES-STAFF.apk > dist/new-cert.txt
           "$BUILD_TOOLS/apksigner" verify --print-certs previous/VIB-SALES-STAFF.apk > dist/old-cert.txt
-          old_cert="$(awk '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}' dist/old-cert.txt)"
+          echo "PREVIOUS APK SIGNATURE DETAIL:"
+          cat dist/old-cert.txt
+          echo "NEW APK SIGNATURE DETAIL:"
+          cat dist/new-cert.txt
+          old_cert="$(sed -n 's/.*certificate SHA-256 digest: *//p' dist/old-cert.txt | head -n 1)"
           new_cert="$(awk '/Signer #1 certificate SHA-256 digest:/ {print $NF; exit}' dist/new-cert.txt)"
           test -n "$old_cert"
           echo "PREVIOUS STAFF SIGNER SHA256: $old_cert"
