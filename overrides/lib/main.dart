@@ -6604,10 +6604,16 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
   // The cached signed-in role is enough to expose an existing PDF. Restrict
   // privileged invoice edits/returns when the role cannot be verified.
   Map<String, dynamic>? profile;
+  final userRef = db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid);
   try {
-    profile = (await db.collection('users').doc(FirebaseAuth.instance.currentUser!.uid)
-      .get(const GetOptions(source: Source.cache))).data();
+    profile = (await userRef.get(const GetOptions(source: Source.cache))).data();
   } catch (_) {}
+  if (profile == null) {
+    try {
+      profile = (await userRef.get(const GetOptions(source: Source.server))
+        .timeout(const Duration(seconds: 3))).data();
+    } catch (_) { /* With no verified role, only read-only actions are shown. */ }
+  }
   if (!context.mounted) return;
   final canPrint = profile?['role'] == 'owner' || profile?['canPrint'] == true;
   await showModalBottomSheet<void>(context: context, builder: (c) => SafeArea(child: Wrap(children: [
