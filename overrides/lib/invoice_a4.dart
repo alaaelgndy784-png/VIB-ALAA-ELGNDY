@@ -465,7 +465,9 @@ Future<Uint8List> createStyledA4InvoicePdf({
     detail('التاريخ', formatDate(data['createdAt']), numeric: true),
     detail(
       'نوع الفاتورة',
-      data['status'] == 'returned'
+      data['status'] == 'cancelled'
+          ? 'ملغاة'
+          : data['status'] == 'returned'
           ? 'مرتجعة'
           : due > 0
           ? 'آجل'
