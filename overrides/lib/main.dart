@@ -4047,7 +4047,8 @@ class PurchaseSettlementPanel extends StatelessWidget {
         Expanded(flex: 3, child: Text(label, style: const TextStyle(fontSize: 12))),
         const SizedBox(width: 6), Expanded(flex: 2, child: Align(alignment: Alignment.centerLeft,
           child: FittedBox(fit: BoxFit.scaleDown, child: Text('${value.toStringAsFixed(2)} ج.م',
-            style: TextStyle(fontSize: bold ? 16 : 13, color: bold ? gold : Colors.white,
+            style: TextStyle(fontSize: bold ? 16 : 13,
+              color: salesMode ? (credit ? const Color(0xFFFF5252) : const Color(0xFF39FF14)) : (bold ? gold : Colors.white),
               fontWeight: bold ? FontWeight.bold : FontWeight.normal))))),
       ]));
     return _vibInvoicePanel(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -4059,8 +4060,8 @@ class PurchaseSettlementPanel extends StatelessWidget {
             color: salesMode ? Colors.black : null)),
           backgroundColor: salesMode ? const Color(0xFF39FF14) : null,
           selectedColor: salesMode ? const Color(0xFF39FF14) : null,
-          side: salesMode ? BorderSide(color: !credit ? Colors.white : Colors.black45,
-            width: !credit ? 2.5 : 0.8) : null,
+          side: salesMode ? BorderSide(color: !credit ? const Color(0xFF123F82) : Colors.black45,
+            width: !credit ? 3.5 : 0.8) : null,
           showCheckmark: false, selected: !credit,
           onSelected: enabled ? (_) => onModeChanged(false) : null)),
         const SizedBox(width: 6),
@@ -4070,8 +4071,8 @@ class PurchaseSettlementPanel extends StatelessWidget {
             color: salesMode ? Colors.white : null)),
           backgroundColor: salesMode ? const Color(0xFFE53935) : null,
           selectedColor: salesMode ? const Color(0xFFE53935) : null,
-          side: salesMode ? BorderSide(color: credit ? Colors.white : Colors.black45,
-            width: credit ? 2.5 : 0.8) : null,
+          side: salesMode ? BorderSide(color: credit ? const Color(0xFF123F82) : Colors.black45,
+            width: credit ? 3.5 : 0.8) : null,
           showCheckmark: false, selected: credit,
           onSelected: enabled ? (_) => onModeChanged(true) : null)),
       ]),
@@ -6096,6 +6097,13 @@ PdfPageFormat invoicePageFormat(String paper) => switch (paper) {
 const _thermalPrinterMacKey = 'vib.thermal.printer.mac';
 const _thermalPrinterNameKey = 'vib.thermal.printer.name';
 
+// Paired headphones and speakers are not compatible thermal receipt printers.
+bool _isBluetoothAudioDevice(String name) {
+  final lower = name.toLowerCase();
+  return const ['airpods', 'earbuds', 'headphone', 'headset', 'galaxy buds',
+    'soundcore', 'earphone', 'speaker', 'سماعة'].any(lower.contains);
+}
+
 Future<bool> _ensureThermalBluetoothPermission(BuildContext context) async {
   if (!Platform.isAndroid) return true;
   try {
@@ -6133,10 +6141,11 @@ Future<({String mac, String name})?> _chooseBluetoothThermalPrinter(BuildContext
       if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('شغّل البلوتوث واقرن طابعة XP-P323B بالموبايل أولًا.')));
       return null;
     }
-    final printers = await PrintBluetoothThermal.pairedBluetooths;
+    final printers = (await PrintBluetoothThermal.pairedBluetooths)
+        .where((device) => !_isBluetoothAudioDevice(device.name)).toList();
     if (!context.mounted) return null;
     if (printers.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('مافيش طابعة مقترنة. افتح إعدادات البلوتوث واقرن XP-P323B، ثم جرّب تاني.')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('مافيش طابعة حرارية مقترنة. اقرن طابعة 80 مم من إعدادات البلوتوث، ثم جرّب تاني. السماعات مش هتظهر ضمن الطابعات.')));
       return null;
     }
     final selectedMac = await showDialog<String>(
@@ -6176,7 +6185,8 @@ Future<void> _printPdfOnBluetoothThermal(
   if (!await PrintBluetoothThermal.bluetoothEnabled) throw StateError('شغّل البلوتوث على الموبايل.');
   var mac = printerMac;
   var name = '';
-  final printers = await PrintBluetoothThermal.pairedBluetooths;
+  final printers = (await PrintBluetoothThermal.pairedBluetooths)
+        .where((device) => !_isBluetoothAudioDevice(device.name)).toList();
   if (mac == null || !printers.any((printer) => printer.macAdress == mac)) {
     final selected = await _chooseBluetoothThermalPrinter(context);
     if (selected == null) return;
