@@ -7880,37 +7880,51 @@ class ItemMovementReport extends StatefulWidget {
 class _ItemMovementReportState extends State<ItemMovementReport> {
   String? productId, branchId='main';
   DateTimeRange? range;
-  String movementView='sales';
+  String movementView='purchases';
 
-  Future<Map<String,String>> _movementCounterparties(List<QueryDocumentSnapshot<Map<String,dynamic>>> rows) async {
-    final result=<String,String>{},invoices=<String,Map<String,dynamic>?>{},people=<String,String>{};
-    for(final row in rows) {
-      final d=row.data(),kind='${row.data()['kind'] ?? ''}',ref='${row.data()['referenceId'] ?? ''}';
-      final type=kind=='sale' || kind=='saleCorrection' || kind=='correction_sale' || kind=='correction_return' ? 'sales'
-        : kind=='purchase' || kind=='purchaseCorrection' ? 'purchases' : kind=='sales_return'?'salesReturns':kind=='purchase_return'?'purchaseReturns':null;
-      final lines=<String>[];
+  Future<Map<String,String>> _movementCounterparties(
+      List<QueryDocumentSnapshot<Map<String,dynamic>>> rows) async {
+    final labels = <String,String>{};
+    final invoiceCache = <String,Map<String,dynamic>?>{};
+    for (final row in rows) {
+      final data = row.data();
+      final kind = (data['kind'] ?? '').toString();
+      final invoiceId = (data['referenceId'] ?? '').toString();
+      final collection = kind == 'sale' || kind == 'saleCorrection' ||
+              kind == 'correction_sale' || kind == 'correction_return'
+          ? 'sales'
+          : kind == 'purchase' || kind == 'purchaseCorrection'
+              ? 'purchases'
+              : kind == 'sales_return' ? 'salesReturns'
+              : kind == 'purchase_return' ? 'purchaseReturns' : null;
+      if (collection == null || invoiceId.isEmpty) {
+        labels[row.id] = _movementFallbackParty(data);
+        continue;
+      }
       try {
-        if(type!=null && ref.isNotEmpty){
-          final key='$type/$ref';
-          if(!invoices.containsKey(key))invoices[key]=(await db.collection(type).doc(ref).get(const GetOptions(source:Source.server))).data();
-          final invoice=invoices[key];
-          if(invoice!=null){
-            final purchase=type=='purchases' || type=='purchaseReturns';
-            lines.add('${purchase?'المورد':'العميل'}: ${invoice[purchase?'supplierName':'customerName'] ?? 'غير مسجل'}');
-            lines.add('فاتورة: ${invoiceDisplayNumber(purchase?'purchases':'sales',ref,invoice)}');
-          }else lines.add('مرجع الفاتورة: $ref');
-        }else {
-          final fallback=_movementFallbackParty(d);if(fallback.isNotEmpty)lines.add(fallback);
-          if(ref.isNotEmpty)lines.add('المرجع: $ref');
+        final key = '$collection/$invoiceId';
+        if (!invoiceCache.containsKey(key)) {
+          invoiceCache[key] = (await db.collection(collection).doc(invoiceId)
+              .get(const GetOptions(source: Source.server))).data();
         }
-        final actor='${d['actorId'] ?? ''}';
-        if(actor.isNotEmpty){
-          if(!people.containsKey(actor))people[actor]='${(await db.collection('users').doc(actor).get(const GetOptions(source:Source.server))).data()?['name'] ?? actor}';
-          lines.add('المستخدم: ${people[actor]}');
+        final invoice = invoiceCache[key];
+        if (invoice == null) {
+          labels[row.id] = 'الفاتورة الأصلية غير متاحة';
+          continue;
         }
-      }catch(e){lines.add('تعذر تأكيد بيانات الطرف؛ المرجع: $ref');}
-      result[row.id]=lines.join('\n');
-    }return result;
+        final purchasing = collection == 'purchases' ||
+            collection == 'purchaseReturns';
+        final party = (invoice[purchasing ? 'supplierName' : 'customerName'] ??
+            'غير مسجل').toString();
+        final invoiceType = purchasing ? 'purchases' : 'sales';
+        final originalId = (invoice['sourceInvoiceId'] ?? invoiceId).toString();
+        labels[row.id] = '${purchasing ? 'المورد' : 'العميل'}: $party\n'
+            'فاتورة: ${invoiceDisplayNumber(invoiceType, originalId, invoice)}';
+      } catch (_) {
+        labels[row.id] = 'تعذر قراءة الفاتورة الأصلية';
+      }
+    }
+    return labels;
   }
 
   String _movementFallbackParty(Map<String, dynamic> data) {
@@ -8101,9 +8115,9 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                             Align(
                               alignment: Alignment.centerLeft,
                               child: OutlinedButton.icon(
-                                onPressed: rows.isEmpty || snap.data!.metadata.isFromCache || snap.data!.metadata.hasPendingWrites ? null : () => _printMovementReport(context, productName, rows, parties, totals),
+                                onPressed: reportRows.isEmpty || snap.data!.metadata.isFromCache || snap.data!.metadata.hasPendingWrites ? null : () => _printMovementReport(context, productName, reportRows, parties, totals),
                                 icon: const Icon(Icons.picture_as_pdf, size: 18),
-                                label: const Text('تقرير PDF'),
+                                label: const Text('حركة المخزون PDF'),
                               ),
                             ),
                           ]),
@@ -8126,6 +8140,22 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                             )),
                           ]),
                           Text('عدد الحركات: ${reportRows.length} • إجمالي الكمية: $reportQuantity'),
+                          const SizedBox(height: 5),
+                          SizedBox(width: double.infinity, child: OutlinedButton.icon(
+                            onPressed: productId == null ? null : () => openVibReport(
+                              context,
+                              movementView == 'purchases'
+                                  ? 'فواتير مشتريات الصنف' : 'فواتير مبيعات الصنف',
+                              ProductInvoiceMovementPage(
+                                type: movementView == 'purchases' ? 'purchases' : 'sales',
+                                initialProductId: productId,
+                                initialProductName: productName,
+                              )),
+                            icon: const Icon(Icons.receipt_long_outlined, size: 17),
+                            label: Text(movementView == 'purchases'
+                                ? 'افتح فواتير شراء الصنف الأصلية'
+                                : 'افتح فواتير بيع الصنف الأصلية'),
+                          )),
                         ]),
                       ),
                       Expanded(
