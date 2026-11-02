@@ -1,0 +1,98 @@
+name: Publish VIB Staff 0.2.53 reconciled inventory direct APK
+on:
+  push:
+    branches: [fix/staff-catalog-reconciliation-20261102]
+    paths:
+      - .github/workflows/publish-vib-staff-0.2.53-catalog-reconciliation.yml
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish-tested-staff-apk:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      EXPECTED_SHA: fa8db126183a93d4f1d845a5b755d7d7e18a39de
+      TESTED_STAFF_RUN: "41437271903"
+    steps:
+      - name: Verify exactly which staff build passed
+        run: |
+          gh run watch "$TESTED_STAFF_RUN" --repo "$REPO" --exit-status --interval 15
+          actual="$(gh api "repos/$REPO/actions/runs/$TESTED_STAFF_RUN" --jq '[.head_sha, .conclusion] | join(" ")')"
+          test "$actual" = "$EXPECTED_SHA success"
+
+      - name: Download the tested staff APK and previous published APK
+        run: |
+          mkdir -p dist previous
+          gh run download "$TESTED_STAFF_RUN" --repo "$REPO" --name VIB-SALES-STAFF-APK --dir dist
+          gh release download vib-sales-staff-latest --repo "$REPO" --pattern VIB-SALES-STAFF.apk --dir previous
+          test -f dist/VIB-SALES-STAFF.apk
+          test -f previous/VIB-SALES-STAFF.apk
+
+      - name: Check APK integrity, upgrade identity, higher version and signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile
+          for name in ('dist/VIB-SALES-STAFF.apk','previous/VIB-SALES-STAFF.apk'):
+              apk=Path(name)
+              assert apk.stat().st_size > 10_000_000, f'Suspiciously small APK: {name}'
+              with ZipFile(apk) as z:
+                  assert z.testzip() is None, f'Bad APK archive: {name}'
+                  files=set(z.namelist())
+                  assert 'AndroidManifest.xml' in files and 'classes.dex' in files
+          PY
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          BUILD_TOOLS="$(find "$SDK/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          test -x "$BUILD_TOOLS/apksigner"
+          test -x "$BUILD_TOOLS/aapt"
+          "$BUILD_TOOLS/apksigner" verify --print-certs dist/VIB-SALES-STAFF.apk > dist/new-cert.txt
+          "$BUILD_TOOLS/apksigner" verify --print-certs previous/VIB-SALES-STAFF.apk > dist/old-cert.txt
+          echo "PREVIOUS APK SIGNATURE DETAIL:"
+          cat dist/old-cert.txt
+          echo "NEW APK SIGNATURE DETAIL:"
+          cat dist/new-cert.txt
+          old_cert="$(sed -n 's/.*certificate SHA-256 digest: *//p' dist/old-cert.txt | head -n 1)"
+          new_cert="$(sed -n 's/.*certificate SHA-256 digest: *//p' dist/new-cert.txt | head -n 1)"
+          test -n "$old_cert"
+          echo "PREVIOUS STAFF SIGNER SHA256: $old_cert"
+          echo "LATEST STAFF SIGNER SHA256:   $new_cert"
+          if [ "$new_cert" != "$old_cert" ]; then
+            echo "::error::In-place update impossible with different certificate; do not publish as an upgrade."
+            exit 1
+          fi
+          "$BUILD_TOOLS/aapt" dump badging dist/VIB-SALES-STAFF.apk > dist/new-package.txt
+          "$BUILD_TOOLS/aapt" dump badging previous/VIB-SALES-STAFF.apk > dist/old-package.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          def identity(path):
+              data=Path(path).read_text()
+              row=next((line for line in data.splitlines() if line.startswith('package:')),None)
+              assert row, f'No package information in {path}'
+              values=dict(re.findall(r"(?:^|\s)(name|versionCode|versionName)='([^']+)'",row))
+              return values
+          old=identity('dist/old-package.txt')
+          new=identity('dist/new-package.txt')
+          assert old['name']==new['name']=='com.alaa.vibsales.staffscan',(old,new)
+          assert int(new['versionCode'])==6078,new # Flutter arm64 split-per-abi adds 2000
+          assert new['versionName']=='0.2.53',new
+          assert int(new['versionCode'])>int(old['versionCode']),(old,new)
+          print('Verified in-place staff upgrade:',old,'->',new)
+          PY
+          (cd dist && sha256sum VIB-SALES-STAFF.apk > SHA256SUMS.txt)
+
+      - name: Publish direct employee full-catalogue APK
+        run: |
+          gh release create vib-sales-staff-0.2.53-catalog-reconcile-20261102 \
+            dist/VIB-SALES-STAFF.apk dist/SHA256SUMS.txt \
+            --repo "$REPO" \
+            --target "$EXPECTED_SHA" \
+            --title "VIB Staff 0.2.53 — Inventory Reconciliation" \
+            --notes "تحديث موظف 0.2.53: مقارنة عدد وأسماء أصناف المدير النشطة من سيرفر Firebase بما كان متخزنًا على تليفون الموظف، وإظهار الأصناف التي وصلت الآن وأعدادها، ومسح فلتر البحث بعد المزامنة، مع استمرار إظهار أصناف رصيد صفر ومنع بيع المخزون النافد. لم تتغير بيانات المنتجات أو الفواتير أو صلاحيات الموظف. تم فحص مطابقة التوقيع ومعرف التطبيق ورقم النسخة بعد بناء GitHub. مزامنة الفواتير المعلقة قبل التثبيت، لا تحذف التطبيق." \
+            --prerelease
