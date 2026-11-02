@@ -6200,60 +6200,57 @@ Future<void> _printPdfOnBluetoothThermal(
   }
   try {
     final pages = await Printing.raster(pdfBytes, dpi: 203).toList();
-    if (pages.length != 1) {
-      throw StateError('تم إيقاف الطباعة لأن ملف الإيصال يحتوي على أكثر من صفحة.');
-    }
+    if (pages.isEmpty) throw StateError('ملف الفاتورة لا يحتوي على صفحات للطباعة.');
     final profile = await esc.CapabilityProfile.load();
     final generator = esc.Generator(esc.PaperSize.mm80, profile);
-    final resized = img.copyResize(pages.single.asImage(), width: 576);
-    final bitmap = img.Image(width: resized.width, height: resized.height, numChannels: 3);
-    img.fill(bitmap, color: img.ColorRgb8(255, 255, 255));
-    img.compositeImage(bitmap, resized);
-
-    // Threshold the raster and remember ink density per row.
-    final rowInk = List<int>.filled(bitmap.height, 0);
-    for (var y = 0; y < bitmap.height; y++) {
-      var darkPixels = 0;
-      for (var x = 0; x < bitmap.width; x++) {
-        final pixel = bitmap.getPixel(x, y);
-        final luminance = (pixel.r * 299 + pixel.g * 587 + pixel.b * 114) / 1000;
-        final channel = luminance < 230 ? 0 : 255;
-        bitmap.setPixelRgb(x, y, channel, channel, channel);
-        if (channel == 0) darkPixels++;
+    if (!await PrintBluetoothThermal.writeBytes(generator.reset())) {
+      throw StateError('تعذر تهيئة طابعة 80 مم.');
+    }
+    var printedAnyInk = false;
+    // Each thermal PDF page must be printed in order, never discarded.
+    // Use small raster bands to avoid overflowing the printer buffer.
+    for (final page in pages) {
+      final resized = img.copyResize(page.asImage(), width: 576);
+      final bitmap = img.Image(width: resized.width, height: resized.height, numChannels: 3);
+      img.fill(bitmap, color: img.ColorRgb8(255, 255, 255));
+      img.compositeImage(bitmap, resized);
+      final rowInk = List<int>.filled(bitmap.height, 0);
+      for (var y = 0; y < bitmap.height; y++) {
+        var darkPixels = 0;
+        for (var x = 0; x < bitmap.width; x++) {
+          final pixel = bitmap.getPixel(x, y);
+          final luminance = (pixel.r * 299 + pixel.g * 587 + pixel.b * 114) / 1000;
+          final channel = luminance < 230 ? 0 : 255;
+          bitmap.setPixelRgb(x, y, channel, channel, channel);
+          if (channel == 0) darkPixels++;
+        }
+        rowInk[y] = darkPixels;
       }
-      rowInk[y] = darkPixels;
+      var lastInkRow = -1;
+      var rollingInk = 0;
+      for (var y = 0; y < rowInk.length; y++) {
+        rollingInk += rowInk[y];
+        if (y >= 7) rollingInk -= rowInk[y - 7];
+        if (y >= 6 && rollingInk >= 260) lastInkRow = y;
+      }
+      if (lastInkRow < 0) continue;
+      final height = (lastInkRow + 32).clamp(1, bitmap.height).toInt();
+      printedAnyInk = true;
+      for (var top = 0; top < height; top += 128) {
+        final bandHeight = (height - top).clamp(1, 128).toInt();
+        final band = img.copyCrop(bitmap, x: 0, y: top, width: bitmap.width, height: bandHeight);
+        if (!await PrintBluetoothThermal.writeBytes(
+          generator.imageRaster(band, align: esc.PosAlign.center))) {
+          throw StateError('الطابعة ما استقبلتش كل بيانات الفاتورة.');
+        }
+        await Future.delayed(const Duration(milliseconds: 70));
+      }
     }
-
-    // Crop after the last real text/line cluster; isolated sensor specks don't extend the receipt.
-    var lastInkRow = -1;
-    var rollingInk = 0;
-    for (var y = 0; y < rowInk.length; y++) {
-      rollingInk += rowInk[y];
-      if (y >= 7) rollingInk -= rowInk[y - 7];
-      if (y >= 6 && rollingInk >= 260) lastInkRow = y;
+    if (!printedAnyInk) throw StateError('صفحات الفاتورة فارغة.');
+    if (!await PrintBluetoothThermal.writeBytes(generator.feed(2))) {
+      throw StateError('تعذر إنهاء طباعة الفاتورة.');
     }
-    final cropHeight = (lastInkRow < 0 ? 1 : lastInkRow + 48)
-        .clamp(1, bitmap.height)
-        .toInt();
-    final printBitmap = img.copyCrop(
-      bitmap,
-      x: 0,
-      y: 0,
-      width: bitmap.width,
-      height: cropHeight,
-    );
-
-    // Keep the printer's compatible raster image mode and send the cropped receipt as one job.
-    final commands = <int>[
-      ...generator.reset(),
-      ...generator.imageRaster(printBitmap, align: esc.PosAlign.center),
-      ...generator.feed(2),
-    ];
-    if (!await PrintBluetoothThermal.writeBytes(commands)) {
-      throw StateError('الطابعة ما استقبلتش بيانات الفاتورة.');
-    }
-    // Keep Bluetooth connected while the printer drains its receive buffer.
-    await Future.delayed(const Duration(seconds: 3));
+    await Future.delayed(const Duration(seconds: 2));
   } finally {
     await PrintBluetoothThermal.disconnect;
   }
