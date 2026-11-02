@@ -7919,7 +7919,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
         final invoiceType = purchasing ? 'purchases' : 'sales';
         final originalId = (invoice['sourceInvoiceId'] ?? invoiceId).toString();
         labels[row.id] = '${purchasing ? 'المورد' : 'العميل'}: $party\n'
-            'فاتورة: ${invoiceDisplayNumber(invoiceType, originalId, invoice)}';
+            'فاتورة: ${vibReadableProductInvoiceNumber(invoiceType, originalId, invoice)}';
       } catch (_) {
         labels[row.id] = 'تعذر قراءة الفاتورة الأصلية';
       }
