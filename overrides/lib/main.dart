@@ -181,14 +181,13 @@ bool shouldQueueEmployeeSaleFailure(Object error) =>
 
 Future<QuerySnapshot<Map<String,dynamic>>> _getInvoiceDataWithCacheFallback(
     Query<Map<String,dynamic>> query) async {
-  // An already visited catalogue must open immediately even without mobile data.
-  try {
-    final cached = await query.get(const GetOptions(source: Source.cache));
-    if (cached.docs.isNotEmpty) return cached;
-  } catch (_) {}
+  // Always ask the server first: a nonempty local Firestore cache is not proof
+  // that the employee catalogue contains every item in manager inventory.
+  // Only fall back to cache on an actual network/quota failure. Keep pending
+  // employee invoices safely on the device if the network is unavailable.
   try {
     return await query.get(const GetOptions(source: Source.server))
-        .timeout(const Duration(seconds: 5));
+      .timeout(const Duration(seconds: 12));
   } catch (error) {
     if (!isTemporaryFirestoreOffline(error) && !isFirestoreQuotaExhausted(error)) rethrow;
     return query.get(const GetOptions(source: Source.cache));
@@ -2640,6 +2639,7 @@ Future<void> groupedSaleDialog(BuildContext context, {required bool owner, requi
 Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, required String branchId, String? initialProductId}) async {
   // Invoice serial numbers are allocated in the save transaction; do not block offline entry.
   final productsSnap = await _getInvoiceDataWithCacheFallback(
+    // Same collection and activation rule used by manager InventoryAudit.
     db.collection('products').where('active', isEqualTo: true));
   var customersSnap = await _getInvoiceDataWithCacheFallback(db.collection('customers'));
   final addedCustomers = <String, Map<String,dynamic>>{};
@@ -2709,18 +2709,24 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         tableMode:true,invoiceNumber:draftNumber,itemCount:lines.length,
         quantityCount:lines.fold<int>(0,(sum,row)=>sum+(int.tryParse(row.quantity.text) ?? 0)),
         headerAction:IgnorePointer(ignoring:saving,child:ChatShortcut(owner:owner)),
-        entryStatus:!owner ? EmployeeSaleEntryBalanceStrip(
-          customerName:'${selectedCustomer?['name'] ?? ''}',
-          previousBalance:selectedCustomer == null ? null : previousBalance,
-          invoiceTotal:previewTotal,itemCount:lines.length,
-          onChooseCustomer:() async {
-            if(saving)return;
-            final id=await selectRegisteredCustomer(c);
-            if(id==null||!c.mounted)return;
-            final refreshed=await _getInvoiceDataWithCacheFallback(db.collection('customers'));
-            if(c.mounted)update(() {customersSnap=refreshed;customerId=id;});
-          },
-        ) : null,
+        entryStatus:!owner ? Column(mainAxisSize:MainAxisSize.min,children:[
+          if (productsSnap.metadata.isFromCache)
+            const Padding(padding:EdgeInsets.symmetric(horizontal:6,vertical:3),
+              child:Text('تنبيه: الأصناف من ذاكرة الجهاز، وقد تنقص أصناف جرد المدير. اتصل بالإنترنت وأعد فتح الفاتورة لتحديثها.',
+                style:TextStyle(color:Colors.orangeAccent,fontSize:11))),
+          EmployeeSaleEntryBalanceStrip(
+            customerName:'${selectedCustomer?['name'] ?? ''}',
+            previousBalance:selectedCustomer == null ? null : previousBalance,
+            invoiceTotal:previewTotal,itemCount:lines.length,
+            onChooseCustomer:() async {
+              if(saving)return;
+              final id=await selectRegisteredCustomer(c);
+              if(id==null||!c.mounted)return;
+              final refreshed=await _getInvoiceDataWithCacheFallback(db.collection('customers'));
+              if(c.mounted)update(() {customersSnap=refreshed;customerId=id;});
+            },
+          ),
+        ]) : null,
         toolbar:InvoiceProductsBar(inlineSearch:true,saleScreen:true,
           unitCosts:{for(final product in products) product.id:product.data()['purchasePrice'] as num?},stockStreamFor:invoiceMainStock,
           products:[for(final product in products) if(!lines.any((row)=>row.productId == product.id))
