@@ -1,0 +1,74 @@
+name: Publish verified Manager 0.2.49 invoice cancellation APK
+on:
+  push:
+    branches: [feature/manager-sales-invoice-cancel-20261102]
+    paths:
+      - .github/workflows/publish-vib-manager-cancel-20261102.yml
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      TESTED_RUN: "41422976980"
+      EXPECTED_SHA: "e2a6dfa930cd0fe17d5c1f7d17d90322996443c8"
+    steps:
+      - name: Await exact tested manager source build
+        run: |
+          gh run watch "$TESTED_RUN" --repo "$REPO" --exit-status --interval 15
+          info="$(gh api "repos/$REPO/actions/runs/$TESTED_RUN" --jq '[.head_sha,.conclusion] | join(" ")')"
+          test "$info" = "$EXPECTED_SHA success"
+      - name: Download tested Manager APK and previous signed release
+        run: |
+          mkdir -p dist old
+          gh run download "$TESTED_RUN" --repo "$REPO" --name VIB-SALES-MANAGER-APK --dir dist
+          gh release download vib-sales-manager-latest --repo "$REPO" --pattern VIB-SALES-MANAGER.apk --dir old
+          test -f dist/VIB-SALES-MANAGER.apk
+          test -f old/VIB-SALES-MANAGER.apk
+      - name: Verify signing identity, APK file and increasing Android version
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          BUILD="$(find "$SDK/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)"
+          test -x "$BUILD/apksigner" && test -x "$BUILD/aapt"
+          python3 - <<'PY'
+          from zipfile import ZipFile
+          from pathlib import Path
+          for p in [Path('old/VIB-SALES-MANAGER.apk'),Path('dist/VIB-SALES-MANAGER.apk')]:
+              assert p.stat().st_size > 10_000_000
+              with ZipFile(p) as z:
+                  assert z.testzip() is None
+                  assert {'AndroidManifest.xml','classes.dex'}.issubset(set(z.namelist()))
+          PY
+          "$BUILD/apksigner" verify --print-certs old/VIB-SALES-MANAGER.apk > old-cert.txt
+          "$BUILD/apksigner" verify --print-certs dist/VIB-SALES-MANAGER.apk > new-cert.txt
+          old_cert="$(sed -n 's/.*certificate SHA-256 digest: *//p' old-cert.txt | head -1)"
+          new_cert="$(sed -n 's/.*certificate SHA-256 digest: *//p' new-cert.txt | head -1)"
+          test -n "$old_cert" && test "$old_cert" = "$new_cert"
+          "$BUILD/aapt" dump badging old/VIB-SALES-MANAGER.apk > old-manifest.txt
+          "$BUILD/aapt" dump badging dist/VIB-SALES-MANAGER.apk > new-manifest.txt
+          python3 - <<'PY'
+          import re
+          from pathlib import Path
+          def read(path):
+              row=next(s for s in Path(path).read_text().splitlines() if s.startswith('package:'))
+              return dict(re.findall(r"(?:^|\s)(name|versionCode|versionName)='([^']+)'",row))
+          old,new=read('old-manifest.txt'),read('new-manifest.txt')
+          assert old['name']==new['name']=='com.alaa.vibsales.managerscan',(old,new)
+          assert new['versionName']=='0.2.49',(old,new)
+          assert int(new['versionCode'])==6074,(old,new)
+          assert int(new['versionCode'])>int(old['versionCode']),(old,new)
+          print('Verified manager update',old,'->',new)
+          PY
+          (cd dist && sha256sum VIB-SALES-MANAGER.apk > SHA256SUMS.txt)
+      - name: Publish direct Manager update for phone test
+        run: |
+          gh release create vib-manager-0.2.49-sales-cancel-20261102 \
+            dist/VIB-SALES-MANAGER.apk dist/SHA256SUMS.txt \
+            --repo "$REPO" --target "$EXPECTED_SHA" \
+            --title "VIB Manager 0.2.49 — cancel mistaken sales invoice" \
+            --notes "زر جديد للمدير داخل تفاصيل فاتورة المبيعات وخياراتها: إلغاء الفاتورة المعمولة بالخطأ. يسجّل سببًا وتأكيدًا، ويُعيد المخزون، ويعكس الصندوق ومديونية العميل مع الحفاظ على أصل الفاتورة ورقمها وحركات التدقيق. إلغاء سندات القبض المرتبطة أولًا إلزامي. نسخة تجريبية مبنية ومختبرة على GitHub، ويجب تجربتها على جهاز حقيقي، ولا تحذف التطبيق ولا بياناته. خذ نسخة احتياطية وتأكد من مزامنة الفواتير المعلقة." \
+            --prerelease
