@@ -2075,8 +2075,8 @@ class _ProductsState extends State<Products> {
           'كان بالموبايل ${cachedActive.length} صنف. '
           'الجديد على الجهاز: ${newNames.length}. '
           'لم يعد نشطًا: ${retiredNames.length}.'
-          '${newNames.isEmpty ? '' : '\\nالأصناف اللي وصلت: ${newNames.take(8).join('، ')}${newNames.length>8 ? '…' : ''}'}'
-          '\\nافتح فاتورة جديدة بعد المزامنة لظهور القائمة المحدثة.';
+          '${newNames.isEmpty ? '' : '\nالأصناف اللي وصلت: ${newNames.take(8).join('، ')}${newNames.length>8 ? '…' : ''}'}'
+          '\nافتح فاتورة جديدة بعد المزامنة لظهور القائمة المحدثة.';
       });
     } catch(error) {
       if(!mounted)return;
