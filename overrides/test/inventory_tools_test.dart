@@ -4,6 +4,33 @@ import '../lib/inventory_price_data.dart';
 import '../lib/main.dart';
 
 void main() {
+  test('main stock does not double-count inventory transferred to employee branches', () {
+    final docs = <Map<String, dynamic>>[
+      {'_stockDocumentId': 'main_p', 'productId': 'p',
+        'branchId': 'main', 'quantity': 10},
+      {'_stockDocumentId': 'employee_p', 'productId': 'p',
+        'branchId': 'employee', 'quantity': 4},
+      {'_stockDocumentId': 'main_q', 'productId': 'q',
+        'branchId': 'main', 'quantity': -2},
+    ];
+    expect(inventoryStockAmounts(docs, mainOnly: true), {'p': 10, 'q': -2});
+    expect(inventoryStockAmounts(docs, mainOnly: false), {'p': 14, 'q': -2});
+    expect(() => inventoryStockAmounts([
+      {'_stockDocumentId': 'main_p', 'productId': 'p',
+        'branchId': 'main', 'quantity': 1.5},
+    ], mainOnly: true), throwsStateError);
+  });
+  test('inventory A4 report builds with costs and negative balance unchanged', () async {
+    final bytes = await buildInventoryAuditPdf('الكل', [
+      {'name': 'صنف تجريبي', 'quantity': 3,
+       'purchasePrice': 10.5, 'price': 13.2},
+      {'name': 'صنف برصيد سالب', 'quantity': -1,
+       'purchasePrice': 20, 'price': 25},
+    ], 'a4', stockScope: 'main', unconfirmed: true);
+    expect(bytes.length, greaterThan(1500));
+    expect(String.fromCharCodes(bytes.take(4)), '%PDF');
+  });
+
   testWidgets('return entry pages fit a small phone with keyboard and text scaling', (tester) async {
     tester.view.physicalSize=const Size(360,640);tester.view.devicePixelRatio=1;
     addTearDown(tester.view.resetPhysicalSize);addTearDown(tester.view.resetDevicePixelRatio);
