@@ -3420,13 +3420,33 @@ Future<void> expenseDialog(BuildContext context) async {
   }, child: const Text('حفظ المصروف'))]));
 }
 
+
+Map<String, int> inventoryStockAmounts(Iterable<Map<String, dynamic>> entries,
+    {required bool mainOnly}) {
+  final amounts = <String, int>{};
+  for (final data in entries) {
+    final id = (data['productId'] ?? '').toString().trim();
+    final branch = (data['branchId'] ?? '').toString().trim();
+    final documentId = (data['_stockDocumentId'] ?? '').toString();
+    if (id.isEmpty) continue;
+    final raw = data['quantity'];
+    if (raw is! num || !raw.isFinite || raw != raw.roundToDouble()) {
+      throw StateError('كمية غير صحيحة في المخزون للصنف: ' + id);
+    }
+    if (mainOnly && branch != 'main' && documentId != 'main_' + id) continue;
+    amounts[id] = (amounts[id] ?? 0) + raw.toInt();
+  }
+  return amounts;
+}
+
 class _InventoryAuditState extends State<InventoryAudit> {
   String category = 'الكل';
   String nameQuery = '';
+  String stockScope = 'main';
 
   @override
   Widget build(BuildContext context) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-    stream: db.collection('products').snapshots(),
+    stream: db.collection('products').snapshots(includeMetadataChanges: true),
     builder: (context, products) {
       if (products.hasError) return const Center(child: Text('تعذر تحميل الأصناف'));
       if (!products.hasData) return const Center(child: CircularProgressIndicator());
@@ -3436,19 +3456,19 @@ class _InventoryAuditState extends State<InventoryAudit> {
       final selected = categories.contains(category) ? category : 'الكل';
 
       return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: db.collection('stock').snapshots(),
+        stream: db.collection('stock').snapshots(includeMetadataChanges: true),
         builder: (context, stock) {
           if (stock.hasError) return const Center(child: Text('تعذر تحميل المخزون'));
           if (!stock.hasData) return const Center(child: CircularProgressIndicator());
 
-          final amounts = <String, int>{};
-          for (final entry in stock.data!.docs) {
-            final data = entry.data();
-            final id = '${data['productId'] ?? ''}';
-            if (id.isNotEmpty) {
-              amounts[id] = (amounts[id] ?? 0) + ((data['quantity'] as num?)?.toInt() ?? 0);
-            }
-          }
+          final amounts = inventoryStockAmounts(
+            stock.data!.docs.map((entry) => <String, dynamic>{
+              ...entry.data(), '_stockDocumentId': entry.id,
+            }), mainOnly: stockScope == 'main');
+          final unconfirmed = products.data!.metadata.isFromCache ||
+              products.data!.metadata.hasPendingWrites ||
+              stock.data!.metadata.isFromCache ||
+              stock.data!.metadata.hasPendingWrites;
 
           final filtered = rows
               .where((p) => (selected == 'الكل' || '${p.data()['category'] ?? 'غير مصنف'}' == selected) &&
@@ -3492,6 +3512,24 @@ class _InventoryAuditState extends State<InventoryAudit> {
               ),
             ),
             Padding(
+              padding: const EdgeInsets.fromLTRB(8, 3, 8, 1),
+              child: DropdownButtonFormField<String>(
+                value: stockScope,
+                isDense: true,
+                decoration: const InputDecoration(labelText: 'نطاق الجرد',
+                  isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 8)),
+                items: const [
+                  DropdownMenuItem(value: 'main', child: Text('المخزون الرئيسي فقط')),
+                  DropdownMenuItem(value: 'all', child: Text('المخزون الرئيسي وجميع الفروع')),
+                ],
+                onChanged: (value) => setState(() => stockScope = value ?? 'main'),
+              ),
+            ),
+            if (unconfirmed) const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+              child: Text('تنبيه: البيانات محلية أو بها مزامنة معلقة، راجع الاتصال قبل اعتماد الجرد.',
+                style: TextStyle(color: Colors.orangeAccent, fontSize: 11))),
+            Padding(
               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
               child: Card(child: Padding(padding: const EdgeInsets.all(6),
                 child: Column(children: [
@@ -3525,7 +3563,7 @@ class _InventoryAuditState extends State<InventoryAudit> {
                         minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 3),
                         textStyle: const TextStyle(fontSize: 11)),
                       onPressed: auditRows.isEmpty ? null :
-                        () => printInventoryAudit(context, selected, auditRows, 'a4'),
+                        () => printInventoryAudit(context, selected, auditRows, 'a4', stockScope: stockScope, unconfirmed: unconfirmed),
                       icon: const Icon(Icons.picture_as_pdf, size: 15),
                       label: const Text('PDF A4'))),
                     const SizedBox(width: 4),
@@ -3534,7 +3572,7 @@ class _InventoryAuditState extends State<InventoryAudit> {
                         minimumSize: const Size(0, 32), padding: const EdgeInsets.symmetric(horizontal: 3),
                         textStyle: const TextStyle(fontSize: 11)),
                       onPressed: auditRows.isEmpty ? null :
-                        () => printInventoryAudit(context, selected, auditRows, '80'),
+                        () => printInventoryAudit(context, selected, auditRows, '80', stockScope: stockScope, unconfirmed: unconfirmed),
                       icon: const Icon(Icons.print, size: 15),
                       label: const Text('80 مم'))),
                   ]),
@@ -3681,43 +3719,150 @@ class _PurchaseSalePriceAuditState extends State<PurchaseSalePriceAudit> {
   );
 }
 
-Future<void> printInventoryAudit(BuildContext context, String category, List<Map<String, dynamic>> rows, String paper) async {
-  try {
-    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-    final pdf = pw.Document();
-    final totalCost = rows.fold<double>(0, (sum, row) => sum + ((row['purchasePrice'] as num?)?.toDouble() ?? 0) * ((row['quantity'] as num?)?.toDouble() ?? 0));
-    final totalSale = rows.fold<double>(0, (sum, row) => sum + ((row['price'] as num?)?.toDouble() ?? 0) * ((row['quantity'] as num?)?.toDouble() ?? 0));
-    final thermal = paper != 'a4';
 
-    pdf.addPage(pw.MultiPage(
-      pageFormat: invoicePageFormat(paper),
-      theme: pw.ThemeData.withFont(base: font, bold: font),
-      build: (_) => [
-        pw.Directionality(textDirection: pw.TextDirection.rtl, child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-          pw.Text('VIB للتجارة والتوزيع', textAlign: pw.TextAlign.center, style: pw.TextStyle(fontSize: thermal ? 12 : 20, fontWeight: pw.FontWeight.bold)),
-          pw.Text('جرد المخزون - الفئة: $category', textAlign: pw.TextAlign.center),
-          pw.Text('التاريخ: ${DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now())}', textAlign: pw.TextAlign.center),
-          pw.Divider(),
-          pw.Text('عدد الأصناف: ${rows.length}'),
-          pw.Text('الإجمالي بسعر التكلفة: ${totalCost.toStringAsFixed(2)} ج.م'),
-          pw.Text('الإجمالي بسعر البيع: ${totalSale.toStringAsFixed(2)} ج.م'),
-          pw.SizedBox(height: 8),
-        ])),
+Future<Uint8List> buildInventoryAuditPdf(String category,
+    List<Map<String, dynamic>> rows, String paper,
+    {String stockScope = 'main', bool unconfirmed = false}) async {
+  final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+  final logo = pw.MemoryImage(
+    (await rootBundle.load('assets/vip-logo.png')).buffer.asUint8List());
+  final thermal = paper != 'a4';
+  double value(Map<String, dynamic> row, String key) =>
+      (row[key] as num?)?.toDouble() ?? 0;
+  String money(num n) => n.toStringAsFixed(2);
+  final totalCost = rows.fold<double>(0, (sum, row) =>
+      sum + value(row, 'quantity') * value(row, 'purchasePrice'));
+  final totalSale = rows.fold<double>(0, (sum, row) =>
+      sum + value(row, 'quantity') * value(row, 'price'));
+  final negative = rows.where((r) => value(r, 'quantity') < 0).length;
+  const navy = PdfColor.fromInt(0xFF14263D);
+  const pale = PdfColor.fromInt(0xFFF4F5F8);
+  const edge = PdfColor.fromInt(0xFFB6C0CB);
+  pw.Widget cell(String text, {bool head = false, bool name = false,
+      bool bad = false}) => pw.Padding(
+    padding: const pw.EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+    child: pw.Text(text, textAlign: name ? pw.TextAlign.right : pw.TextAlign.center,
+      style: pw.TextStyle(font: font, fontSize: head ? 8 : 7.2,
+        color: head ? PdfColors.white : bad ? PdfColors.red800 : PdfColors.black,
+        fontWeight: head ? pw.FontWeight.bold : pw.FontWeight.normal)));
+  final pdf = pw.Document();
+  pdf.addPage(pw.MultiPage(
+    pageFormat: invoicePageFormat(paper),
+    maxPages: 1000,
+    margin: thermal ? const pw.EdgeInsets.all(7) :
+      const pw.EdgeInsets.fromLTRB(18, 16, 18, 25),
+    theme: pw.ThemeData.withFont(base: font, bold: font),
+    textDirection: pw.TextDirection.rtl,
+    footer: (context) => pw.Center(child: pw.Text(
+      'صفحة ' + context.pageNumber.toString() + ' من ' +
+      context.pagesCount.toString(), style: pw.TextStyle(font: font, fontSize: 8))),
+    build: (_) => [
+      pw.Center(child: pw.Column(children: [
+        pw.Image(logo, height: thermal ? 28 : 43),
+        pw.Text('VIB ALAA ELGNDY - للتجارة والتوزيع',
+          style: pw.TextStyle(font: font, fontSize: thermal ? 10 : 15,
+            fontWeight: pw.FontWeight.bold, color: navy)),
+        pw.SizedBox(height: 4),
+        pw.Text('جرد مخزني - ' + (stockScope == 'main' ?
+          'المخزون الرئيسي' : 'الرئيسي وجميع الفروع'),
+          style: pw.TextStyle(font: font, fontSize: thermal ? 9 : 13)),
+        pw.Text('الفئة: ' + category + '   |   التاريخ: ' +
+          DateFormat('dd/MM/yyyy HH:mm').format(DateTime.now()),
+          style: pw.TextStyle(font: font, fontSize: thermal ? 7 : 9)),
+      ])),
+      pw.SizedBox(height: 8),
+      pw.Text('عدد الأصناف: ' + rows.length.toString() +
+        '   |   أصناف برصيد سالب: ' + negative.toString(),
+        style: pw.TextStyle(font: font, fontSize: thermal ? 8 : 10)),
+      pw.Text('الإجمالي بسعر التكلفة: ' + money(totalCost) + ' ج.م',
+        style: pw.TextStyle(font: font, fontSize: thermal ? 9 : 12,
+          fontWeight: pw.FontWeight.bold)),
+      pw.Text('الإجمالي بسعر البيع: ' + money(totalSale) + ' ج.م',
+        style: pw.TextStyle(font: font, fontSize: thermal ? 8 : 10)),
+      if (unconfirmed) pw.Text(
+        'نسخة غير معتمدة: هناك بيانات محلية أو مزامنة معلقة',
+        style: pw.TextStyle(font: font, fontSize: 9, color: PdfColors.red800)),
+      pw.SizedBox(height: 9),
+      if (!thermal)
+        pw.Table(
+          border: pw.TableBorder.all(color: edge, width: .45),
+          columnWidths: const {
+            0: pw.FlexColumnWidth(.4), 1: pw.FlexColumnWidth(3.1),
+            2: pw.FlexColumnWidth(.65), 3: pw.FlexColumnWidth(.95),
+            4: pw.FlexColumnWidth(1.25), 5: pw.FlexColumnWidth(.95),
+            6: pw.FlexColumnWidth(1.25),
+          },
+          children: [
+            pw.TableRow(repeat: true,
+              decoration: const pw.BoxDecoration(color: navy),
+              children: [
+                cell('م', head: true), cell('اسم الصنف', head: true, name: true),
+                cell('الكمية', head: true), cell('سعر التكلفة', head: true),
+                cell('إجمالي التكلفة', head: true),
+                cell('سعر البيع', head: true), cell('إجمالي البيع', head: true),
+              ]),
+            for (var i = 0; i < rows.length; i++)
+              pw.TableRow(
+                decoration: i.isOdd ? const pw.BoxDecoration(color: pale) : null,
+                children: [
+                  cell((i + 1).toString()),
+                  cell((rows[i]['name'] ?? '').toString(), name: true),
+                  cell(money(value(rows[i], 'quantity')),
+                    bad: value(rows[i], 'quantity') < 0),
+                  cell(money(value(rows[i], 'purchasePrice'))),
+                  cell(money(value(rows[i], 'quantity') * value(rows[i], 'purchasePrice')),
+                    bad: value(rows[i], 'quantity') < 0),
+                  cell(money(value(rows[i], 'price'))),
+                  cell(money(value(rows[i], 'quantity') * value(rows[i], 'price')),
+                    bad: value(rows[i], 'quantity') < 0),
+                ]),
+          ])
+      else
         for (var i = 0; i < rows.length; i++)
-          pw.Directionality(textDirection: pw.TextDirection.rtl, child: pw.Container(
-            padding: pw.EdgeInsets.symmetric(vertical: thermal ? 3 : 5),
-            decoration: const pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(width: .4))),
-            child: pw.Text('${i + 1}- ${rows[i]['name']} | الكمية ${rows[i]['quantity']} | شراء ${rows[i]['purchasePrice']} | بيع ${rows[i]['price']}', style: pw.TextStyle(fontSize: thermal ? 8 : 10)),
-          )),
-      ],
-    ));
-
-    await Printing.layoutPdf(name: 'VIB-INVENTORY-${DateFormat('yyyyMMdd-HHmm').format(DateTime.now())}.pdf', onLayout: (_) => pdf.save());
-  } catch (e) {
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('تعذر إنشاء جرد المخزون: $e')));
-  }
+          pw.Container(
+            padding: const pw.EdgeInsets.symmetric(vertical: 3),
+            decoration: const pw.BoxDecoration(
+              border: pw.Border(bottom: pw.BorderSide(color: edge, width: .35))),
+            child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Text((i + 1).toString() + '. ' +
+                  (rows[i]['name'] ?? '').toString(),
+                  style: pw.TextStyle(font: font, fontSize: 8)),
+                pw.Text('كمية: ' + money(value(rows[i], 'quantity')) +
+                  ' | شراء: ' + money(value(rows[i], 'purchasePrice')) +
+                  ' | إجمالي: ' +
+                    money(value(rows[i], 'quantity') * value(rows[i], 'purchasePrice')),
+                  style: pw.TextStyle(font: font, fontSize: 7,
+                    color: value(rows[i], 'quantity') < 0 ?
+                      PdfColors.red800 : PdfColors.black)),
+              ])),
+      pw.SizedBox(height: 8),
+      pw.Text('إجمالي الجرد بالتكلفة: ' + money(totalCost) + ' ج.م',
+        style: pw.TextStyle(font: font, fontSize: thermal ? 10 : 12,
+          color: navy, fontWeight: pw.FontWeight.bold)),
+      if (!thermal) pw.Text(
+        'الكميات المعروضة أرصدة فعلية مسجلة. تفاصيل المباع والمرتجع '
+        'تحتاج مراجعة سجل الحركات ولا تُستنتج من الرصيد الحالي.',
+        style: pw.TextStyle(font: font, fontSize: 8)),
+    ],
+  ));
+  return pdf.save();
 }
 
+Future<void> printInventoryAudit(BuildContext context, String category,
+    List<Map<String, dynamic>> rows, String paper,
+    {String stockScope = 'main', bool unconfirmed = false}) async {
+  try {
+    final bytes = await buildInventoryAuditPdf(category, rows, paper,
+      stockScope: stockScope, unconfirmed: unconfirmed);
+    await Printing.layoutPdf(
+      name: 'VIB-INVENTORY-' + DateFormat('yyyyMMdd-HHmm').format(DateTime.now()) + '.pdf',
+      onLayout: (_) async => bytes);
+  } catch (error) {
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تعذر إنشاء جرد المخزون: ' + error.toString())));
+  }
+}
 
 class ProfitReport extends StatefulWidget {
   const ProfitReport({super.key});
