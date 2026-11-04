@@ -1344,6 +1344,24 @@ DateTime _dashboardStartOfDay([DateTime? day]) {
   return DateTime(value.year, value.month, value.day);
 }
 
+// Distinct, high-contrast dashboard symbols, matching their financial meaning.
+// UI-only changes: they never alter invoice totals or the Firestore data model.
+const dashboardSalesIcon = Icons.point_of_sale_rounded;
+const dashboardPurchasesIcon = Icons.shopping_cart_rounded;
+const dashboardPaymentsIcon = Icons.payments_rounded;
+const dashboardProfitsIcon = Icons.trending_up_rounded;
+
+Widget vibDashboardMetricIcon(IconData symbol, Color accent) => Container(
+  width: 34, height: 34,
+  alignment: Alignment.center,
+  decoration: BoxDecoration(
+    color: accent.withValues(alpha: .14),
+    borderRadius: BorderRadius.circular(10),
+    border: Border.all(color: accent.withValues(alpha: .65), width: 1),
+  ),
+  child: Icon(symbol, color: accent, size: 23),
+);
+
 class DashboardMetric extends StatelessWidget {
   final String label, collection, valueField;
   final String? actorId;
@@ -1382,8 +1400,8 @@ class DashboardMetric extends StatelessWidget {
         final value = snapshot.hasError ? '—' : count ? amount.toInt().toString() : amount.toStringAsFixed(2);
         return Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, color: accent, size: 25),
-            const SizedBox(height: 5),
+            vibDashboardMetricIcon(icon, accent),
+            const SizedBox(height: 4),
             Text(label, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
             const SizedBox(height: 4),
@@ -1445,9 +1463,8 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
             }
             return Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.payments_outlined,
-                  color: Color(0xFF45D483), size: 25),
-                const SizedBox(height: 5),
+                vibDashboardMetricIcon(dashboardPaymentsIcon, const Color(0xFF45D483)),
+                const SizedBox(height: 4),
                 const Text('حركة السداد', maxLines: 2, textAlign: TextAlign.center,
                   style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
                 const SizedBox(height: 4),
@@ -1523,8 +1540,8 @@ class DashboardGrossProfitMetric extends StatelessWidget {
           }
           return Padding(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.trending_up_rounded, color: Color(0xFFFFC857), size: 25),
-              const SizedBox(height: 5),
+              vibDashboardMetricIcon(dashboardProfitsIcon, const Color(0xFFFFC857)),
+              const SizedBox(height: 4),
               const Text('إجمالي الأرباح', textAlign: TextAlign.center, maxLines: 2,
                 style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
               const SizedBox(height: 4),
@@ -1593,11 +1610,11 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
         ? <Widget>[
             DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', selectedDay: metricDay,
               fromDate: selectedFrom, toDate: selectedTo,
-              accent: gold, icon: Icons.receipt_long_outlined),
+              accent: const Color(0xFF31E59A), icon: dashboardSalesIcon),
             _divider(),
             DashboardMetric(label: 'إجمالي المشتريات', collection: 'purchases', valueField: 'total', selectedDay: metricDay,
               fromDate: selectedFrom, toDate: selectedTo,
-              accent: const Color(0xFF55B8FF), icon: Icons.shopping_bag_outlined),
+              accent: const Color(0xFF55B8FF), icon: dashboardPurchasesIcon),
             _divider(),
             DashboardCustomerPaymentsMetric(from: selectedFrom, to: selectedTo),
             _divider(),
@@ -1650,7 +1667,7 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
             )),
           ]),
         ),
-        SizedBox(height: 115, child: Row(children: metrics)),
+        SizedBox(height: 127, child: Row(children: metrics)),
       ]),
     );
   }
@@ -2072,8 +2089,8 @@ class OwnerDashboard extends StatelessWidget {
             mainAxisExtent: 90,
           ),
           children: [
-            tile('المبيعات', Icons.insert_chart, () => openPage('المبيعات', Sales(owner: true, branchId: branchId)), accent: const Color(0xFF31E59A)),
-            tile('المشتريات', Icons.shopping_cart, () => openPage('المشتريات', const Purchases()), accent: const Color(0xFFFF922E)),
+            tile('المبيعات', dashboardSalesIcon, () => openPage('المبيعات', Sales(owner: true, branchId: branchId)), accent: const Color(0xFF31E59A)),
+            tile('المشتريات', dashboardPurchasesIcon, () => openPage('المشتريات', const Purchases()), accent: const Color(0xFFFF922E)),
             tile('العملاء', Icons.groups, () => openPage('العملاء', const Accounts()), accent: const Color(0xFF38A9FF)),
             tile('الموردين', Icons.local_shipping, () => openPage('الموردين', const Accounts(startWithSuppliers: true)), accent: const Color(0xFFFFC857)),
             tile('المحادثة', Icons.forum, () => openStaffChat(context, owner: true), accent: const Color(0xFFB866FF)),
@@ -3162,7 +3179,9 @@ class _SalesState extends State<Sales> {
       return label(name,phone);
     });
   }
-  @override void initState(){super.initState();if(widget.owner)prepareInvoiceSerials('sales').then((_){if(mounted)setState((){});}).catchError((Object e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر تجهيز أرقام المبيعات: $e')));});}
+  // Reading the sales list must not scan and assign numbers to all old invoices.
+  // New invoice numbers continue to be reserved atomically when saved.
+  @override void initState(){super.initState();}
   DateTime selectedFrom = DateTime.now();
   DateTime selectedTo = DateTime.now();
   bool get owner => widget.owner;
