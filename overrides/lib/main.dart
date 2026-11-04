@@ -1402,8 +1402,9 @@ class DashboardMetric extends StatelessWidget {
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             vibDashboardMetricIcon(icon, accent),
             const SizedBox(height: 4),
-            Text(label, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
+            SizedBox(height: 24, child: Center(child: Text(label, textAlign: TextAlign.center,
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)))),
             const SizedBox(height: 4),
             FittedBox(fit: BoxFit.scaleDown, child: Text(value,
               style: TextStyle(color: accent, fontSize: 17, fontWeight: FontWeight.w800))),
@@ -1465,8 +1466,9 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 vibDashboardMetricIcon(dashboardPaymentsIcon, const Color(0xFF45D483)),
                 const SizedBox(height: 4),
-                const Text('حركة السداد', maxLines: 2, textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
+                const SizedBox(height: 24, child: Center(child: Text('السداد',
+                  maxLines: 1, textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)))),
                 const SizedBox(height: 4),
                 FittedBox(fit: BoxFit.scaleDown, child: Text(amount,
                   style: const TextStyle(color: Color(0xFF45D483),
@@ -1542,8 +1544,9 @@ class DashboardGrossProfitMetric extends StatelessWidget {
             child: Column(mainAxisSize: MainAxisSize.min, children: [
               vibDashboardMetricIcon(dashboardProfitsIcon, const Color(0xFFFFC857)),
               const SizedBox(height: 4),
-              const Text('إجمالي الأرباح', textAlign: TextAlign.center, maxLines: 2,
-                style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
+              const SizedBox(height: 24, child: Center(child: Text('الأرباح',
+                textAlign: TextAlign.center, maxLines: 1,
+                style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)))),
               const SizedBox(height: 4),
               Tooltip(
                 message: hasMissingCost ? 'بعض الفواتير لا تحتوي على تكلفة الشراء وقت البيع' :
@@ -1580,8 +1583,6 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
     selectedFrom = selectedTo = _dashboardStartOfDay();
   }
 
-  Widget _divider() => Container(width: 1, height: 54, color: const Color(0xFF35435A));
-
   Future<void> _selectDate({required bool from}) async {
     final picked = await showDatePicker(
       context: context,
@@ -1608,25 +1609,20 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
     final metricDay = owner ? selectedTo : _dashboardStartOfDay();
     final metrics = owner
         ? <Widget>[
-            DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', selectedDay: metricDay,
+            DashboardMetric(label: 'المبيعات', collection: 'sales', valueField: 'total', selectedDay: metricDay,
               fromDate: selectedFrom, toDate: selectedTo,
               accent: const Color(0xFF31E59A), icon: dashboardSalesIcon),
-            _divider(),
-            DashboardMetric(label: 'إجمالي المشتريات', collection: 'purchases', valueField: 'total', selectedDay: metricDay,
+            DashboardMetric(label: 'المشتريات', collection: 'purchases', valueField: 'total', selectedDay: metricDay,
               fromDate: selectedFrom, toDate: selectedTo,
               accent: const Color(0xFF55B8FF), icon: dashboardPurchasesIcon),
-            _divider(),
             DashboardCustomerPaymentsMetric(from: selectedFrom, to: selectedTo),
-            _divider(),
             DashboardGrossProfitMetric(from: selectedFrom, to: selectedTo),
           ]
         : <Widget>[
             DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', actorId: widget.actorId, selectedDay: metricDay,
               accent: gold, icon: Icons.monetization_on_outlined),
-            _divider(),
             DashboardMetric(label: 'عدد الفواتير', collection: 'sales', valueField: 'total', actorId: widget.actorId, selectedDay: metricDay,
               accent: const Color(0xFF55B8FF), icon: Icons.description_outlined, count: true),
-            _divider(),
             DashboardMetric(label: 'المحصل اليوم', collection: 'receipts', valueField: 'amount', actorId: widget.actorId, selectedDay: metricDay,
               accent: const Color(0xFF45D483), icon: Icons.volunteer_activism_outlined),
           ];
@@ -1667,7 +1663,11 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
             )),
           ]),
         ),
-        SizedBox(height: 127, child: Row(children: metrics)),
+        // Keep the four owner totals side by side; calculations and filters are unchanged.
+        SizedBox(height: 115, child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: metrics,
+        )),
       ]),
     );
   }
