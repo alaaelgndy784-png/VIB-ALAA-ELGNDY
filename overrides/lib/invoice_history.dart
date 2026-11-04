@@ -36,14 +36,10 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
       selectRange(DateTime(now.year, now.month, now.day - 1), DateTime(now.year, now.month, now.day), includeYesterday: true);
     }
     _scheduleDayRollover();
-    // Old purchase history is an audit view. Never reserve/backfill serials
-    // simply because the owner opened the history page: that would mutate
-    // Firestore settings and make a read-only review write to the database.
-    if (sales || staffApp) {
-      unawaited(prepareInvoiceSerials(widget.type).catchError((Object e) {
-        if(mounted && !isTemporaryFirestoreOffline(e))setState(()=>numberError='تعذر تجهيز أرقام الفواتير: $e');
-      }));
-    }
+    // Audit history is read-only for BOTH sales and purchases.
+    // Never number/backfill every old invoice on page open. Display the
+    // saved invoiceNumber as fallback when no internal number exists.
+    // A new invoice still reserves its serial in the save transaction.
   }
 
   @override void dispose() {
@@ -294,7 +290,7 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
             ),
             child: ListTile(
               leading: Icon(Icons.receipt_long_outlined,color:dayColor),
-              title: FutureBuilder<Map<String,dynamic>>(future: (!sales && !staffApp) || data['internalNumber'] is int || invoiceSerialCache.containsKey(serialKey(widget.type,row.id)) ? null : ensureInvoiceSerial(widget.type,row.id),builder:(context,serial)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+              title: FutureBuilder<Map<String,dynamic>>(future: null,builder:(context,serial)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
                 Text(party.isEmpty ? (sales ? 'بدون عميل مسجل' : 'مورد غير مسمى') : party,
                   style:TextStyle(color:dayColor,fontWeight:FontWeight.bold,fontSize:16)),
                 Text('رقم الفاتورة: ${invoiceDisplayNumber(widget.type,row.id,data)}'),
