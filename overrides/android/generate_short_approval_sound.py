@@ -36,7 +36,23 @@ def main() -> None:
             struct.pack("<h", sample(i / RATE)) for i in range(SAMPLES)
         ))
     assert TARGET.stat().st_size > 20000
+
+    # Android may strip a sound referenced only by its string name in Dart.
+    # Pin the resource through a manifest reference so it survives shrinking.
+    manifest = Path("android/app/src/main/AndroidManifest.xml")
+    xml = manifest.read_text(encoding="utf-8")
+    marker = "</application>"
+    if xml.count(marker) != 1:
+        raise SystemExit("Android manifest application boundary is missing/ambiguous")
+    meta = (
+        '        <meta-data android:name="vib.manager.approvalSound" '
+        'android:resource="@raw/vib_approval_message_short" />\n'
+    )
+    if "vib.manager.approvalSound" not in xml:
+        manifest.write_text(xml.replace(marker, meta + marker), encoding="utf-8")
+
     print(f"Short manager approval notification sound: {TARGET}")
+    print("Approval sound pinned in Android manifest for release builds")
 
 
 if __name__ == "__main__":
