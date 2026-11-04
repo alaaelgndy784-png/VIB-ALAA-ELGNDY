@@ -36,10 +36,14 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
       selectRange(DateTime(now.year, now.month, now.day - 1), DateTime(now.year, now.month, now.day), includeYesterday: true);
     }
     _scheduleDayRollover();
-    // Numbering is a background server task, never a condition for reading cached invoices.
-    unawaited(prepareInvoiceSerials(widget.type).catchError((Object e) {
-      if(mounted && !isTemporaryFirestoreOffline(e))setState(()=>numberError='تعذر تجهيز أرقام الفواتير: $e');
-    }));
+    // Old purchase history is an audit view. Never reserve/backfill serials
+    // simply because the owner opened the history page: that would mutate
+    // Firestore settings and make a read-only review write to the database.
+    if (sales || staffApp) {
+      unawaited(prepareInvoiceSerials(widget.type).catchError((Object e) {
+        if(mounted && !isTemporaryFirestoreOffline(e))setState(()=>numberError='تعذر تجهيز أرقام الفواتير: $e');
+      }));
+    }
   }
 
   @override void dispose() {
@@ -290,7 +294,7 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
             ),
             child: ListTile(
               leading: Icon(Icons.receipt_long_outlined,color:dayColor),
-              title: FutureBuilder<Map<String,dynamic>>(future: data['internalNumber'] is int || invoiceSerialCache.containsKey(serialKey(widget.type,row.id)) ? null : ensureInvoiceSerial(widget.type,row.id),builder:(context,serial)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+              title: FutureBuilder<Map<String,dynamic>>(future: (!sales && !staffApp) || data['internalNumber'] is int || invoiceSerialCache.containsKey(serialKey(widget.type,row.id)) ? null : ensureInvoiceSerial(widget.type,row.id),builder:(context,serial)=>Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
                 Text(party.isEmpty ? (sales ? 'بدون عميل مسجل' : 'مورد غير مسمى') : party,
                   style:TextStyle(color:dayColor,fontWeight:FontWeight.bold,fontSize:16)),
                 Text('رقم الفاتورة: ${invoiceDisplayNumber(widget.type,row.id,data)}'),
