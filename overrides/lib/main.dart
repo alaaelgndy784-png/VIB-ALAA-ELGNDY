@@ -41,6 +41,7 @@ import 'inventory_rows.dart';
 
 part 'cheques.dart';
 part 'chat_alerts.dart';
+part 'approval_alerts.dart';
 
 part 'invoice_editor.dart';
 part 'pending_sales.dart';
@@ -141,6 +142,13 @@ Timestamp? activeResetAt;
 Timestamp? managerArchivedSalesBefore;
 Timestamp? managerArchivedPurchasesBefore;
 Timestamp? managerArchivedExpensesBefore;
+
+// Archive markers hide history only; returns remain permitted for open periods.
+bool invoiceAllowedForReturn(Map<String, dynamic> data) {
+  final cutoff = activeResetAt;
+  final stamp = data['createdAt'];
+  return cutoff == null || (stamp is Timestamp && stamp.compareTo(cutoff) >= 0);
+}
 
 bool visibleAfterReset(Map<String, dynamic> data) {
   final createdAt = data['createdAt'];
@@ -1062,6 +1070,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     if(widget.role=='owner') {
       ChequeReminders.instance.watch(widget.uid);
+      unawaited(ManagerApprovalAlerts.instance.watch());
       ManagerOfflineSaleSync.instance.start();
       ManagerOfflineVoucherSync.instance.start();
       unawaited(ManagerOfflineDraftStore.instance.syncPending());
@@ -1103,6 +1112,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     ChatAlerts.instance.stop();
     if(widget.role=='owner') {
       ChequeReminders.instance.stop();
+      unawaited(ManagerApprovalAlerts.instance.stop());
       ManagerOfflineSaleSync.instance.stop();
       ManagerOfflineVoucherSync.instance.stop();
     } else {
@@ -1334,6 +1344,24 @@ DateTime _dashboardStartOfDay([DateTime? day]) {
   return DateTime(value.year, value.month, value.day);
 }
 
+// Distinct, high-contrast dashboard symbols, matching their financial meaning.
+// UI-only changes: they never alter invoice totals or the Firestore data model.
+const dashboardSalesIcon = Icons.point_of_sale_rounded;
+const dashboardPurchasesIcon = Icons.shopping_cart_rounded;
+const dashboardPaymentsIcon = Icons.payments_rounded;
+const dashboardProfitsIcon = Icons.trending_up_rounded;
+
+Widget vibDashboardMetricIcon(IconData symbol, Color accent) => Container(
+  width: 34, height: 34,
+  alignment: Alignment.center,
+  decoration: BoxDecoration(
+    color: accent.withValues(alpha: .14),
+    borderRadius: BorderRadius.circular(10),
+    border: Border.all(color: accent.withValues(alpha: .65), width: 1),
+  ),
+  child: Icon(symbol, color: accent, size: 23),
+);
+
 class DashboardMetric extends StatelessWidget {
   final String label, collection, valueField;
   final String? actorId;
@@ -1372,10 +1400,11 @@ class DashboardMetric extends StatelessWidget {
         final value = snapshot.hasError ? '—' : count ? amount.toInt().toString() : amount.toStringAsFixed(2);
         return Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, color: accent, size: 25),
-            const SizedBox(height: 5),
-            Text(label, textAlign: TextAlign.center, maxLines: 2, overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
+            vibDashboardMetricIcon(icon, accent),
+            const SizedBox(height: 4),
+            SizedBox(height: 24, child: Center(child: Text(label, textAlign: TextAlign.center,
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)))),
             const SizedBox(height: 4),
             FittedBox(fit: BoxFit.scaleDown, child: Text(value,
               style: TextStyle(color: accent, fontSize: 17, fontWeight: FontWeight.w800))),
@@ -1435,11 +1464,11 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
             }
             return Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.volunteer_activism_outlined,
-                  color: Color(0xFF45D483), size: 25),
-                const SizedBox(height: 5),
-                const Text('حركة السداد', maxLines: 2, textAlign: TextAlign.center,
-                  style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
+                vibDashboardMetricIcon(dashboardPaymentsIcon, const Color(0xFF45D483)),
+                const SizedBox(height: 4),
+                const SizedBox(height: 24, child: Center(child: Text('السداد',
+                  maxLines: 1, textAlign: TextAlign.center,
+                  style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)))),
                 const SizedBox(height: 4),
                 FittedBox(fit: BoxFit.scaleDown, child: Text(amount,
                   style: const TextStyle(color: Color(0xFF45D483),
@@ -1513,10 +1542,11 @@ class DashboardGrossProfitMetric extends StatelessWidget {
           }
           return Padding(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.trending_up_outlined, color: Color(0xFFFFC857), size: 25),
-              const SizedBox(height: 5),
-              const Text('إجمالي الأرباح', textAlign: TextAlign.center, maxLines: 2,
-                style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
+              vibDashboardMetricIcon(dashboardProfitsIcon, const Color(0xFFFFC857)),
+              const SizedBox(height: 4),
+              const SizedBox(height: 24, child: Center(child: Text('الأرباح',
+                textAlign: TextAlign.center, maxLines: 1,
+                style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)))),
               const SizedBox(height: 4),
               Tooltip(
                 message: hasMissingCost ? 'بعض الفواتير لا تحتوي على تكلفة الشراء وقت البيع' :
@@ -1553,8 +1583,6 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
     selectedFrom = selectedTo = _dashboardStartOfDay();
   }
 
-  Widget _divider() => Container(width: 1, height: 54, color: const Color(0xFF35435A));
-
   Future<void> _selectDate({required bool from}) async {
     final picked = await showDatePicker(
       context: context,
@@ -1581,25 +1609,20 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
     final metricDay = owner ? selectedTo : _dashboardStartOfDay();
     final metrics = owner
         ? <Widget>[
-            DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', selectedDay: metricDay,
+            DashboardMetric(label: 'المبيعات', collection: 'sales', valueField: 'total', selectedDay: metricDay,
               fromDate: selectedFrom, toDate: selectedTo,
-              accent: gold, icon: Icons.monetization_on_outlined),
-            _divider(),
-            DashboardMetric(label: 'إجمالي المشتريات', collection: 'purchases', valueField: 'total', selectedDay: metricDay,
+              accent: const Color(0xFF31E59A), icon: dashboardSalesIcon),
+            DashboardMetric(label: 'المشتريات', collection: 'purchases', valueField: 'total', selectedDay: metricDay,
               fromDate: selectedFrom, toDate: selectedTo,
-              accent: const Color(0xFF55B8FF), icon: Icons.shopping_cart_outlined),
-            _divider(),
+              accent: const Color(0xFF55B8FF), icon: dashboardPurchasesIcon),
             DashboardCustomerPaymentsMetric(from: selectedFrom, to: selectedTo),
-            _divider(),
             DashboardGrossProfitMetric(from: selectedFrom, to: selectedTo),
           ]
         : <Widget>[
             DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', actorId: widget.actorId, selectedDay: metricDay,
               accent: gold, icon: Icons.monetization_on_outlined),
-            _divider(),
             DashboardMetric(label: 'عدد الفواتير', collection: 'sales', valueField: 'total', actorId: widget.actorId, selectedDay: metricDay,
               accent: const Color(0xFF55B8FF), icon: Icons.description_outlined, count: true),
-            _divider(),
             DashboardMetric(label: 'المحصل اليوم', collection: 'receipts', valueField: 'amount', actorId: widget.actorId, selectedDay: metricDay,
               accent: const Color(0xFF45D483), icon: Icons.volunteer_activism_outlined),
           ];
@@ -1640,7 +1663,11 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
             )),
           ]),
         ),
-        SizedBox(height: 115, child: Row(children: metrics)),
+        // Keep the four owner totals side by side; calculations and filters are unchanged.
+        SizedBox(height: 115, child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+          children: metrics,
+        )),
       ]),
     );
   }
@@ -2062,8 +2089,8 @@ class OwnerDashboard extends StatelessWidget {
             mainAxisExtent: 90,
           ),
           children: [
-            tile('المبيعات', Icons.insert_chart, () => openPage('المبيعات', Sales(owner: true, branchId: branchId)), accent: const Color(0xFF31E59A)),
-            tile('المشتريات', Icons.shopping_cart, () => openPage('المشتريات', const Purchases()), accent: const Color(0xFFFF922E)),
+            tile('المبيعات', dashboardSalesIcon, () => openPage('المبيعات', Sales(owner: true, branchId: branchId)), accent: const Color(0xFF31E59A)),
+            tile('المشتريات', dashboardPurchasesIcon, () => openPage('المشتريات', const Purchases()), accent: const Color(0xFFFF922E)),
             tile('العملاء', Icons.groups, () => openPage('العملاء', const Accounts()), accent: const Color(0xFF38A9FF)),
             tile('الموردين', Icons.local_shipping, () => openPage('الموردين', const Accounts(startWithSuppliers: true)), accent: const Color(0xFFFFC857)),
             tile('المحادثة', Icons.forum, () => openStaffChat(context, owner: true), accent: const Color(0xFFB866FF)),
@@ -3152,7 +3179,9 @@ class _SalesState extends State<Sales> {
       return label(name,phone);
     });
   }
-  @override void initState(){super.initState();if(widget.owner)prepareInvoiceSerials('sales').then((_){if(mounted)setState((){});}).catchError((Object e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر تجهيز أرقام المبيعات: $e')));});}
+  // Reading the sales list must not scan and assign numbers to all old invoices.
+  // New invoice numbers continue to be reserved atomically when saved.
+  @override void initState(){super.initState();}
   DateTime selectedFrom = DateTime.now();
   DateTime selectedTo = DateTime.now();
   bool get owner => widget.owner;
@@ -4008,7 +4037,9 @@ class _PurchasesState extends State<Purchases>{
     });
   }
   bool get owner=>widget.owner;
-  @override void initState(){super.initState();if(owner)prepareInvoiceSerials('purchases').then((_){if(mounted)setState((){});}).catchError((Object e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر تجهيز أرقام المشتريات: $e')));});}
+  // Viewing purchases must not backfill all historical serial numbers.
+  // Invoice numbering for NEW purchases remains in their save transaction.
+  @override void initState(){super.initState();}
   @override
   Widget build(BuildContext context) => Column(children: [
     Padding(padding: const EdgeInsets.fromLTRB(10,8,10,4), child: Column(children: [
@@ -4018,6 +4049,12 @@ class _PurchasesState extends State<Purchases>{
         if(owner) Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)), onPressed: () => openVibReport(context, 'تقرير حركة المشتريات', const InvoiceMovementReportPage(type: 'purchases')),
           icon: const Icon(Icons.summarize_outlined, size:18), label: const Text('تقرير الحركة', maxLines:1, overflow:TextOverflow.ellipsis))),
       ]),
+      if(owner) Padding(padding: const EdgeInsets.only(top: 4),
+        child: SizedBox(width: double.infinity, child: OutlinedButton.icon(
+          key: const ValueKey('purchases-full-ledger-shortcut'),
+          onPressed: () => openVibReport(context, 'كل فواتير المشتريات من البداية', const InvoiceHistoryPage(type: 'purchases')),
+          icon: const Icon(Icons.all_inbox_outlined, size: 18),
+          label: const Text('عرض جميع فواتير المشتريات القديمة والجديدة')))),
       if(owner) Padding(padding:const EdgeInsets.only(top:4),child:Row(children: [
         Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)), onPressed: () => findInvoiceForEdit(context, 'purchases'), icon: const Icon(Icons.edit_note, size:18), label: const Text('تعديل فاتورة', maxLines:1, overflow:TextOverflow.ellipsis))),
         const SizedBox(width:6),
@@ -7474,10 +7511,28 @@ int allocatedPartialReturnCents(int lineCents, int lineQuantity,
   return upTo(alreadyReturned + returningNow) - upTo(alreadyReturned);
 }
 
+// A quota rejection is a server-side failure, not an invalid return quantity.
+// Never claim a financial or stock change succeeded without server proof.
+String returnFailureMessage(Object error) {
+  if (isFirestoreQuotaExhausted(error)) {
+    return 'Firebase رفض تسجيل المرتجع بسبب استنفاد الحصة أو موارد الخدمة '
+      '(resource-exhausted). تسجيل المرتجع لم يتأكد من السيرفر؛ '
+      'لا تكرر نفس العملية قبل مراجعة سجل المرتجعات وحركة الفاتورة. '
+      'لا تعدّل المخزون أو الأرصدة يدويًا. '
+      'يحتاج مدير المشروع إلى فحص Firestore Usage وBilling.';
+  }
+  if (error is FirebaseException &&
+      (error.code == 'unavailable' || error.code == 'deadline-exceeded')) {
+    return 'الاتصال بـ Firebase انقطع أثناء المرتجع؛ لا يمكن تأكيد حالته. '
+      'راجع الفاتورة وسجل المرتجعات قبل أي محاولة جديدة.';
+  }
+  return 'تعذر تسجيل المرتجع: $error';
+}
+
 Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
   try {
     final invoice = (await db.collection('sales').doc(id).get(const GetOptions(source: Source.server))).data();
-    if (invoice == null || invoice['status'] != 'completed' || !visibleAfterReset(invoice)) {
+    if (invoice == null || invoice['status'] != 'completed' || !invoiceAllowedForReturn(invoice)) {
       throw StateError('الفاتورة غير متاحة للمرتجع');
     }
     if (((invoice['onlinePaid'] as num?) ?? 0) > 0) {
@@ -7525,12 +7580,18 @@ Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
           TextField(controller: quantity, keyboardType: TextInputType.number,
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => FocusScope.of(dialogContext).unfocus(),
+            onChanged: (_) => setDialogState(() {}),
             decoration: InputDecoration(labelText: 'الكمية (المتاح ${available[selected]})')),
+          if ((int.tryParse(invoiceSearchText(quantity.text)) ?? 0) < 1 ||
+              (int.tryParse(invoiceSearchText(quantity.text)) ?? 0) > (available[selected] ?? 0))
+            Text('اختار كمية من 1 إلى ${available[selected]}', style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
-          FilledButton(onPressed: () {
-            final qty = int.tryParse(quantity.text.trim());
+          FilledButton(onPressed: (int.tryParse(invoiceSearchText(quantity.text)) ?? 0) < 1 ||
+              (int.tryParse(invoiceSearchText(quantity.text)) ?? 0) > (available[selected] ?? 0)
+              ? null : () {
+            final qty = int.tryParse(invoiceSearchText(quantity.text));
             if (qty == null || qty < 1 || qty > (available[selected] ?? 0)) {
               ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('اكتب كمية صحيحة لا تتجاوز المتاح')));
               return;
@@ -7564,8 +7625,8 @@ Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
       'تم إرجاع الصنف وتحديث المخزون والذمة والصندوق، مع حفظ الفاتورة الأصلية.',
       title: 'تم تسجيل مرتجع الصنف', button: 'تمام', success: true);
   } catch (e) {
-    if (context.mounted) await showInvoiceSaveProblem(context, 'تعذر إرجاع الصنف: $e',
-      title: 'لم يتم تسجيل المرتجع', button: 'رجوع');
+    if (context.mounted) await showInvoiceSaveProblem(context, returnFailureMessage(e),
+      title: 'لم يتأكد تسجيل المرتجع', button: 'رجوع');
   }
 }
 
@@ -7576,7 +7637,7 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
   await db.runTransaction((tx) async {
     final invoiceSnap = await tx.get(invoiceRef);
     final d = invoiceSnap.data();
-    if (d == null || d['status'] != 'completed' || !visibleAfterReset(d)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    if (d == null || d['status'] != 'completed' || !invoiceAllowedForReturn(d)) throw StateError('الفاتورة غير متاحة للمرتجع');
     final profileSnap = await tx.get(db.collection('users').doc(actor));
     if (profileSnap.data()?['active'] != true || profileSnap.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
     if (((d['onlinePaid'] as num?) ?? 0) > 0) throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
@@ -7702,7 +7763,7 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
 Future<void> confirmPartialPurchaseReturn(BuildContext context, String id) async {
   try {
     final invoice=(await db.collection('purchases').doc(id).get(const GetOptions(source:Source.server))).data();
-    if(invoice==null||invoice['status']=='returned'||!visibleAfterReset(invoice))throw StateError('الفاتورة غير متاحة للمرتجع');
+    if(invoice==null||invoice['status']=='returned'||!invoiceAllowedForReturn(invoice))throw StateError('الفاتورة غير متاحة للمرتجع');
     final items=_saleReturnInvoiceItems(invoice), returnedByLine=<int,int>{};
     final raw=invoice['partialReturnQuantities'];
     if(raw is Map){for(final entry in raw.entries){final i=int.tryParse('${entry.key}'),q=entry.value;if(i!=null&&q is num&&q.isFinite&&q>=0)returnedByLine[i]=q.toInt();}}
@@ -7717,8 +7778,10 @@ Future<void> confirmPartialPurchaseReturn(BuildContext context, String id) async
       actionsPadding:const EdgeInsets.fromLTRB(12,6,12,12),
       title:const Text('إرجاع صنف من فاتورة المشتريات'),content:Column(mainAxisSize:MainAxisSize.min,children:[
         DropdownButtonFormField<int>(value:selected,isExpanded:true,decoration:const InputDecoration(labelText:'الصنف'),items:indexes.map((i)=>DropdownMenuItem(value:i,child:Text('${items[i]['productName']??'صنف'} • المتاح للإرجاع ${available[i]}'))).toList(),onChanged:(v){if(v!=null)setDialogState((){selected=v;quantity.text='1';});}),
-        TextField(controller:quantity,keyboardType:TextInputType.number,textInputAction:TextInputAction.done,onSubmitted:(_)=>FocusScope.of(dialogContext).unfocus(),decoration:InputDecoration(labelText:'الكمية (المتاح ${available[selected]})')),
-      ]),actions:[TextButton(onPressed:()=>Navigator.pop(dialogContext),child:const Text('إلغاء')),FilledButton(onPressed:(){final q=int.tryParse(quantity.text.trim());if(q==null||q<1||q>(available[selected]??0)){ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content:Text('اكتب كمية صحيحة لا تتجاوز المتاح')));return;}Navigator.pop(dialogContext,{'sourceItemIndex':selected,'quantity':q});},child:const Text('تأكيد الكمية ومراجعة المرتجع'))])));
+        TextField(controller:quantity,keyboardType:TextInputType.number,textInputAction:TextInputAction.done,onSubmitted:(_)=>FocusScope.of(dialogContext).unfocus(),onChanged:(_)=>setDialogState((){}),decoration:InputDecoration(labelText:'الكمية (المتاح ${available[selected]})')),
+        if((int.tryParse(invoiceSearchText(quantity.text))??0)<1 || (int.tryParse(invoiceSearchText(quantity.text))??0)>(available[selected]??0))
+          Text('اختار كمية من 1 إلى ${available[selected]}', style:const TextStyle(color:Colors.redAccent,fontSize:12)),
+      ]),actions:[TextButton(onPressed:()=>Navigator.pop(dialogContext),child:const Text('إلغاء')),FilledButton(onPressed:(int.tryParse(invoiceSearchText(quantity.text))??0)<1 || (int.tryParse(invoiceSearchText(quantity.text))??0)>(available[selected]??0) ? null : (){final q=int.tryParse(invoiceSearchText(quantity.text));if(q==null||q<1||q>(available[selected]??0)){ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content:Text('اكتب كمية صحيحة لا تتجاوز المتاح')));return;}Navigator.pop(dialogContext,{'sourceItemIndex':selected,'quantity':q});},child:const Text('تأكيد الكمية ومراجعة المرتجع'))])));
     quantity.dispose();if(choice==null||!context.mounted)return;
     final index=choice['sourceItemIndex']!,qty=choice['quantity']!,row=items[index];
     final lineQty=(row['quantity'] as num?)?.toInt()??0;final lineTotal=(row['lineTotal'] as num?)?.toDouble()??lineQty*((row['unitCost'] as num?)?.toDouble()??0);
@@ -7727,7 +7790,7 @@ Future<void> confirmPartialPurchaseReturn(BuildContext context, String id) async
     final yes=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('تأكيد إرجاع الصنف'),content:Text('الصنف: ${row['productName']??''}\nالكمية: $qty\nقيمة الصنف: ${value.toStringAsFixed(2)} ج.م\nسيُخصم من المخزون الرئيسي ويُحدّث حساب المورد والصندوق.'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('رجوع')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('تأكيد الإرجاع'))]))??false;
     if(!yes||!context.mounted)return;await returnPurchaseInvoiceItem(id,index,qty);
     if(context.mounted)await showInvoiceSaveProblem(context,'تم إرجاع الصنف وتحديث المخزون وحساب المورد والصندوق مع حفظ الفاتورة الأصلية.',title:'تم تسجيل مرتجع الصنف',button:'تمام',success:true);
-  }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر إرجاع الصنف: $e',title:'لم يتم تسجيل المرتجع',button:'رجوع');}
+  }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,returnFailureMessage(e),title:'لم يتأكد تسجيل المرتجع',button:'رجوع');}
 }
 
 Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantity) async {
@@ -7735,7 +7798,7 @@ Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantit
   final actor=FirebaseAuth.instance.currentUser!.uid,invoiceRef=db.collection('purchases').doc(id);
   await db.runTransaction((tx)async{
     final snap=await tx.get(invoiceRef),d=snap.data();
-    if(d==null||d['status']=='returned'||!visibleAfterReset(d))throw StateError('الفاتورة غير متاحة للمرتجع');
+    if(d==null||d['status']=='returned'||!invoiceAllowedForReturn(d))throw StateError('الفاتورة غير متاحة للمرتجع');
     final profile=(await tx.get(db.collection('users').doc(actor))).data();if(profile?['active']!=true||profile?['role']!='owner')throw StateError('المرتجعات للمدير فقط');
     final rawItems=d['items'];final items=<Map<String,dynamic>>[];if(rawItems is List){for(final raw in rawItems){if(raw is Map)items.add(Map<String,dynamic>.from(raw));}}
     if(items.isEmpty)items.add({'productId':d['productId'],'productName':d['productName'],'quantity':d['quantity']??0,'unitCost':d['unitCost']??0,'lineTotal':d['total']??0});
@@ -7803,7 +7866,7 @@ Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantit
 Future<void> confirmReturn(BuildContext context, String type, String id, Map<String, dynamic> data) async {
   try {
     final current = (await db.collection(type).doc(id).get(const GetOptions(source: Source.server))).data();
-    if (current == null || current['status'] != 'completed' || !visibleAfterReset(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    if (current == null || current['status'] != 'completed' || !invoiceAllowedForReturn(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
     if (type == 'sales' || type == 'purchases') {
       final priorReturns = await db.collection(type=='sales'?'salesReturns':'purchaseReturns').where('sourceInvoiceId', isEqualTo: id)
           .get(const GetOptions(source: Source.server));
@@ -7838,7 +7901,7 @@ Future<void> confirmReturn(BuildContext context, String type, String id, Map<Str
     if (!yes || !context.mounted) return;
     await returnInvoice(type, id, expectedSignature: invoiceReturnSignature(current));
     if (context.mounted) await showInvoiceSaveProblem(context,'تم تسجيل المرتجع وتحديث المخزون والذمة والصندوق وحفظ الفاتورة الأصلية.',title:'تم تسجيل المرتجع',button:'تمام',success:true);
-  } catch (e) { if (context.mounted) await showInvoiceSaveProblem(context,'تعذر المرتجع: $e',title:'لم يتم تسجيل المرتجع',button:'رجوع'); }
+  } catch (e) { if (context.mounted) await showInvoiceSaveProblem(context,returnFailureMessage(e),title:'لم يتأكد تسجيل المرتجع',button:'رجوع'); }
 }
 
 String accountBalanceLabel(num balance, {required bool supplier}) => balance < 0
@@ -7868,7 +7931,7 @@ Future<void> returnInvoice(String type, String id,
     final actor = FirebaseAuth.instance.currentUser!.uid;
     final profile = await tx.get(db.collection('users').doc(actor));
     if (profile.data()?['active'] != true || profile.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
-    if (!visibleAfterReset(d)) throw StateError('الفاتورة تخص دورة قديمة');
+    if (!invoiceAllowedForReturn(d)) throw StateError('الفاتورة تخص دورة مالية مقفولة');
     if (cancellingSale) {
       if (expectedCancellationSnapshot == null ||
           saleCancellationFinancialSnapshot(d) != expectedCancellationSnapshot) {

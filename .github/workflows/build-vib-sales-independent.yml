@@ -147,12 +147,13 @@ jobs:
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do cp /tmp/vib-launcher.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"; done
           cp firebase/google-services.json android/app/google-services.json
           if [ "$APP" = manager ]; then python3 ../overrides/android/configure_manager_ringtone.py "$APP"; fi
+          if [ "$APP" = manager ]; then python3 ../overrides/android/generate_short_approval_sound.py; fi
           flutter pub get
 
       - name: Verify invoice PDF rendering
         if: matrix.app == 'manager'
         working-directory: VIB-SALES-INDEPENDENT
-        run: flutter test test/store_movement_test.dart test/receipt_voucher_test.dart test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart test/chat_alerts_test.dart test/product_import_test.dart test/inventory_tools_test.dart test/inventory_rows_test.dart test/invoice_serial_core_test.dart test/invoice_parties_test.dart test/reports_test.dart test/pending_sale_data_test.dart test/pending_sale_review_test.dart test/customer_sales_report_test.dart test/sales_invoice_cancellations_test.dart test/product_invoice_movement_test.dart test/product_movement_layout_test.dart test/payment_receipt_scope_test.dart
+        run: flutter test test/store_movement_test.dart test/receipt_voucher_test.dart test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart test/chat_alerts_test.dart test/approval_alerts_test.dart test/archived_purchase_view_test.dart test/return_quota_message_test.dart test/dashboard_metric_icons_test.dart test/product_import_test.dart test/inventory_tools_test.dart test/inventory_rows_test.dart test/invoice_serial_core_test.dart test/invoice_parties_test.dart test/reports_test.dart test/pending_sale_data_test.dart test/pending_sale_review_test.dart test/customer_sales_report_test.dart test/sales_invoice_cancellations_test.dart test/product_invoice_movement_test.dart test/product_movement_layout_test.dart test/payment_receipt_scope_test.dart
 
       - name: Upload invoice PDF previews
         if: matrix.app == 'manager'
@@ -169,9 +170,14 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4083 --build-name=0.2.58
+          flutter build apk --release --split-per-abi --build-number=4200 --build-name=0.2.60
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
+
+      - name: Verify short manager approval WAV is bundled in the APK
+        if: matrix.app == 'manager'
+        working-directory: VIB-SALES-INDEPENDENT
+        run: python3 ../overrides/android/verify_short_approval_sound.py build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
 
       - name: Export Android signing fingerprints
         working-directory: VIB-SALES-INDEPENDENT
