@@ -10,6 +10,9 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
   late DateTime from, to;
   bool numbering=false;String numberError='';
   bool _showYesterdayAndToday = true;
+  // Audit view is read-only and intentionally includes archived/legacy invoices.
+  bool _allDates = false;
+  bool _includeArchived = false;
   Timer? _dayRolloverTimer;
   late Stream<QuerySnapshot<Map<String, dynamic>>> invoices;
   final TextEditingController partySearchController = TextEditingController();
@@ -21,7 +24,17 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     final now = DateTime.now();
-    selectRange(DateTime(now.year, now.month, now.day - 1), DateTime(now.year, now.month, now.day), includeYesterday: true);
+    if (!sales && !staffApp) {
+      // The manager should never have to guess a date to find old purchases.
+      from = DateTime(2000, 1, 1);
+      to = DateTime(now.year, now.month, now.day);
+      _allDates = true;
+      _includeArchived = true;
+      _showYesterdayAndToday = false;
+      _setDateRangeStream();
+    } else {
+      selectRange(DateTime(now.year, now.month, now.day - 1), DateTime(now.year, now.month, now.day), includeYesterday: true);
+    }
     _scheduleDayRollover();
     // Numbering is a background server task, never a condition for reading cached invoices.
     unawaited(prepareInvoiceSerials(widget.type).catchError((Object e) {
@@ -93,6 +106,11 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
   }
 
   void _setDateRangeStream() {
+    if (_allDates) {
+      // No orderBy: older imported invoices may have no createdAt field.
+      invoices = db.collection(widget.type).snapshots(includeMetadataChanges: true);
+      return;
+    }
     final fromDay = movementReportBoundary(from);
     final nextDay = movementReportBoundary(to, next: true);
     invoices = db.collection(widget.type)
@@ -105,10 +123,27 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
     from = DateTime(start.year, start.month, start.day);
     to = DateTime(end.year, end.month, end.day);
     _showYesterdayAndToday = includeYesterday;
+    _allDates = false;
+    _includeArchived = false;
     _searchingByParty = false;
     _partySearchError = '';
     partySearchController.clear();
     _setDateRangeStream();
+  }
+
+  void showAllHistory() {
+    setState(() {
+      _allDates = true;
+      _includeArchived = true;
+      _showYesterdayAndToday = false;
+      _searchingByParty = false;
+      _partySearchError = '';
+      partySearchController.clear();
+      from = DateTime(2000, 1, 1);
+      final now = DateTime.now();
+      to = DateTime(now.year, now.month, now.day);
+      _setDateRangeStream();
+    });
   }
 
   void searchByParty() {
@@ -171,6 +206,18 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
               DateTime(now.year, now.month, now.day), includeYesterday:true)); },
           icon: const Icon(Icons.today, size: 15), label: const Text('اليوم وأمس', maxLines: 1))),
       ])),
+    if (!sales && !staffApp) Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+      child: SizedBox(width: double.infinity, child: OutlinedButton.icon(
+        key: const ValueKey('purchases-complete-history'),
+        onPressed: showAllHistory,
+        icon: const Icon(Icons.all_inbox_outlined, size: 18),
+        label: const Text('كل فواتير المشتريات من أول يوم — شاملة المؤرشفة'),
+      ))),
+    if (_allDates) const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      child: Text('عرض السجل كاملًا للقراءة فقط، بلا تغيير في المخزون أو الحسابات. اختر تاريخًا واضغط تطبيق لتضييق الفترة.',
+        textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: gold))),
     if (!staffApp) Padding(padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
       child: SizedBox(width: double.infinity, child: OutlinedButton.icon(
         style: OutlinedButton.styleFrom(minimumSize: const Size(0, 34),
@@ -210,8 +257,8 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
       if(numbering)return const Center(child:CircularProgressIndicator());
       if (snapshot.hasError && !snapshot.hasData) return const Center(child: Text('تعذر تحميل الفواتير؛ راجع اتصال الإنترنت وحاول مرة أخرى'));
       if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-      final rows = snapshot.data!.docs.where((row) => visibleAfterReset(row.data())).toList();
-      if (_searchingByParty) {
+      final rows = snapshot.data!.docs.where((row) => _includeArchived || visibleAfterReset(row.data())).toList();
+      if (_searchingByParty || _allDates) {
         rows.sort((a, b) {
           final rawA = a.data()['createdAt'], rawB = b.data()['createdAt'];
           final timeA = rawA is Timestamp ? rawA.millisecondsSinceEpoch : rawA is DateTime ? rawA.millisecondsSinceEpoch : 0;
@@ -221,6 +268,9 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
       }
       final totalCents=rows.fold<int>(0,(sum,row){final value=row.data()['total'];if(value is! num || !value.isFinite)return sum;return sum+(value*100).round();});
       return Column(children: [
+        if (snapshot.data!.metadata.isFromCache) const Padding(
+          padding: EdgeInsets.all(5),
+          child: Text('البيانات من ذاكرة الجهاز؛ اتصل بالإنترنت للتأكد من السجل الكامل.', style: TextStyle(color: Colors.orangeAccent, fontSize: 12))),
         Padding(padding: const EdgeInsets.only(bottom: 4), child: Text('الفواتير: ${rows.length} • الإجمالي: ${movementReportMoney(totalCents)}',
           style: const TextStyle(color: gold, fontSize: 13, fontWeight: FontWeight.bold))),
         Expanded(child: rows.isEmpty ? const Center(child:Text('لا توجد فواتير في الفترة المختارة')) : ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
