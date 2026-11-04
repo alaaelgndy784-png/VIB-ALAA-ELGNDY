@@ -7490,7 +7490,10 @@ int allocatedPartialReturnCents(int lineCents, int lineQuantity,
   return upTo(alreadyReturned + returningNow) - upTo(alreadyReturned);
 }
 
-Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
+// Arabic and Latin digits; fractional or zero stock quantities are invalid.
+int? parseInvoiceReturnQuantity(String value) {
+  final normalized = invoiceSearchText(value);
+  return RegExp(r'^[0-9]+
   try {
     final invoice = (await db.collection('sales').doc(id).get(const GetOptions(source: Source.server))).data();
     if (invoice == null || invoice['status'] != 'completed' || !invoiceAllowedForReturn(invoice)) {
@@ -7541,18 +7544,22 @@ Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
           TextField(controller: quantity, keyboardType: TextInputType.number,
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => FocusScope.of(dialogContext).unfocus(),
+            onChanged: (_) => setDialogState(() {}),
             decoration: InputDecoration(labelText: 'الكمية (المتاح ${available[selected]})')),
+          if ((parseInvoiceReturnQuantity(quantity.text) ?? 0) < 1 ||
+              (parseInvoiceReturnQuantity(quantity.text) ?? 0) > (available[selected] ?? 0))
+            Text('اختار كمية صحيحة من 1 إلى ${available[selected]}',
+              style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
-          FilledButton(onPressed: () {
-            final qty = int.tryParse(quantity.text.trim());
-            if (qty == null || qty < 1 || qty > (available[selected] ?? 0)) {
-              ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('اكتب كمية صحيحة لا تتجاوز المتاح')));
-              return;
-            }
-            Navigator.pop(dialogContext, {'sourceItemIndex': selected, 'quantity': qty});
-          }, child: const Text('تأكيد الكمية ومراجعة المرتجع')),
+          FilledButton(onPressed: (parseInvoiceReturnQuantity(quantity.text) ?? 0) < 1 ||
+              (parseInvoiceReturnQuantity(quantity.text) ?? 0) > (available[selected] ?? 0)
+              ? null : () {
+                final qty = parseInvoiceReturnQuantity(quantity.text);
+                if (qty != null) Navigator.pop(dialogContext,
+                  {'sourceItemIndex': selected, 'quantity': qty});
+              }, child: const Text('تأكيد الكمية ومراجعة المرتجع')),
         ],
       ),
     ));
@@ -7592,7 +7599,7 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
   await db.runTransaction((tx) async {
     final invoiceSnap = await tx.get(invoiceRef);
     final d = invoiceSnap.data();
-    if (d == null || d['status'] != 'completed' || !visibleAfterReset(d)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    if (d == null || d['status'] != 'completed' || !invoiceAllowedForReturn(d)) throw StateError('الفاتورة غير متاحة للمرتجع');
     final profileSnap = await tx.get(db.collection('users').doc(actor));
     if (profileSnap.data()?['active'] != true || profileSnap.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
     if (((d['onlinePaid'] as num?) ?? 0) > 0) throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
@@ -7733,8 +7740,25 @@ Future<void> confirmPartialPurchaseReturn(BuildContext context, String id) async
       actionsPadding:const EdgeInsets.fromLTRB(12,6,12,12),
       title:const Text('إرجاع صنف من فاتورة المشتريات'),content:Column(mainAxisSize:MainAxisSize.min,children:[
         DropdownButtonFormField<int>(value:selected,isExpanded:true,decoration:const InputDecoration(labelText:'الصنف'),items:indexes.map((i)=>DropdownMenuItem(value:i,child:Text('${items[i]['productName']??'صنف'} • المتاح للإرجاع ${available[i]}'))).toList(),onChanged:(v){if(v!=null)setDialogState((){selected=v;quantity.text='1';});}),
-        TextField(controller:quantity,keyboardType:TextInputType.number,textInputAction:TextInputAction.done,onSubmitted:(_)=>FocusScope.of(dialogContext).unfocus(),decoration:InputDecoration(labelText:'الكمية (المتاح ${available[selected]})')),
-      ]),actions:[TextButton(onPressed:()=>Navigator.pop(dialogContext),child:const Text('إلغاء')),FilledButton(onPressed:(){final q=int.tryParse(quantity.text.trim());if(q==null||q<1||q>(available[selected]??0)){ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content:Text('اكتب كمية صحيحة لا تتجاوز المتاح')));return;}Navigator.pop(dialogContext,{'sourceItemIndex':selected,'quantity':q});},child:const Text('تأكيد الكمية ومراجعة المرتجع'))])));
+        TextField(controller:quantity,keyboardType:TextInputType.number,
+          textInputAction:TextInputAction.done,
+          onSubmitted:(_)=>FocusScope.of(dialogContext).unfocus(),
+          onChanged:(_)=>setDialogState(() {}),
+          decoration:InputDecoration(labelText:'الكمية (المتاح ${available[selected]})')),
+        if ((parseInvoiceReturnQuantity(quantity.text) ?? 0) < 1 ||
+            (parseInvoiceReturnQuantity(quantity.text) ?? 0) > (available[selected] ?? 0))
+          Text('اختار كمية صحيحة من 1 إلى ${available[selected]}',
+            style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+      ]),actions:[
+        TextButton(onPressed:()=>Navigator.pop(dialogContext),child:const Text('إلغاء')),
+        FilledButton(onPressed: (parseInvoiceReturnQuantity(quantity.text) ?? 0) < 1 ||
+            (parseInvoiceReturnQuantity(quantity.text) ?? 0) > (available[selected] ?? 0)
+            ? null : () {
+              final q = parseInvoiceReturnQuantity(quantity.text);
+              if (q != null) Navigator.pop(dialogContext,
+                {'sourceItemIndex':selected,'quantity':q});
+            },child:const Text('تأكيد الكمية ومراجعة المرتجع')),
+      ]))));
     quantity.dispose();if(choice==null||!context.mounted)return;
     final index=choice['sourceItemIndex']!,qty=choice['quantity']!,row=items[index];
     final lineQty=(row['quantity'] as num?)?.toInt()??0;final lineTotal=(row['lineTotal'] as num?)?.toDouble()??lineQty*((row['unitCost'] as num?)?.toDouble()??0);
@@ -7884,7 +7908,1571 @@ Future<void> returnInvoice(String type, String id,
     final actor = FirebaseAuth.instance.currentUser!.uid;
     final profile = await tx.get(db.collection('users').doc(actor));
     if (profile.data()?['active'] != true || profile.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
-    if (!visibleAfterReset(d)) throw StateError('الفاتورة تخص دورة قديمة');
+    if (!invoiceAllowedForReturn(d)) throw StateError('الفاتورة تخص دورة مالية مقفولة');
+    if (cancellingSale) {
+      if (expectedCancellationSnapshot == null ||
+          saleCancellationFinancialSnapshot(d) != expectedCancellationSnapshot) {
+        throw StateError('تغير إجمالي الفاتورة أو المدفوع أو الأصناف أو العميل فعلًا؛ افتح الفاتورة وراجع بياناتها قبل الإلغاء.');
+      }
+    } else if (expectedSignature != null &&
+        invoiceReturnSignature(d) != expectedSignature) {
+      throw StateError('الفاتورة تغيّرت؛ افتح مراجعة المرتجع من جديد');
+    }
+    if(type=='sales' && ((d['onlinePaid'] as num?)??0)>0)throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
+    if (d['status'] != 'completed') throw StateError('الفاتورة ملغاة أو مرتجعة أو غير معتمدة بالفعل');
+    if (cancellingSale) {
+      if (!saleInvoiceCanBeCancelled(d)) {
+        throw StateError('الفاتورة غير متاحة للإلغاء');
+      }
+      if (cancelledReceiptIds.length > 50 ||
+          cancelledReceiptIds.toSet().length != cancelledReceiptIds.length) {
+        throw StateError('سجلات سندات القبض غير صالحة للإلغاء الآمن');
+      }
+      var receiptCents = 0;
+      for (final receiptId in cancelledReceiptIds) {
+        final receiptSnap = await tx.get(db.collection('receipts').doc(receiptId));
+        final cancellationSnap = await tx.get(
+          db.collection('voucherCancellations').doc('receipt_$receiptId'));
+        final receipt = receiptSnap.data();
+        final cancellation = cancellationSnap.data();
+        if (receipt == null || receipt['invoiceId'] != id ||
+            cancellation == null || cancellation['type'] != 'receipt' ||
+            cancellation['originalId'] != receiptId) {
+          throw StateError('أحد سندات القبض لم يُلغَ بالفعل؛ ألغِ السند أولًا');
+        }
+        final amount = receipt['amount'];
+        if (amount is! num || !amount.isFinite || amount <= 0) {
+          throw StateError('قيمة سند القبض المرتبط غير صحيحة');
+        }
+        receiptCents += (amount * 100).round();
+      }
+      if (receiptCents != (((d['receiptPaid'] as num?) ?? 0) * 100).round() ||
+          ('${d['receiptId'] ?? ''}'.trim().isNotEmpty &&
+           !cancelledReceiptIds.contains('${d['receiptId']}'))) {
+        throw StateError('سندات القبض المتصلة بالفاتورة تغيرت؛ راجعها قبل الإلغاء');
+      }
+    }
+    final returnedLines=d['partialReturnQuantities'];
+    if(((d['partialReturnTotal'] as num?)?.toDouble()??0)>0||(returnedLines is Map&&returnedLines.isNotEmpty))throw StateError('الفاتورة بدأ لها مرتجع أصناف؛ أكمل الأصناف المتبقية بدل إرجاعها كاملة');
+
+    final now = FieldValue.serverTimestamp();
+    var items = <Map<String, dynamic>>[];
+    final rawItems = d['items'];
+    if (rawItems is List && rawItems.isNotEmpty) {
+      for (final raw in rawItems) {
+        if (raw is Map) items.add(Map<String, dynamic>.from(raw));
+      }
+    }
+    if (items.isEmpty) {
+      items.add({
+        'productId': d['productId'],
+        'productName': d['productName'],
+        'quantity': d['quantity'] ?? 0,
+        'unitPrice': d['unitPrice'],
+        'unitCost': d['unitCost'],
+        'lineTotal': d['total'],
+      });
+    }
+
+    items = groupedReturnItems(items);
+    if (type == 'sales') {
+      final branchId = '${d['stockBranchId'] ?? d['branchId']}';
+      if (branchId.isEmpty || branchId == 'null') throw StateError('مخزون الفاتورة غير مسجل');
+      final stockSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+      for (final item in items) {
+        final productId = '${item['productId']}';
+        stockSnaps[productId] = await tx.get(db.collection('stock').doc('${branchId}_$productId'));
+      }
+
+      DocumentSnapshot<Map<String, dynamic>>? customerSnap;
+      final customerId = '${d['customerId'] ?? ''}';
+      final due = (cancellingSale ? saleCancellationSettlement(d) : returnSettlement(d, sales: true)).debt;
+      if (due > 0 && customerId.isEmpty) throw StateError('الفاتورة الآجلة بدون حساب عميل؛ راجع الفاتورة');
+      if (customerId.isNotEmpty) {
+        customerSnap = await tx.get(db.collection('customers').doc(customerId));
+      }
+
+      DocumentSnapshot<Map<String, dynamic>>? cashSnap;
+      final hasFinancialFields = d.containsKey('paid') || d.containsKey('due');
+      final paid = hasFinancialFields ? (cancellingSale ? saleCancellationSettlement(d) : returnSettlement(d, sales: true)).cash : 0;
+      if (paid > 0) {
+        cashSnap = await tx.get(db.collection('settings').doc('cash'));
+        if (((cashSnap.data()?['balance'] as num?)?.toDouble() ?? 0) < paid) throw Exception('رصيد الصندوق لا يكفي لرد المبلغ المحصل');
+      }
+      if (customerSnap != null && !customerSnap.exists) throw Exception('حساب العميل غير موجود');
+      // General receipts are account-level credit and remain posted. Only
+      // this invoice's receiptPaid is refunded; unrelated collections are retained.
+
+      final ret = db.collection('salesReturns').doc();
+      for (final item in items) {
+        final productId = '${item['productId']}';
+        final qty = (item['quantity'] as num?)?.toInt() ?? 0;
+        final stockRef = db.collection('stock').doc('${branchId}_$productId');
+        final before = (stockSnaps[productId]?.data()?['quantity'] as num?)?.toInt() ?? 0;
+        tx.set(stockRef, {'branchId': branchId, 'productId': productId, 'quantity': before + qty}, SetOptions(merge: true));
+        tx.set(db.collection('stockMovements').doc(), {
+          'productId': productId,
+          'productName': item['productName'],
+          'branchId': branchId,
+          'kind': 'sales_return',
+          'quantity': qty,
+          'balanceAfter': before + qty,
+          'referenceId': ret.id,
+          'actorId': FirebaseAuth.instance.currentUser!.uid,
+          'createdAt': now,
+        });
+      }
+
+      if (customerSnap != null && customerSnap.exists && due > 0) {
+        final beforeCustomer = (customerSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
+        final afterCustomer = ((beforeCustomer * 100).round() - (due * 100).round()) / 100;
+        tx.update(db.collection('customers').doc(customerId), {'balance': afterCustomer, 'updatedAt': now});
+        tx.set(db.collection('accountMovements').doc(), {
+          'accountType': 'customers',
+          'accountId': customerId,
+          'accountName': d['customerName'],
+          'kind': 'sales_return',
+          'amount': due,
+          'balanceBefore': beforeCustomer,
+          'balanceAfter': afterCustomer,
+          'referenceId': ret.id,
+          'createdAt': now,
+          'actorId': FirebaseAuth.instance.currentUser!.uid,
+        });
+      }
+
+      if (cashSnap != null && paid > 0) {
+        final beforeCash = (cashSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
+        final afterCash = ((beforeCash * 100).round() - (paid * 100).round()) / 100;
+        tx.set(db.collection('settings').doc('cash'), {'balance': afterCash, 'updatedAt': now}, SetOptions(merge: true));
+        tx.set(db.collection('accountMovements').doc(), {
+          'accountType': 'cash',
+          'kind': 'sales_return',
+          'accountId': customerId,
+          'accountName': d['customerName'],
+          'amount': paid,
+          'delta': -paid,
+          'balanceBefore': beforeCash,
+          'balanceAfter': afterCash,
+          'referenceId': ret.id,
+          'reason': cancellingSale ? 'إلغاء فاتورة مبيعات أُنشئت بالخطأ' : 'رد قيمة فاتورة مبيعات',
+          'createdAt': now,
+          'actorId': FirebaseAuth.instance.currentUser!.uid,
+        });
+      }
+
+      tx.set(ret, {...d, 'sourceInvoiceId': id,
+        'returnType': cancellingSale ? 'cancellation' : 'full',
+        if (cancellingSale) 'cancellationReason': cancellationReason,
+        if (cancellingSale) 'cancelledReceiptIds': cancelledReceiptIds,
+        'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+      tx.update(invoiceRef, {
+        'status': cancellingSale ? 'cancelled' : 'returned',
+        'returnedAt': now, 'returnId': ret.id,
+      });
+    } else {
+      final supplierRef = db.collection('suppliers').doc('${d['supplierId']}');
+      final supplier = await tx.get(supplierRef);
+      if (!supplier.exists) throw Exception('حساب المورد غير موجود');
+      final oldBalance = (supplier.data()?['balance'] as num?)?.toDouble() ?? 0;
+      final refund = returnSettlement(d, sales: false).cash;
+      final cashRef = db.collection('settings').doc('cash');
+      final cash = await tx.get(cashRef);
+      final cashBefore = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
+      final due = returnSettlement(d, sales: false).debt;
+      final supplierAfter = ((oldBalance * 100).round() - (due * 100).round()) / 100;
+      final cashAfter = ((cashBefore * 100).round() + (refund * 100).round()) / 100;
+
+      final stockSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+      for (final item in items) {
+        final productId = '${item['productId']}';
+        stockSnaps[productId] = await tx.get(db.collection('stock').doc('main_$productId'));
+      }
+      for (final item in items) {
+        final productId = '${item['productId']}';
+        final qty = (item['quantity'] as num?)?.toInt() ?? 0;
+        final before = (stockSnaps[productId]?.data()?['quantity'] as num?)?.toInt() ?? 0;
+        if (before < qty) throw Exception('المخزون الرئيسي لا يكفي لإرجاع الصنف: ${item['productName'] ?? ''}');
+      }
+
+      final ret = db.collection('purchaseReturns').doc();
+      for (final item in items) {
+        final productId = '${item['productId']}';
+        final qty = (item['quantity'] as num?)?.toInt() ?? 0;
+        final stockRef = db.collection('stock').doc('main_$productId');
+        final before = (stockSnaps[productId]?.data()?['quantity'] as num?)?.toInt() ?? 0;
+        tx.set(stockRef, {'branchId': 'main', 'productId': productId, 'quantity': before - qty}, SetOptions(merge: true));
+        tx.set(db.collection('stockMovements').doc(), {
+          'productId': productId,
+          'productName': item['productName'],
+          'branchId': 'main',
+          'kind': 'purchase_return',
+          'quantity': -qty,
+          'balanceAfter': before - qty,
+          'referenceId': ret.id,
+          'actorId': FirebaseAuth.instance.currentUser!.uid,
+          'createdAt': now,
+        });
+      }
+
+      if (refund > 0) {
+        tx.set(cashRef, {'balance': cashAfter, 'updatedAt': now}, SetOptions(merge: true));
+        tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'purchase_return', 'amount': refund, 'delta': refund, 'balanceBefore': cashBefore, 'balanceAfter': cashAfter, 'accountId': d['supplierId'], 'accountName': d['supplierName'], 'referenceId': ret.id, 'reason': 'استرداد نقدية مرتجع مشتريات', 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+      }
+      tx.update(supplierRef, {'balance': supplierAfter, 'updatedAt': now});
+      tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+      tx.set(db.collection('accountMovements').doc(), {
+        'accountType': 'suppliers',
+        'accountId': d['supplierId'],
+        'accountName': d['supplierName'],
+        'kind': 'purchase_return',
+        'amount': due,
+        'balanceBefore': oldBalance,
+        'balanceAfter': supplierAfter,
+        'referenceId': ret.id,
+        'createdAt': now,
+        'actorId': FirebaseAuth.instance.currentUser!.uid,
+      });
+      tx.update(invoiceRef, {'status': 'returned', 'returnedAt': now, 'returnId': ret.id});
+    }
+  });
+}
+
+
+class ItemMovementReport extends StatefulWidget {
+  const ItemMovementReport({super.key});
+  @override State<ItemMovementReport> createState() => _ItemMovementReportState();
+}
+
+class _ItemMovementReportState extends State<ItemMovementReport> {
+  String? productId, branchId='main';
+  DateTimeRange? range;
+  String movementView='purchases';
+
+  Future<Map<String,String>> _movementCounterparties(
+      List<QueryDocumentSnapshot<Map<String,dynamic>>> rows) async {
+    final labels = <String,String>{};
+    final invoiceCache = <String,Map<String,dynamic>?>{};
+    for (final row in rows) {
+      final data = row.data();
+      final kind = (data['kind'] ?? '').toString();
+      final invoiceId = (data['referenceId'] ?? '').toString();
+      final collection = kind == 'sale' || kind == 'saleCorrection' ||
+              kind == 'correction_sale' || kind == 'correction_return'
+          ? 'sales'
+          : kind == 'purchase' || kind == 'purchaseCorrection'
+              ? 'purchases'
+              : kind == 'sales_return' ? 'salesReturns'
+              : kind == 'purchase_return' ? 'purchaseReturns' : null;
+      if (collection == null || invoiceId.isEmpty) {
+        labels[row.id] = _movementFallbackParty(data);
+        continue;
+      }
+      try {
+        final key = '$collection/$invoiceId';
+        if (!invoiceCache.containsKey(key)) {
+          invoiceCache[key] = (await db.collection(collection).doc(invoiceId)
+              .get(const GetOptions(source: Source.server))).data();
+        }
+        final invoice = invoiceCache[key];
+        if (invoice == null) {
+          labels[row.id] = 'الفاتورة الأصلية غير متاحة';
+          continue;
+        }
+        final purchasing = collection == 'purchases' ||
+            collection == 'purchaseReturns';
+        final party = (invoice[purchasing ? 'supplierName' : 'customerName'] ??
+            'غير مسجل').toString();
+        final invoiceType = purchasing ? 'purchases' : 'sales';
+        final originalId = (invoice['sourceInvoiceId'] ?? invoiceId).toString();
+        labels[row.id] = '${purchasing ? 'المورد' : 'العميل'}: $party\n'
+            'فاتورة: ${vibReadableProductInvoiceNumber(invoiceType, originalId, invoice)}';
+      } catch (_) {
+        labels[row.id] = 'تعذر قراءة الفاتورة الأصلية';
+      }
+    }
+    return labels;
+  }
+
+  String _movementFallbackParty(Map<String, dynamic> data) {
+    final kind = '${data['kind'] ?? ''}';
+    if (kind == 'transfer_in') return 'تحويل وارد من المخزون';
+    if (kind == 'transfer_out') return 'تحويل إلى فرع';
+    if (kind == 'adjustment') {
+      final reason = '${data['reason'] ?? ''}'.trim();
+      return reason.isEmpty ? 'تسوية مخزون' : 'سبب التسوية: $reason';
+    }
+    return '';
+  }
+
+  Future<void> _chooseMovementProduct(
+      List<QueryDocumentSnapshot<Map<String, dynamic>>> products) async {
+    final options = <VibMovementProductChoice>[
+      for (final product in products)
+        (
+          id: product.id,
+          name: (product.data()['name'] ?? product.id).toString(),
+          code: (product.data()['code'] ?? product.data()['sku'] ??
+              product.data()['barcode'] ?? product.id).toString(),
+        ),
+    ];
+    final selected = await showVibMovementProductPicker(context, options);
+    if (selected != null && mounted) setState(() => productId = selected);
+  }
+
+  Future<void> _printMovementReport(BuildContext context,String productName,List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,
+      Map<String,String> parties,ProductPeriodTotals total) async {
+    try {
+      final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+      final bytes=await createProductTracePdf(productName,rows.map((r)=>{...r.data(),'id':r.id}).toList(),parties,total,font,range:range);
+      await Printing.layoutPdf(name:'VIB-PRODUCT-MOVEMENT.pdf',onLayout:(_)async=>bytes);
+    }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر طباعة حركة المنتج: $e');}
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    FutureBuilder<List<QuerySnapshot<Map<String, dynamic>>>>(
+      future: Future.wait([db.collection('products').get(), db.collection('branches').get()]),
+      builder: (context, snap) {
+        if (snap.hasError) {
+          return Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text('تعذر تحميل المنتجات أو الفروع: ${snap.error}', style: const TextStyle(color: Colors.redAccent)),
+          );
+        }
+        if (!snap.hasData) return const LinearProgressIndicator();
+        final products = snap.data![0].docs.where((d) => d.data()['active'] != false).toList();
+        final branches = snap.data![1].docs;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+          child: Column(children: [
+            Builder(builder: (context) {
+              final selected = products.where((d) => d.id == productId).toList();
+              final selectedName = selected.isEmpty
+                  ? 'اضغط للبحث واختيار المنتج'
+                  : (selected.first.data()['name']?.toString() ?? '');
+              return InkWell(
+                borderRadius: BorderRadius.circular(12),
+                onTap: products.isEmpty ? null : () => _chooseMovementProduct(products),
+                child: InputDecorator(
+                  decoration: _vibInvoiceInput('اختر المنتج', icon: Icons.inventory_2_outlined)
+                      .copyWith(suffixIcon: const Icon(Icons.search, color: vibNeonBlue)),
+                  child: Text(selectedName, textAlign: TextAlign.right, maxLines: 2, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: selected.isEmpty ? Colors.white54 : vibNeonBlue, fontSize: 16, fontWeight: FontWeight.w600)),
+                ),
+              );
+            }),
+            const SizedBox(height: 6),
+            Row(children: [
+              Expanded(child: DropdownButtonFormField<String>(
+                initialValue: branchId,
+                isExpanded: true,
+                decoration: _vibInvoiceInput('الفرع'),
+                items: [
+                  const DropdownMenuItem<String>(value: null, child: Text('كل الفروع')),
+                  const DropdownMenuItem(value: 'main', child: Text('المخزون الرئيسي')),
+                  ...branches.where((d)=>d.id!='main').map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))),
+                ],
+                onChanged: (v) => setState(() => branchId = v),
+              )),
+              const SizedBox(width: 6),
+            ]),
+            MovementPeriodControls(from:range?.start ?? DateTime(DateTime.now().year,DateTime.now().month,1),
+              to:range?.end ?? DateTime.now(),enabled:true,onConfirm:(a,b)=>setState(()=>range=DateTimeRange(start:a,end:b))),
+            TextButton(onPressed:()=>setState(()=>range=null),child:const Text('عرض كل الحركات')),
+            const SizedBox(height: 7),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: products.isEmpty ? null : () {
+                  if (productId == null) {
+                    _chooseMovementProduct(products);
+                  } else {
+                    setState(() {});
+                  }
+                },
+                icon: const Icon(Icons.manage_search_rounded),
+                label: Text(productId == null ? 'اختار صنف لعرض حركته' : 'تحديث تقرير المنتج'),
+              ),
+            ),
+          ]),
+        );
+      },
+    ),
+    Expanded(
+      child: productId == null
+          ? const Center(child: Text('اختر المنتج لعرض تاريخه كامل'))
+          : StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: db.collection('stockMovements').where('productId', isEqualTo: productId).snapshots(includeMetadataChanges:true),
+              builder: (context, snap) {
+                if (snap.hasError) {
+                  return Center(child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text('تعذر تحميل حركة المنتج: ${snap.error}', textAlign: TextAlign.center, style: const TextStyle(color: Colors.redAccent)),
+                  ));
+                }
+                if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+
+                final rows = snap.data!.docs.where((d) {
+                  final x = d.data();
+                  if (!visibleAfterReset(x)) return false;
+                  final date = (x['createdAt'] as Timestamp?)?.toDate();
+                  return (branchId == null || x['branchId'] == branchId) &&
+                      (range == null || (date != null && !date.isBefore(movementReportBoundary(range!.start)) && date.isBefore(movementReportBoundary(range!.end,next:true))));
+                }).toList()
+                  ..sort((a, b) => ((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
+                      .compareTo((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+
+                final reportRows = rows.where((d) {
+                  final kind='${d.data()['kind'] ?? ''}';
+                  final sales = kind=='sale' || kind=='saleCorrection' || kind=='correction_sale' ||
+                      kind=='correction_return' || kind=='sales_return';
+                  final purchases = kind=='purchase' || kind=='purchaseCorrection' || kind=='purchase_return';
+                  return movementView=='sales' ? sales : purchases;
+                }).toList();
+                final reportQuantity = reportRows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).abs()));
+                final incoming = rows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).clamp(0, 999999999)));
+                final outgoing = rows.fold<num>(0, (sum, d) => sum + ((-((d.data()['quantity'] as num?) ?? 0)).clamp(0, 999999999)));
+
+                return FutureBuilder<List<dynamic>>(
+                  future: Future.wait([
+                    _movementCounterparties(rows),
+                    branchId == null
+                        ? db.collection('stock').where('productId', isEqualTo: productId).get(const GetOptions(source:Source.server))
+                        : db.collection('stock').doc('${branchId}_$productId').get(const GetOptions(source:Source.server)),
+                    db.collection('products').doc(productId).get(),
+                  ]),
+                  builder: (context, details) {
+                    if(details.hasError)return Center(child:Text('تعذر تأكيد رصيد المنتج: ${details.error}'));
+                    if (!details.hasData) return const Center(child: CircularProgressIndicator());
+
+                    final parties = details.data![0] as Map<String, String>;
+                    int currentQty = 0;
+                    final stockResult = details.data![1];
+                    if (stockResult is QuerySnapshot<Map<String, dynamic>>) {
+                      currentQty = stockResult.docs.fold<int>(0, (sum, d) => sum + ((d.data()['quantity'] as num?)?.toInt() ?? 0));
+                    } else if (stockResult is DocumentSnapshot<Map<String, dynamic>>) {
+                      currentQty = (stockResult.data()?['quantity'] as num?)?.toInt() ?? 0;
+                    }
+
+                    final productSnap = details.data![2] as DocumentSnapshot<Map<String, dynamic>>;
+                    final productName = '${productSnap.data()?['name'] ?? 'المنتج'}';
+
+                    final ProductPeriodTotals totals;
+                    try {totals=summarizeProductPeriod(snap.data!.docs.where((d)=>visibleAfterReset(d.data()) && (branchId==null || d.data()['branchId']==branchId)).map((d)=>d.data()).toList(),currentQty,range);}on StateError catch(e){return Center(child:Text('${e.message}'));}
+                    return Column(children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: _vibInvoicePanel(
+                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
+                          child: Column(children: [
+                            Row(children: [
+                              Expanded(child: Text(productName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
+                              Text('الموجود الآن: $currentQty', style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 17)),
+                            ]),
+                            Text('أول المدة: ${totals.opening} • آخر المدة: ${totals.closing}'),
+                            if(totals.gap!=0)Text('فرق غير مطابق لآخر حركة مسجلة: ${totals.gap}',style:const TextStyle(color:Colors.redAccent)),
+                            const SizedBox(height: 4),
+                            Row(children: [
+                              Expanded(child: Text('إجمالي الداخل: $incoming', style: const TextStyle(color: Colors.greenAccent))),
+                              Expanded(child: Text('إجمالي الخارج: $outgoing', style: const TextStyle(color: Colors.redAccent))),
+                              Text('الحركات: ${rows.length}'),
+                            ]),
+                            const SizedBox(height: 5),
+                            Align(
+                              alignment: Alignment.centerLeft,
+                              child: OutlinedButton.icon(
+                                onPressed: reportRows.isEmpty || snap.data!.metadata.isFromCache || snap.data!.metadata.hasPendingWrites ? null : () => _printMovementReport(context, productName, reportRows, parties, totals),
+                                icon: const Icon(Icons.picture_as_pdf, size: 18),
+                                label: const Text('حركة المخزون PDF'),
+                              ),
+                            ),
+                          ]),
+                        ),
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        child: Column(children: [
+                          Row(children: [
+                            Expanded(child: ChoiceChip(
+                              label: const Text('العملاء اللي اشتروا'),
+                              selected: movementView=='sales',
+                              onSelected: (_) => setState(() => movementView='sales'),
+                            )),
+                            const SizedBox(width: 6),
+                            Expanded(child: ChoiceChip(
+                              label: const Text('الموردين اللي اشتريت منهم'),
+                              selected: movementView=='purchases',
+                              onSelected: (_) => setState(() => movementView='purchases'),
+                            )),
+                          ]),
+                          Text('عدد الحركات: ${reportRows.length} • إجمالي الكمية: $reportQuantity'),
+                          const SizedBox(height: 5),
+                          SizedBox(width: double.infinity, child: OutlinedButton.icon(
+                            onPressed: productId == null ? null : () => openVibReport(
+                              context,
+                              movementView == 'purchases'
+                                  ? 'فواتير مشتريات الصنف' : 'فواتير مبيعات الصنف',
+                              ProductInvoiceMovementPage(
+                                type: movementView == 'purchases' ? 'purchases' : 'sales',
+                                initialProductId: productId,
+                                initialProductName: productName,
+                              )),
+                            icon: const Icon(Icons.receipt_long_outlined, size: 17),
+                            label: Text(movementView == 'purchases'
+                                ? 'افتح فواتير شراء الصنف الأصلية'
+                                : 'افتح فواتير بيع الصنف الأصلية'),
+                          )),
+                        ]),
+                      ),
+                      Expanded(
+                        child: reportRows.isEmpty
+                            ? Center(child: Text(movementView=='sales'
+                                ? 'لا توجد فواتير بيع لهذا الصنف في الفترة المختارة'
+                                : 'لا توجد فواتير شراء لهذا الصنف في الفترة المختارة'))
+                            : ListView.builder(
+                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                                itemCount: reportRows.length,
+                                itemBuilder: (context, index) {
+                                  final row = reportRows[index];
+                                  final x = row.data();
+                                  final qty = (x['quantity'] as num?) ?? 0;
+                                  final positive = qty >= 0;
+                                  final party = parties[row.id] ?? '';
+                                  final kind = '${x['kind']}';
+                                  final action = movementName(kind);
+
+                                  return Card(
+                                    margin: const EdgeInsets.symmetric(vertical: 3),
+                                    child: ListTile(
+                                      dense: true,
+                                      visualDensity: const VisualDensity(vertical: -2),
+                                      leading: CircleAvatar(
+                                        radius: 18,
+                                        backgroundColor: positive ? const Color(0xFF123C25) : const Color(0xFF441B1B),
+                                        child: Icon(positive ? Icons.south : Icons.north, size: 18, color: positive ? vibNeon : Colors.redAccent),
+                                      ),
+                                      title: Text(action, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                      subtitle: Text([
+                                        if (party.isNotEmpty) party,
+                                        'التاريخ: ${receiptReportStamp(x,DateTime.now())}',
+                                        'الفرع: ${x['branchId'] == 'main' ? 'المخزون الرئيسي' : x['branchId']}',
+                                      ].join('\n')),
+                                      isThreeLine: true,
+                                      trailing: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text('${positive ? '+' : ''}$qty', style: TextStyle(color: positive ? vibNeon : Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 16)),
+                                          Text('الرصيد ${x['balanceAfter'] ?? '-'}', style: const TextStyle(fontSize: 11)),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                    ]);
+                  },
+                );
+              },
+            ),
+    ),
+  ]);
+}
+
+
+class InvoiceCustomerChoiceRow extends StatelessWidget {
+  final String name;
+  final num balance;
+  final VoidCallback onTap;
+  const InvoiceCustomerChoiceRow({super.key, required this.name,
+    required this.balance, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    child: Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+      child: Row(textDirection: TextDirection.rtl, children: [
+        CircleAvatar(radius:16,backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue,size:19)),
+        const SizedBox(width: 8),
+        Expanded(child: Text(name, textDirection: TextDirection.rtl,
+          textAlign:TextAlign.right,style:TextStyle(color:staffApp ? Colors.lightBlueAccent : null,fontWeight:FontWeight.w600))),
+        const SizedBox(width: 8),
+        Text('${balance.toStringAsFixed(2)} ج.م', textDirection: TextDirection.rtl,
+          style:TextStyle(color:staffApp ? Colors.redAccent : Colors.greenAccent,fontWeight:FontWeight.bold)),
+      ]),
+    ),
+  );
+}
+
+double invoiceCustomerChoicesHeight(BuildContext context) =>
+  (MediaQuery.sizeOf(context).height - MediaQuery.viewInsetsOf(context).bottom - 240)
+    .clamp(100.0, 360.0).toDouble();
+
+Future<String?> selectRegisteredCustomer(BuildContext context) async {
+  String query = '';
+  return showDialog<String>(context: context, builder: (dialog) => StatefulBuilder(
+    builder: (dialog, update) => AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      contentPadding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+      title: const Text('اختيار عميل مسجل'),
+      content: SizedBox(width: 500, height: invoiceCustomerChoicesHeight(dialog), child: Column(children: [
+        TextField(autofocus: true, decoration: const InputDecoration(labelText: 'بحث بالاسم أو رقم الهاتف', prefixIcon: Icon(Icons.search)),
+          onChanged: (value) => update(() => query = value.trim().toLowerCase())),
+        Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: db.collection('customers').snapshots(),
+          builder: (context, snapshot) {
+            if (snapshot.hasError) return const Center(child: Text('تعذر تحميل العملاء؛ راجع صلاحيات الحساب'));
+            if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+            final rows = snapshot.data!.docs.where((d) => d.data()['active'] != false &&
+              '${d.data()['name'] ?? ''} ${d.data()['phone'] ?? ''}'.toLowerCase().contains(query)).toList()
+              ..sort((a, b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
+            if (rows.isEmpty) return const Center(child: Text('لا يوجد عملاء مطابقون'));
+            return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
+              final row = rows[index];
+              return InvoiceCustomerChoiceRow(
+                name: '${row.data()['name'] ?? ''}', balance: (row.data()['balance'] as num?) ?? 0,
+                onTap: () => Navigator.pop(dialog, row.id));
+            });
+          },
+        )),
+      ])),
+      actions: [TextButton(onPressed: () => Navigator.pop(dialog), child: const Text('إلغاء'))],
+    ),
+  ));
+}
+
+Future<String?> selectSaleProduct(BuildContext context, List<QueryDocumentSnapshot<Map<String, dynamic>>> products, Set<String> added) =>
+  showInvoiceProductChoices(context,saleScreen:true,
+    products:[for(final p in products) (id:p.id,name:'${p.data()['name'] ?? ''}')],
+    excluded:added,unitCosts:{for(final p in products) p.id:p.data()['purchasePrice'] as num?},
+    stockStreamFor:invoiceMainStock,
+  );
+
+class StaffCustomers extends StatefulWidget {
+  final bool canViewBalance,canViewStatement,canAddCustomer;
+  const StaffCustomers({super.key,this.canViewBalance=true,this.canViewStatement=false,this.canAddCustomer=false});
+  @override
+  State<StaffCustomers> createState() => _StaffCustomersState();
+}
+class _StaffCustomersState extends State<StaffCustomers> {
+  String query = '';
+  Future<void> addCustomer() async {
+    final created = await createInvoiceParty(context, 'customers', false);
+    if (created != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم إضافة العميل')));
+    }
+  }
+  @override
+  Widget build(BuildContext context) => Column(children: [
+    if (!widget.canViewBalance) const Padding(
+      padding:EdgeInsets.symmetric(horizontal:12,vertical:5),
+      child:Text('أرصدة حسابات العملاء مخفية بصلاحيات المدير لهذا الموظف. تفعيلها من صلاحيات الموظف عند المدير.',
+        style:TextStyle(color:Colors.orangeAccent,fontSize:12))),
+    if (widget.canAddCustomer) Padding(padding: const EdgeInsets.fromLTRB(12, 12, 12, 0), child: SizedBox(width: double.infinity,
+      child: FilledButton.icon(onPressed: addCustomer, icon: const Icon(Icons.person_add), label: const Text('إضافة عميل جديد')))),
+    Padding(padding: const EdgeInsets.all(12), child: TextField(decoration: const InputDecoration(labelText: 'بحث عن عميل بالاسم أو الهاتف', prefixIcon: Icon(Icons.search)),
+      onChanged: (value) => setState(() => query = value.trim().toLowerCase()))),
+    Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('customers').snapshots(), builder: (context, snapshot) {
+      if (snapshot.hasError) return const Center(child: Text('تعذر تحميل العملاء'));
+      if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+      final rows = snapshot.data!.docs.where((d) => d.data()['active'] != false && '${d.data()['name'] ?? ''} ${d.data()['phone'] ?? ''}'.toLowerCase().contains(query)).toList();
+      if (rows.isEmpty) return const Center(child: Text('لا يوجد عملاء مطابقون'));
+      return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
+        final data = rows[index].data();
+        final balance=(data['balance'] as num?) ?? 0;
+        return ListTile(leading:CircleAvatar(backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue)),
+          title: Text('${data['name'] ?? ''}',style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold)),
+          trailing: Wrap(crossAxisAlignment:WrapCrossAlignment.center,children:[
+            if(widget.canViewBalance)Text('${balance.toStringAsFixed(2)} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold)),
+            if(widget.canViewStatement)IconButton(tooltip:'كشف حساب من تاريخ إلى تاريخ',icon:const Icon(Icons.summarize_outlined),
+              onPressed:()=>openVibReport(context,'كشف حساب العميل ${data['name'] ?? ''}',
+                AccountStatementPage(collection:'customers',id:rows[index].id))),
+          ]));
+      });
+    })),
+  ]);
+}
+
+void openStaffChat(BuildContext context, {required bool owner, String initialDraft = ''}) {
+  final uid = FirebaseAuth.instance.currentUser!.uid;
+  Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(
+    textDirection: TextDirection.rtl,
+    child: owner ? const StaffChatInbox() : StaffChatPage(employeeId: uid, owner: false, title: 'محادثة المدير', initialDraft: initialDraft),
+  )));
+}
+
+class ChatShortcut extends StatelessWidget {
+  final bool owner;
+  final bool showLabel;
+  final String initialDraft;
+  const ChatShortcut({super.key, required this.owner, this.showLabel = false, this.initialDraft = ''});
+  @override
+  Widget build(BuildContext context) {
+    final uid = FirebaseAuth.instance.currentUser!.uid;
+    Widget button(bool unread) {
+      final icon = Stack(clipBehavior:Clip.none,children:[
+        const Icon(Icons.chat_bubble_outline,color:gold),
+        if(unread)const Positioned(top:-7,right:-8,child:Icon(Icons.notifications_active,size:16,color:Colors.lightBlueAccent)),
+      ]);
+      return showLabel
+          ? TextButton.icon(onPressed: () => openStaffChat(context, owner: owner, initialDraft: initialDraft), icon: icon,
+              label: Text(owner ? 'محادثات الموظفين' : 'محادثة المدير'))
+          : IconButton(tooltip: owner ? 'محادثات الموظفين' : 'محادثة المدير', icon: icon,
+              onPressed: () => openStaffChat(context, owner: owner));
+    }
+    bool unread(Map<String, dynamic>? data) {
+      if (data == null || data['lastSenderRole'] == (owner ? 'owner' : 'employee')) return false;
+      final sent = data['lastMessageAt'] as Timestamp?;
+      final seen = data[owner ? 'ownerReadAt' : 'employeeReadAt'] as Timestamp?;
+      return sent != null && (seen == null || sent.compareTo(seen) > 0);
+    }
+    if (owner) return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('staffChats').snapshots(),
+      builder: (context, snapshot) => button(snapshot.data?.docs.any((d) => unread(d.data())) ?? false));
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(stream: db.collection('staffChats').doc(uid).snapshots(),
+      builder: (context, snapshot) => button(unread(snapshot.data?.data())));
+  }
+}
+
+class StaffChatInbox extends StatelessWidget {
+  const StaffChatInbox({super.key});
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: const Text('محادثات الموظفين'),actions:const [ChatAlertsButton()]),
+    body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('users').where('role', isEqualTo: 'employee').snapshots(),
+      builder: (context, employees) {
+        if (employees.hasError) return const Center(child: Text('تعذر تحميل الموظفين'));
+        if (!employees.hasData) return const Center(child: CircularProgressIndicator());
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('staffChats').snapshots(), builder: (context, chats) {
+          if (chats.hasError) return const Center(child: Text('تعذر تحميل المحادثات؛ راجع صلاحيات المحادثة'));
+          if (!chats.hasData) return const Center(child: CircularProgressIndicator());
+          final threads = {for (final d in chats.data!.docs) d.id: d.data()};
+          final rows = employees.data!.docs.where((d) => d.data()['active'] == true).toList()
+            ..sort((a, b) => ((threads[b.id]?['lastMessageAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
+              .compareTo((threads[a.id]?['lastMessageAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
+          if (rows.isEmpty) return const Center(child: Text('لا يوجد موظفون مفعلون بعد'));
+          return ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
+            final employee = rows[index], thread = threads[employee.id];
+            final sent = thread?['lastMessageAt'] as Timestamp?, seen = thread?['ownerReadAt'] as Timestamp?;
+            final unread = thread?['lastSenderRole'] == 'employee' && sent != null && (seen == null || sent.compareTo(seen) > 0);
+            final name = '${employee.data()['name'] ?? employee.data()['phone'] ?? employee.id}';
+            final phone='${employee.data()['phone']??''}'.trim();
+            return Card(child: ListTile(
+              leading: Stack(clipBehavior:Clip.none,children:[
+                CircleAvatar(backgroundColor:vibBlue.withValues(alpha:.14),child:const Icon(Icons.person_outline,color:vibBlue)),
+                if(unread)const Positioned(top:-7,right:-8,child:Icon(Icons.notifications_active,size:16,color:Colors.lightBlueAccent)),
+              ]),
+              title: Text(name), subtitle: Text('${thread?['lastText'] ?? 'ابدأ محادثة مع الموظف'}', maxLines: 2, overflow: TextOverflow.ellipsis),
+              trailing: Row(mainAxisSize:MainAxisSize.min,children:[
+                IconButton(tooltip:'اتصال بالموظف',icon:const Icon(Icons.call,color:vibBlue),onPressed:()=>callStaffEmployee(context,phone)),
+                const Icon(Icons.chevron_left),
+              ]),
+              onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => Directionality(textDirection: TextDirection.rtl,
+                child: StaffChatPage(employeeId: employee.id, owner: true, title: name)))),
+            ));
+          });
+        });
+      },
+    ),
+  );
+}
+
+Future<void> callStaffEmployee(BuildContext context,String phone) async {
+  final cleaned=phone.replaceAll(RegExp(r'[^0-9+]'),'');
+  if(cleaned.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('رقم الهاتف غير مسجل لهذا الموظف')));
+    return;
+  }
+  final uri=Uri(scheme:'tel',path:cleaned);
+  try {
+    if(!await launchUrl(uri,mode:LaunchMode.externalApplication) && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تعذر فتح تطبيق الاتصال')));
+    }
+  } catch(e) {
+    if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر بدء الاتصال: $e')));
+  }
+}
+
+String chatProblem(Object? error) {
+  if (error is FirebaseException) {
+    if (error.code == 'permission-denied') return 'Firebase رفض صلاحيات المحادثة (permission-denied). يلزم نشر قواعد المحادثة والتأكد من تفعيل الحساب.';
+    if (error.code == 'unavailable') return 'خدمة المحادثة غير متاحة حاليًا؛ راجع الإنترنت وحاول مرة أخرى (unavailable).';
+    if (error.code == 'unauthenticated') return 'جلسة الدخول انتهت؛ سجّل الدخول مرة أخرى (unauthenticated).';
+    return 'تعذر الاتصال بالمحادثة: ${error.code}';
+  }
+  return 'تعذر إكمال المحادثة: $error';
+}
+
+class ChatVoicePlayer extends StatefulWidget {
+  final String encoded;
+  final int seconds;
+  const ChatVoicePlayer({super.key,required this.encoded,required this.seconds});
+  @override State<ChatVoicePlayer> createState() => _ChatVoicePlayerState();
+}
+class _ChatVoicePlayerState extends State<ChatVoicePlayer> {
+  AudioPlayer? player;
+  File? audioFile;
+  StreamSubscription<void>? completed;
+  bool playing = false, busy = false;
+  @override void dispose() { completed?.cancel(); player?.dispose(); final file = audioFile; if(file != null) file.exists().then((exists) { if(exists) file.delete(); }); super.dispose(); }
+  Future<void> toggle() async {
+    if (busy) return;
+    setState(() => busy = true);
+    try {
+      if (playing) { await player!.pause(); if(mounted) setState(() => playing = false); }
+      else {
+        if (player == null) {
+          player = AudioPlayer();
+          completed = player!.onPlayerComplete.listen((_) { if(mounted) setState(() => playing = false); });
+          final dir = await getTemporaryDirectory();
+          audioFile = File('${dir.path}/vib-play-${DateTime.now().microsecondsSinceEpoch}.m4a');
+          await audioFile!.writeAsBytes(base64Decode(widget.encoded));
+        }
+        await player!.play(DeviceFileSource(audioFile!.path));
+        if(mounted) setState(() => playing = true);
+      }
+    } catch(e) { if(mounted) await showInvoiceSaveProblem(context,'تعذر تشغيل الصوت: $e',title:'تشغيل الصوت',button:'تمام'); }
+    finally { if(mounted) setState(() => busy = false); }
+  }
+  @override Widget build(BuildContext context) => Row(mainAxisSize:MainAxisSize.min,children:[
+    IconButton(tooltip:playing ? 'إيقاف الصوت' : 'تشغيل الرسالة الصوتية',onPressed:busy ? null : toggle,icon:Icon(playing ? Icons.pause_circle : Icons.play_circle,color:gold)),
+    Flexible(child:Text('رسالة صوتية • ${widget.seconds} ثانية')),
+  ]);
+}
+
+class StaffChatPage extends StatefulWidget {
+  final String employeeId, title, initialDraft;
+  final bool owner;
+  const StaffChatPage({super.key, required this.employeeId, required this.owner, required this.title, this.initialDraft = ''});
+  @override
+  State<StaffChatPage> createState() => _StaffChatPageState();
+}
+class _StaffChatPageState extends State<StaffChatPage> with WidgetsBindingObserver {
+  AudioRecorder? recorder;
+  Timer? recordingTimer;
+  bool recording = false, recordingBusy = false;
+  int recordingSeconds = 0;
+  String? audioDraft;
+  int audioSeconds = 0;
+
+  Future<void> toggleRecording() async {
+    if (sending || recordingBusy) return;
+    setState(() => recordingBusy = true);
+    try {
+      if (recording) {
+        recordingTimer?.cancel();
+        final path = await recorder!.stop();
+        final duration = recordingSeconds.clamp(1,60).toInt();
+        if (path == null) throw StateError('لم يتم تسجيل الصوت');
+        final file = File(path), bytes = await File(path).readAsBytes();
+        await file.delete();
+        if (bytes.isEmpty || bytes.length > 600000) throw StateError('حجم التسجيل غير مناسب؛ سجل مرة أخرى');
+        if (mounted) setState(() { recording = false; audioDraft = base64Encode(bytes); audioSeconds = duration; });
+      } else {
+        recorder ??= AudioRecorder();
+        if (!await recorder!.hasPermission()) throw StateError('اسمح للتطبيق باستخدام الميكروفون من إعدادات الهاتف');
+        final dir = await getTemporaryDirectory();
+        await recorder!.start(const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 32000, sampleRate: 16000, numChannels: 1), path: '${dir.path}/vib-record-${DateTime.now().microsecondsSinceEpoch}.m4a');
+        if (!mounted) { await recorder!.cancel(); return; }
+        setState(() { recording = true; recordingSeconds = 0; });
+        recordingTimer = Timer.periodic(const Duration(seconds:1), (_) {
+          if (!mounted) return;
+          setState(() => recordingSeconds++);
+          if (recordingSeconds >= 60) toggleRecording();
+        });
+      }
+    } catch(e) {
+      recordingTimer?.cancel();
+      await recorder?.cancel();
+      if (mounted) { setState(() => recording = false); await showInvoiceSaveProblem(context,'تعذر التسجيل: $e',title:'تسجيل الصوت',button:'تمام'); }
+    } finally { if (mounted) setState(() => recordingBusy = false); }
+  }
+
+
+  late final TextEditingController message;
+  bool sending = false;
+  Timestamp? lastMarked;
+  DocumentReference<Map<String, dynamic>>? pendingRef;
+  String? pendingText;
+  DocumentReference<Map<String, dynamic>> get thread => db.collection('staffChats').doc(widget.employeeId);
+  @override
+  void initState() { super.initState(); WidgetsBinding.instance.addObserver(this); message = TextEditingController(text: widget.initialDraft); }
+  @override void didChangeAppLifecycleState(AppLifecycleState state) { if(state != AppLifecycleState.resumed && recording && !recordingBusy) toggleRecording(); }
+  @override
+  void dispose() { WidgetsBinding.instance.removeObserver(this); recordingTimer?.cancel(); recorder?.dispose(); message.dispose(); super.dispose(); }
+
+  Future<void> markRead(Timestamp? date) async {
+    if (date == null || lastMarked == date) return;
+    lastMarked = date;
+    try { await thread.set({widget.owner ? 'ownerReadAt' : 'employeeReadAt': date}, SetOptions(merge: true)); }
+    catch (_) { if (lastMarked == date) lastMarked = null; }
+  }
+
+  Future<void> send() async {
+    final audio = audioDraft;
+    final text = audio == null ? message.text.trim() : 'رسالة صوتية';
+    if (sending || recording || recordingBusy || text.isEmpty) return;
+    if (text.length > 2000) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الرسالة بحد أقصى 2000 حرف'))); return; }
+    if (pendingRef == null || pendingText != (audio ?? text)) { pendingRef = thread.collection('messages').doc(); pendingText = audio ?? text; }
+    final ref = pendingRef!;
+    setState(() => sending = true);
+    try {
+      final uid = FirebaseAuth.instance.currentUser!.uid;
+      await db.runTransaction((tx) async {
+        final prior = await tx.get(ref);
+        if (prior.exists) {
+          if (prior.data()?['senderId'] != uid || prior.data()?['text'] != text || prior.data()?['audioBase64'] != audio) throw Exception('راجع الرسالة قبل إعادة الإرسال');
+          return;
+        }
+        final sender = (await tx.get(db.collection('users').doc(uid))).data();
+        final employee = (await tx.get(db.collection('users').doc(widget.employeeId))).data();
+        if (sender?['active'] != true || employee?['active'] != true || employee?['role'] != 'employee') throw Exception('الحساب غير مفعل');
+        final role = '${sender?['role'] ?? ''}';
+        if (role != 'owner' && (role != 'employee' || uid != widget.employeeId)) throw Exception('المحادثة غير مسموحة لهذا الحساب');
+        final now = FieldValue.serverTimestamp();
+        tx.set(ref, {'senderId': uid, 'senderName': '${sender?['name'] ?? ''}', 'senderRole': role, 'text': text, if(audio != null) 'audioBase64': audio, if(audio != null) 'audioSeconds': audioSeconds, if(audio != null) 'audioMime': 'audio/mp4', 'createdAt': now});
+        tx.set(thread, {'employeeId': widget.employeeId, 'employeeName': '${employee?['name'] ?? ''}', 'branchId': '${employee?['branchId'] ?? ''}',
+          'lastMessageId': ref.id, 'lastText': text, 'lastSenderId': uid, 'lastSenderRole': role, 'lastMessageAt': now}, SetOptions(merge: true));
+      });
+      if (!mounted) return;
+      if(audio == null) message.clear(); setState(() { audioDraft = null; audioSeconds = 0; }); pendingRef = null; pendingText = null;
+    } catch (e) {
+      if (mounted) await showInvoiceSaveProblem(context,chatProblem(e),title:'المحادثة',button:'تمام');
+    } finally { if (mounted) setState(() => sending = false); }
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(title: Text(widget.title),actions:const [ChatAlertsButton()]),
+    body: Column(children: [
+      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: thread.collection('messages').orderBy('createdAt', descending: true).limit(50).snapshots(),
+        builder: (context, snapshot) {
+          if (snapshot.hasError) return Center(child: Padding(padding: const EdgeInsets.all(20), child: Column(mainAxisSize: MainAxisSize.min, children: [Text(chatProblem(snapshot.error), textAlign: TextAlign.center), const SizedBox(height: 12), OutlinedButton(onPressed: () async { await FirebaseAuth.instance.currentUser?.getIdToken(true); if(mounted) setState(() {}); }, child: const Text('إعادة المحاولة'))])));
+          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          final rows = snapshot.data!.docs;
+          if (rows.isEmpty) return const Center(child: Text('اكتب رسالتك لبدء المحادثة'));
+          final latest = rows.first.data()['createdAt'] as Timestamp?;
+          WidgetsBinding.instance.addPostFrameCallback((_) { if (mounted && ModalRoute.of(context)?.isCurrent == true) markRead(latest); });
+          return ListView.builder(reverse: true, padding: const EdgeInsets.all(12), itemCount: rows.length, itemBuilder: (context, index) {
+            final data = rows[index].data();
+            final mine = data['senderId'] == FirebaseAuth.instance.currentUser!.uid;
+            return Align(alignment: mine ? Alignment.centerRight : Alignment.centerLeft, child: Container(
+              constraints: BoxConstraints(maxWidth: MediaQuery.sizeOf(context).width * .85),
+              margin: const EdgeInsets.symmetric(vertical: 5), padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(color: mine ? const Color(0xFF463A20) : const Color(0xFF222222), borderRadius: BorderRadius.circular(14)),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
+                Text('${data['senderName'] ?? ''}${data['senderRole'] == 'owner' ? ' • المدير' : ''}', style: const TextStyle(color: gold, fontSize: 12)),
+                const SizedBox(height: 5), if(data['audioBase64'] is String) ChatVoicePlayer(key: ValueKey(rows[index].id), encoded:data['audioBase64'], seconds:(data['audioSeconds'] as num?)?.toInt() ?? 0) else SelectableText('${data['text'] ?? ''}'),
+                const SizedBox(height: 5), Text(formatDate(data['createdAt']), style: const TextStyle(fontSize: 10, color: Colors.white60)),
+              ]),
+            ));
+          });
+        },
+      )),
+      if(recording) Row(mainAxisAlignment:MainAxisAlignment.center,children:[Text('جارٍ التسجيل: $recordingSeconds / 60 ثانية',style:const TextStyle(color:Colors.red)),TextButton(onPressed:recordingBusy ? null : () async { recordingTimer?.cancel(); await recorder?.cancel(); if(mounted) setState(() => recording=false); },child:const Text('إلغاء التسجيل'))]),
+      if(audioDraft != null) Row(children:[Expanded(child:ChatVoicePlayer(key:ValueKey(audioDraft),encoded:audioDraft!,seconds:audioSeconds)),IconButton(tooltip:'حذف التسجيل',onPressed:sending ? null : () => setState(() {audioDraft=null;audioSeconds=0;}),icon:const Icon(Icons.delete_outline))]),
+      SafeArea(top: false, child: Padding(padding: const EdgeInsets.all(10), child: Row(crossAxisAlignment: CrossAxisAlignment.end, children: [
+        Expanded(child: TextField(controller: message, enabled: !sending && !recording && audioDraft == null, minLines: 1, maxLines: 5, maxLength: 2000,
+          decoration: const InputDecoration(hintText: 'اكتب رسالتك هنا…', border: OutlineInputBorder(), counterText: ''))),
+        const SizedBox(width: 4), IconButton(tooltip: recording ? 'إيقاف التسجيل' : 'تسجيل رسالة صوتية', onPressed:sending || recordingBusy || audioDraft != null ? null : toggleRecording, icon:Icon(recording ? Icons.stop_circle : Icons.mic,color:recording ? Colors.red : gold)),
+        IconButton.filled(tooltip: 'إرسال الرسالة', onPressed: sending || recording || recordingBusy ? null : send,
+          icon: sending ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.send)),
+      ]))),
+    ]),
+  );
+}
+
+List<Map<String, dynamic>> saleItems(Map<String, dynamic> sale) =>
+  sale['items'] is List && (sale['items'] as List).isNotEmpty
+    ? (sale['items'] as List).map((x) => Map<String, dynamic>.from(x as Map)).toList()
+    : [{'productId': sale['productId'], 'productName': sale['productName'], 'quantity': sale['quantity'],
+        'unitPrice': sale['unitPrice'], 'lineTotal': sale['total'], 'purchasePriceAtSale': sale['purchasePriceAtSale'] ?? 0}];
+
+Future<void> editSaleByNumber(BuildContext context) => findInvoiceForEdit(context, 'sales');
+
+Future<void> assertSaleEditable(Map<String, dynamic> data) async {
+  if(data['onlinePaymentEver']==true)throw StateError('الفاتورة لها سداد بالكارت؛ أنشئ فاتورة جديدة');
+  if (invoiceHasLinkedVoucher(data)) throw Exception('الفاتورة مرتبطة بسند قبض ولا يمكن تعديلها');
+  final customerId = '${data['customerId'] ?? ''}';
+  if (customerId.isEmpty) return;
+  final receipts = await db.collection('receipts').where('customerId', isEqualTo: customerId).get(const GetOptions(source:Source.server));
+  final cancellations = await db.collection('voucherCancellations').where('type',isEqualTo:'receipt').get(const GetOptions(source:Source.server));
+  final cancelledIds = cancellations.docs.map((d) => '${d.data()['originalId'] ?? ''}').toSet();
+  for (final receipt in receipts.docs) {
+    if (saleReceiptBlocksEdit(data, receipt.id, receipt.data(), cancelledReceiptIds: cancelledIds)) {
+      throw Exception('الفاتورة مرتبطة بسند قبض؛ السندات القديمة غير المحددة لفاتورة تحتاج مراجعة المدير');
+    }
+  }
+}
+
+// Amounts are integer cents. Remove only this invoice's old debt, then apply its new debt.
+Map<String,int> saleCorrectionAccountDeltas(String oldCustomer,String newCustomer,int oldDue,int newDue) {
+  if(oldDue<0 || newDue<0 || (oldDue>0 && oldCustomer.isEmpty) || (newDue>0 && newCustomer.isEmpty))
+    throw StateError('الفاتورة الآجلة تحتاج حساب عميل');
+  final result=<String,int>{};
+  if(oldCustomer.isNotEmpty) result[oldCustomer]=-oldDue;
+  if(newCustomer.isNotEmpty) result[newCustomer]=(result[newCustomer] ?? 0)+newDue;
+  return result;
+}
+
+Future<void> replaceSaleLocally(String id, int revision, String requestId,
+    List<Map<String, dynamic>> replacements, double payment, {String? correctedCustomerId}) async {
+  int cents(num value) => (value * 100).round();
+  final actor = FirebaseAuth.instance.currentUser!.uid;
+  final ref = db.collection('sales').doc(id), edit = db.collection('invoiceEdits').doc(requestId);
+  final key = jsonEncode({'id': id, 'revision': revision, 'items': replacements, 'paid': payment, 'customerId':correctedCustomerId});
+  final preflight = (await ref.get()).data();
+  if (preflight == null) throw Exception('رقم الفاتورة غير موجود');
+  await assertSaleEditable({...preflight, 'id': id});
+  await db.runTransaction((tx) async {
+    final profile = (await tx.get(db.collection('users').doc(actor))).data();
+    if (profile?['role'] != 'owner' || profile?['active'] != true) throw Exception('تعديل الفاتورة متاح للمدير فقط');
+    final saved = (await tx.get(edit)).data();
+    if (saved != null) {
+      if (saved['requestKey'] != key || saved['actorId'] != actor) throw Exception('طلب تعديل مختلف');
+      return;
+    }
+    final old = (await tx.get(ref)).data();
+    if (old == null || old['status'] != 'completed' || (old['revision'] ?? 0) != revision) throw Exception('الفاتورة غير متاحة أو اتعدلت؛ افتحها من جديد');
+    if(old['onlinePaymentEver']==true)throw StateError('الفاتورة لها سداد بالكارت؛ أنشئ فاتورة جديدة');
+    if (invoiceHasLinkedVoucher(old)) throw Exception('الفاتورة مرتبطة بسند قبض');
+    if (old['paid'] is! num || old['due'] is! num || cents(old['total']) - cents(old['paid']) != cents(old['due'])) throw Exception('الفاتورة القديمة تحتاج مراجعة المدفوع والباقي');
+    final oldCustomerId = '${old['customerId'] ?? ''}';
+    final customerId=correctedCustomerId ?? oldCustomerId;
+    final partyChanged=customerId!=oldCustomerId;
+    final oldCustomerRef=oldCustomerId.isEmpty ? null : db.collection('customers').doc(oldCustomerId);
+    final oldCustomer=oldCustomerRef==null ? null : (await tx.get(oldCustomerRef)).data();
+    final customerRef = customerId.isEmpty ? null : db.collection('customers').doc(customerId);
+    final customer = partyChanged ? (customerRef == null ? null : (await tx.get(customerRef)).data()) : oldCustomer;
+    if(partyChanged && (customer==null || customer['active']==false)) throw StateError('اختر عميلًا مسجلًا ونشطًا');
+    final latestReceiptId = '${oldCustomer?['lastReceiptId'] ?? ''}';
+    if (latestReceiptId.isNotEmpty) {
+      final receipt = (await tx.get(db.collection('receipts').doc(latestReceiptId))).data();
+      final cancellation = await tx.get(db.collection('voucherCancellations').doc('receipt_$latestReceiptId'));
+      if (!cancellation.exists && receipt != null &&
+          saleReceiptBlocksEdit({...old, 'id': id}, latestReceiptId, receipt)) {
+        throw Exception('يوجد سند قبض مرتبط بالفاتورة أو برصيد العميل قبل تحديد الفواتير');
+      }
+    }
+    final cashRef = db.collection('settings').doc('cash');
+    final cash = (await tx.get(cashRef)).data();
+    final original = saleItems(old), oldQuantities = <String, int>{};
+    for (final item in original) {
+      final p = '${item['productId']}'; oldQuantities[p] = (oldQuantities[p] ?? 0) + (item['quantity'] as num).toInt();
+    }
+    final ids = {...oldQuantities.keys, ...replacements.map((x) => '${x['productId']}')};
+    final stockBranch = '${old['stockBranchId'] ?? old['branchId']}';
+    final stocks = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+    final products = <String, DocumentSnapshot<Map<String, dynamic>>>{};
+    for (final p in ids) {
+      stocks[p] = await tx.get(db.collection('stock').doc('${stockBranch}_$p'));
+      products[p] = await tx.get(db.collection('products').doc(p));
+    }
+    final items = <Map<String, dynamic>>[], newQuantities = <String, int>{};
+    var total = 0;
+    for (final line in replacements) {
+      final p = '${line['productId']}', product = products[p]!.data();
+      final q = line['quantity'] as int, price = cents(line['unitPrice']);
+      if (product == null || q <= 0 || q > 1000000 || price < 0 || newQuantities.containsKey(p)) throw Exception('راجع الأصناف والأسعار والكميات');
+      if (product['active'] != true && !oldQuantities.containsKey(p)) throw Exception('الصنف غير نشط');
+      final prior = original.where((x) => x['productId'] == p).toList();
+      final unchangedPrice=prior.isNotEmpty && prior.every((x)=>cents(x['unitPrice'])==price);
+      if (!unchangedPrice && price < cents((product['purchasePrice'] as num?) ?? 0)) throw Exception('سعر البيع أقل من التكلفة');
+      newQuantities[p] = q; total += q * price;
+      items.add({'productId': p, 'productName': product['name'], 'quantity': q, 'unitPrice': price / 100,
+        'lineTotal': q * price / 100, 'purchasePriceAtSale': prior.isEmpty ? product['purchasePrice'] ?? 0 : prior.first['purchasePriceAtSale'] ?? 0});
+    }
+    final paid = cents(payment), due = total - paid;
+    if (items.isEmpty || items.length > 50 || total > 1000000000000 || !payment.isFinite || paid < 0 || due < 0) throw Exception('راجع المدفوع وبنود الفاتورة');
+    if (due > 0 && (customer == null || customer['active'] == false)) throw Exception('الفاتورة الآجلة تحتاج عميلًا نشطًا');
+    final deltas=saleCorrectionAccountDeltas(oldCustomerId,customerId,cents(old['due']),due);
+    final debtDelta = deltas[customerId] ?? 0, cashDelta = paid - cents(old['paid']);
+    final cashBefore = cents((cash?['balance'] as num?) ?? 0), balanceBefore = cents((customer?['balance'] as num?) ?? 0);
+    if(cents(old['due'])>0 && oldCustomer==null) throw StateError('حساب العميل السابق غير موجود؛ راجع الفاتورة');
+    for (final p in ids) {
+      final before = (stocks[p]!.data()?['quantity'] as num?)?.toInt() ?? 0;
+      final delta = (oldQuantities[p] ?? 0) - (newQuantities[p] ?? 0), after = before + delta;
+      if (delta < 0 && after < 0) throw Exception('المخزون غير كافٍ للصنف ${products[p]!.data()?['name']}');
+      if (delta == 0) continue;
+      tx.set(stocks[p]!.reference, {'branchId': stockBranch, 'productId': p, 'quantity': after, 'lastSaleId': id}, SetOptions(merge: true));
+      tx.set(db.collection('stockMovements').doc('${requestId}_$p'), {'productId': p, 'productName': products[p]!.data()?['name'],
+        'branchId': stockBranch, 'kind': 'saleCorrection', 'quantity': delta, 'balanceAfter': after,
+        'referenceId': id, 'editId': requestId, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+    }
+    for(final entry in deltas.entries) {
+      if(entry.value==0) continue;
+      final account=entry.key==customerId ? customer : oldCustomer;
+      final before=cents((account?['balance'] as num?) ?? 0);
+      tx.update(db.collection('customers').doc(entry.key), {'balance':(before+entry.value)/100,'updatedAt':FieldValue.serverTimestamp()});
+      tx.set(db.collection('accountMovements').doc('${requestId}_${entry.key==customerId ? 'customer' : 'previousCustomer'}'), {
+        'accountType':'customers','accountId':entry.key,'accountName':account?['name'] ?? '',
+        'kind':'saleCorrection','amount':entry.value/100,'balanceBefore':before/100,'balanceAfter':(before+entry.value)/100,
+        'referenceId':id,'editId':requestId,'reason':partyChanged ? 'تصحيح عميل فاتورة المبيعات' : 'تصحيح فاتورة مبيعات',
+        'actorId':actor,'createdAt':FieldValue.serverTimestamp()});
+    }
+    if (cashDelta != 0) {
+      tx.set(cashRef, {'balance': (cashBefore + cashDelta) / 100, 'updatedAt': FieldValue.serverTimestamp()}, SetOptions(merge: true));
+      tx.set(db.collection('accountMovements').doc('${requestId}_cash'), {'accountType': 'cash', 'accountId': customerId,
+        'accountName': customer?['name'] ?? '', 'kind': 'saleCorrection', 'amount': cashDelta.abs() / 100, 'delta': cashDelta / 100,
+        'balanceBefore': cashBefore / 100, 'balanceAfter': (cashBefore + cashDelta) / 100,
+        'referenceId': id, 'editId': requestId, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+    }
+    tx.update(ref, {'items': items, 'itemCount': items.length, 'stockIndex': {for (var i = 0; i < items.length; i++) '${items[i]['productId']}': i},
+      'total': total / 100, 'paid': paid / 100, 'due': due / 100, 'paymentStatus': due > 0 ? 'credit' : 'cash',
+      'paymentBreakdown':adjustSalePaymentBreakdown(old['paymentBreakdown'],(old['paid'] as num).toDouble(),paid/100),
+      'revision': revision + 1, 'updatedAt': FieldValue.serverTimestamp(), 'lastEditedBy': actor,
+      if(partyChanged) 'customerId':customerId,
+      if(partyChanged) 'customerName':customer?['name'] ?? '',
+      if(partyChanged) 'customerPhone':customer?['phone'] ?? '',
+      if(partyChanged) 'customerPreviousBalance':balanceBefore/100,
+      'customerBalanceAfter': customer == null ? 0 : (balanceBefore + debtDelta) / 100,
+      'productId': items.length == 1 ? items.first['productId'] : '', 'productName': items.length == 1 ? items.first['productName'] : '',
+      'quantity': items.length == 1 ? items.first['quantity'] : 0, 'unitPrice': items.length == 1 ? items.first['unitPrice'] : 0});
+    tx.set(edit, {'invoiceId': id, 'invoiceType': 'sales', 'beforeItems': original, 'afterItems': items,
+      'customerIdBefore':oldCustomerId,'customerIdAfter':customerId,
+      'customerNameBefore':old['customerName'] ?? '', 'customerNameAfter':customer?['name'] ?? '',
+      'totalBefore': old['total'], 'totalAfter': total / 100, 'paidBefore': old['paid'], 'paidAfter': paid / 100,
+      'revision': revision + 1, 'requestKey': key, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
+  });
+}
+
+bool unallocatedReceiptAfter(Map<String, dynamic> invoice, Map<String, dynamic> receipt) {
+  if ('${receipt['invoiceId'] ?? ''}'.isNotEmpty) return false;
+  final created = invoice['createdAt'] as Timestamp?, at = receipt['createdAt'] as Timestamp?;
+  return created == null || at == null || at.compareTo(created) >= 0;
+}
+
+Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
+  final customerId = '${invoice['customerId'] ?? ''}';
+  if (customerId.isEmpty) return;
+  final receipts = await db.collection('receipts').where('customerId', isEqualTo: customerId).get();
+  final cancellations = await db.collection('voucherCancellations').where('type',isEqualTo:'receipt').get();
+  final cancelledIds = cancellations.docs.map((d) => '${d.data()['originalId'] ?? ''}').toSet();
+  if (receipts.docs.any((r) => !cancelledIds.contains(r.id) && unallocatedReceiptAfter(invoice, r.data()))) {
+    throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
+  }
+}
+).hasMatch(normalized) ? int.tryParse(normalized) : null;
+}
+
+Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
+  try {
+    final invoice = (await db.collection('sales').doc(id).get(const GetOptions(source: Source.server))).data();
+    if (invoice == null || invoice['status'] != 'completed' || !invoiceAllowedForReturn(invoice)) {
+      throw StateError('الفاتورة غير متاحة للمرتجع');
+    }
+    if (((invoice['onlinePaid'] as num?) ?? 0) > 0) {
+      if (context.mounted) await showInvoiceSaveProblem(context,
+        'الفاتورة لها سداد بالكارت. أتمم رد المبلغ من سجل جيديا قبل إرجاع الصنف.',
+        title: 'رد الكارت أولًا', button: 'تمام');
+      return;
+    }
+    final returned = await db.collection('salesReturns').where('sourceInvoiceId', isEqualTo: id)
+        .get(const GetOptions(source: Source.server));
+    final priorLines = returnedQuantitiesBySourceLine(returned.docs
+        .where((d) => d.data()['returnType'] == 'partial')
+        .map((d) => d.data()).toList());
+    final items = _saleReturnInvoiceItems(invoice);
+    final available = <int, int>{};
+    for (var i = 0; i < items.length; i++) {
+      final rawQty = items[i]['quantity'];
+      final qty = rawQty is num && rawQty.isFinite ? rawQty.toInt() : 0;
+      final remaining = qty - (priorLines[i] ?? 0);
+      if (remaining > 0) available[i] = remaining;
+    }
+    if (available.isEmpty) throw StateError('تم إرجاع كل أصناف الفاتورة بالفعل');
+    if (!context.mounted) return;
+    final indexes = available.keys.toList();
+    var selected = indexes.first;
+    final quantity = TextEditingController(text: '1');
+    final choice = await showDialog<Map<String, int>>(context: context, builder: (dialogContext) => StatefulBuilder(
+      builder: (dialogContext, setDialogState) => AlertDialog(
+        scrollable: true,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+        actionsPadding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
+        title: const Text('إرجاع صنف من الفاتورة'),
+        content: Column(mainAxisSize: MainAxisSize.min, children: [
+          DropdownButtonFormField<int>(
+            value: selected,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'الصنف'),
+            items: indexes.map((i) => DropdownMenuItem<int>(
+              value: i,
+              child: Text('${items[i]['productName'] ?? 'صنف'} • المتاح للإرجاع ${available[i]}'),
+            )).toList(),
+            onChanged: (value) { if (value != null) setDialogState(() { selected = value; quantity.text = '1'; }); },
+          ),
+          const SizedBox(height: 10),
+          TextField(controller: quantity, keyboardType: TextInputType.number,
+            textInputAction: TextInputAction.done,
+            onSubmitted: (_) => FocusScope.of(dialogContext).unfocus(),
+            onChanged: (_) => setDialogState(() {}),
+            decoration: InputDecoration(labelText: 'الكمية (المتاح ${available[selected]})')),
+          if ((parseInvoiceReturnQuantity(quantity.text) ?? 0) < 1 ||
+              (parseInvoiceReturnQuantity(quantity.text) ?? 0) > (available[selected] ?? 0))
+            Text('اختار كمية صحيحة من 1 إلى ${available[selected]}',
+              style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
+          FilledButton(onPressed: (parseInvoiceReturnQuantity(quantity.text) ?? 0) < 1 ||
+              (parseInvoiceReturnQuantity(quantity.text) ?? 0) > (available[selected] ?? 0)
+              ? null : () {
+                final qty = parseInvoiceReturnQuantity(quantity.text);
+                if (qty != null) Navigator.pop(dialogContext,
+                  {'sourceItemIndex': selected, 'quantity': qty});
+              }, child: const Text('تأكيد الكمية ومراجعة المرتجع')),
+        ],
+      ),
+    ));
+    quantity.dispose();
+    if (choice == null || !context.mounted) return;
+    final index = choice['sourceItemIndex']!;
+    final qty = choice['quantity']!;
+    final row = items[index];
+    final lineQty = (row['quantity'] as num?)?.toInt() ?? 0;
+    final lineTotal = (row['lineTotal'] as num?)?.toDouble() ??
+        lineQty * ((row['unitPrice'] as num?)?.toDouble() ?? 0);
+    final alreadyReturned = priorLines[index] ?? 0;
+    final returnValue = lineQty > 0
+      ? allocatedPartialReturnCents((lineTotal * 100).round(),lineQty,alreadyReturned,qty)/100
+      : 0.0;
+    final yes = await showDialog<bool>(context: context, builder: (c) => AlertDialog(
+      title: const Text('تأكيد إرجاع الصنف'),
+      content: Text('الصنف: ${row['productName'] ?? ''}\nالكمية: $qty\nقيمة الصنف: ${returnValue.toStringAsFixed(2)} ج.م\nسيُحدّث المخزون والذمة والصندوق حسب تسوية الفاتورة.'),
+      actions: [TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('رجوع')),
+        FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('تأكيد الإرجاع'))],
+    )) ?? false;
+    if (!yes || !context.mounted) return;
+    await returnSalesInvoiceItem(id, index, qty);
+    if (context.mounted) await showInvoiceSaveProblem(context,
+      'تم إرجاع الصنف وتحديث المخزون والذمة والصندوق، مع حفظ الفاتورة الأصلية.',
+      title: 'تم تسجيل مرتجع الصنف', button: 'تمام', success: true);
+  } catch (e) {
+    if (context.mounted) await showInvoiceSaveProblem(context, 'تعذر إرجاع الصنف: $e',
+      title: 'لم يتم تسجيل المرتجع', button: 'رجوع');
+  }
+}
+
+Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity) async {
+  if (sourceItemIndex < 0 || quantity <= 0) throw StateError('بيانات الصنف غير صحيحة');
+  final actor = FirebaseAuth.instance.currentUser!.uid;
+  final invoiceRef = db.collection('sales').doc(id);
+  await db.runTransaction((tx) async {
+    final invoiceSnap = await tx.get(invoiceRef);
+    final d = invoiceSnap.data();
+    if (d == null || d['status'] != 'completed' || !invoiceAllowedForReturn(d)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    final profileSnap = await tx.get(db.collection('users').doc(actor));
+    if (profileSnap.data()?['active'] != true || profileSnap.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
+    if (((d['onlinePaid'] as num?) ?? 0) > 0) throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
+
+    final returnedByLine = <int, int>{};
+    final rawReturnedQuantities = d['partialReturnQuantities'];
+    if (rawReturnedQuantities is Map) {
+      for (final entry in rawReturnedQuantities.entries) {
+        final lineIndex = int.tryParse('${entry.key}');
+        final returnedQty = entry.value;
+        if (lineIndex != null && returnedQty is num && returnedQty.isFinite && returnedQty >= 0) {
+          returnedByLine[lineIndex] = returnedQty.toInt();
+        }
+      }
+    }
+    final items = _saleReturnInvoiceItems(d);
+    if (sourceItemIndex >= items.length) throw StateError('الصنف غير موجود في الفاتورة');
+    final item = items[sourceItemIndex];
+    final sourceQty = (item['quantity'] as num?)?.toInt() ?? 0;
+    final alreadyReturned = returnedByLine[sourceItemIndex] ?? 0;
+    if (sourceQty <= 0 || quantity > sourceQty - alreadyReturned) throw StateError('الكمية المطلوبة أكبر من المتبقي في الفاتورة');
+    final productId = '${item['productId'] ?? ''}';
+    if (productId.isEmpty || productId == 'null') throw StateError('الصنف لا يحتوي على رمز مخزون');
+
+    final branchId = '${d['stockBranchId'] ?? d['branchId'] ?? ''}';
+    if (branchId.isEmpty || branchId == 'null') throw StateError('مخزون الفاتورة غير مسجل');
+    final stockRef = db.collection('stock').doc('${branchId}_$productId');
+    final stockSnap = await tx.get(stockRef);
+    final customerId = '${d['customerId'] ?? ''}';
+    final customerRef = customerId.isEmpty ? null : db.collection('customers').doc(customerId);
+    final customerSnap = customerRef == null ? null : await tx.get(customerRef);
+    final cashRef = db.collection('settings').doc('cash');
+    final cashSnap = await tx.get(cashRef);
+
+    final settlement = returnSettlement(d, sales: true);
+    final priorCash = (((d['partialCashRefund'] as num?) ?? 0) * 100).round();
+    final priorDebt = (((d['partialDebtReduction'] as num?) ?? 0) * 100).round();
+    final cashAvailable = ((settlement.cash * 100).round() - priorCash).clamp(0, 1000000000000).toInt();
+    final debtAvailable = ((settlement.debt * 100).round() - priorDebt).clamp(0, 1000000000000).toInt();
+    final sourceLineCents = ((item['lineTotal'] as num?)?.toDouble() ??
+        sourceQty * ((item['unitPrice'] as num?)?.toDouble() ?? 0)) * 100;
+    final amountCents = allocatedPartialReturnCents(
+      sourceLineCents.round(),sourceQty,alreadyReturned,quantity);
+    final totalAvailable = cashAvailable + debtAvailable;
+    final cashRefundCents = partialReturnCashCents(valueCents: amountCents,
+      cashAvailableCents: cashAvailable, debtAvailableCents: debtAvailable);
+    final debtReductionCents = amountCents - cashRefundCents;
+    if (amountCents > totalAvailable) throw StateError('تسوية المرتجع تجاوزت المتبقي من الفاتورة');
+    if (debtReductionCents > 0 && (customerRef == null || customerSnap?.exists != true)) {
+      throw StateError('الفاتورة الآجلة تحتاج حساب عميل مسجل');
+    }
+    final cashBefore = (cashSnap.data()?['balance'] as num?)?.toDouble() ?? 0;
+    if (cashBefore * 100 < cashRefundCents) throw StateError('رصيد الصندوق لا يكفي لرد المبلغ المحصل');
+    final stockBefore = (stockSnap.data()?['quantity'] as num?)?.toInt() ?? 0;
+    final now = FieldValue.serverTimestamp();
+    final returnRef = db.collection('salesReturns').doc();
+
+    tx.set(stockRef, {'branchId': branchId, 'productId': productId, 'quantity': stockBefore + quantity}, SetOptions(merge: true));
+    tx.set(db.collection('stockMovements').doc(), {
+      'productId': productId, 'productName': item['productName'], 'branchId': branchId,
+      'kind': 'sales_return', 'quantity': quantity, 'balanceAfter': stockBefore + quantity,
+      'referenceId': returnRef.id, 'actorId': actor, 'createdAt': now,
+    });
+    if (debtReductionCents > 0) {
+      final customerBefore = (customerSnap!.data()?['balance'] as num?)?.toDouble() ?? 0;
+      final customerAfter = (customerBefore * 100).round() / 100 - debtReductionCents / 100;
+      tx.update(customerRef!, {'balance': customerAfter, 'updatedAt': now});
+      tx.set(db.collection('accountMovements').doc(), {
+        'accountType': 'customers', 'accountId': customerId, 'accountName': d['customerName'],
+        'kind': 'sales_return', 'amount': debtReductionCents / 100,
+        'balanceBefore': customerBefore, 'balanceAfter': customerAfter,
+        'referenceId': returnRef.id, 'createdAt': now, 'actorId': actor,
+      });
+    }
+    if (cashRefundCents > 0) {
+      final cashAfter = (cashBefore * 100).round() / 100 - cashRefundCents / 100;
+      tx.set(cashRef, {'balance': cashAfter, 'updatedAt': now}, SetOptions(merge: true));
+      tx.set(db.collection('accountMovements').doc(), {
+        'accountType': 'cash', 'kind': 'sales_return', 'amount': cashRefundCents / 100,
+        'delta': -cashRefundCents / 100, 'balanceBefore': cashBefore, 'balanceAfter': cashAfter,
+        'accountId': customerId, 'accountName': d['customerName'], 'referenceId': returnRef.id,
+        'reason': 'رد قيمة صنف من فاتورة مبيعات', 'createdAt': now, 'actorId': actor,
+      });
+    }
+    final newReturn = {
+      'sourceInvoiceId': id, 'returnType': 'partial', 'sourceItemIndex': sourceItemIndex,
+      'items': [{'sourceItemIndex': sourceItemIndex, 'productId': productId,
+        'productName': item['productName'], 'quantity': quantity,
+        'unitPrice': item['unitPrice'] ?? 0,
+        if (item['purchasePriceAtSale'] is num)
+          'purchasePriceAtSale': item['purchasePriceAtSale'],
+        'lineTotal': amountCents / 100}],
+      'total': amountCents / 100, 'cashRefund': cashRefundCents / 100,
+      'debtReduction': debtReductionCents / 100, 'branchId': branchId,
+      'customerId': customerId, 'customerName': d['customerName'],
+      'invoiceNumber': d['invoiceNumber'], 'internalNumber': d['internalNumber'],
+      'invoiceBarcode': d['invoiceBarcode'], 'createdAt': now, 'actorId': actor,
+    };
+    tx.set(returnRef, newReturn);
+    final allReturned = items.asMap().entries.every((entry) {
+      final lineQty = (entry.value['quantity'] as num?)?.toInt() ?? 0;
+      final returnedQty = (returnedByLine[entry.key] ?? 0) + (entry.key == sourceItemIndex ? quantity : 0);
+      return lineQty > 0 && returnedQty >= lineQty;
+    });
+    final quantityByLine = Map<String, dynamic>.from(d['partialReturnQuantities'] is Map ? d['partialReturnQuantities'] as Map : {});
+    quantityByLine['$sourceItemIndex'] = alreadyReturned + quantity;
+    final priorReturnTotal = (d['partialReturnTotal'] as num?)?.toDouble() ?? 0;
+    final priorCashRefund = (d['partialCashRefund'] as num?)?.toDouble() ?? 0;
+    final priorDebtReduction = (d['partialDebtReduction'] as num?)?.toDouble() ?? 0;
+    tx.update(invoiceRef, {
+      'partialReturnQuantities': quantityByLine,
+      'partialReturnTotal': ((priorReturnTotal * 100).round() + amountCents) / 100,
+      'partialCashRefund': ((priorCashRefund * 100).round() + cashRefundCents) / 100,
+      'partialDebtReduction': ((priorDebtReduction * 100).round() + debtReductionCents) / 100,
+      'lastPartialReturnId': returnRef.id,
+      if (allReturned) 'status': 'returned',
+      if (allReturned) 'returnedAt': now,
+      if (allReturned) 'returnId': returnRef.id,
+    });
+  });
+}
+
+Future<void> confirmPartialPurchaseReturn(BuildContext context, String id) async {
+  try {
+    final invoice=(await db.collection('purchases').doc(id).get(const GetOptions(source:Source.server))).data();
+    if(invoice==null||invoice['status']=='returned'||!invoiceAllowedForReturn(invoice))throw StateError('الفاتورة غير متاحة للمرتجع');
+    final items=_saleReturnInvoiceItems(invoice), returnedByLine=<int,int>{};
+    final raw=invoice['partialReturnQuantities'];
+    if(raw is Map){for(final entry in raw.entries){final i=int.tryParse('${entry.key}'),q=entry.value;if(i!=null&&q is num&&q.isFinite&&q>=0)returnedByLine[i]=q.toInt();}}
+    final available=<int,int>{};
+    for(var i=0;i<items.length;i++){final q=items[i]['quantity'];final total=q is num&&q.isFinite?q.toInt():0;final remain=total-(returnedByLine[i]??0);if(remain>0)available[i]=remain;}
+    if(available.isEmpty)throw StateError('تم إرجاع كل أصناف الفاتورة بالفعل');
+    if(!context.mounted)return;
+    final indexes=available.keys.toList();var selected=indexes.first;final quantity=TextEditingController(text:'1');
+    final choice=await showDialog<Map<String,int>>(context:context,builder:(dialogContext)=>StatefulBuilder(builder:(dialogContext,setDialogState)=>AlertDialog(
+      scrollable:true,
+      insetPadding:const EdgeInsets.symmetric(horizontal:12,vertical:14),
+      actionsPadding:const EdgeInsets.fromLTRB(12,6,12,12),
+      title:const Text('إرجاع صنف من فاتورة المشتريات'),content:Column(mainAxisSize:MainAxisSize.min,children:[
+        DropdownButtonFormField<int>(value:selected,isExpanded:true,decoration:const InputDecoration(labelText:'الصنف'),items:indexes.map((i)=>DropdownMenuItem(value:i,child:Text('${items[i]['productName']??'صنف'} • المتاح للإرجاع ${available[i]}'))).toList(),onChanged:(v){if(v!=null)setDialogState((){selected=v;quantity.text='1';});}),
+        TextField(controller:quantity,keyboardType:TextInputType.number,
+          textInputAction:TextInputAction.done,
+          onSubmitted:(_)=>FocusScope.of(dialogContext).unfocus(),
+          onChanged:(_)=>setDialogState(() {}),
+          decoration:InputDecoration(labelText:'الكمية (المتاح ${available[selected]})')),
+        if ((parseInvoiceReturnQuantity(quantity.text) ?? 0) < 1 ||
+            (parseInvoiceReturnQuantity(quantity.text) ?? 0) > (available[selected] ?? 0))
+          Text('اختار كمية صحيحة من 1 إلى ${available[selected]}',
+            style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
+      ]),actions:[
+        TextButton(onPressed:()=>Navigator.pop(dialogContext),child:const Text('إلغاء')),
+        FilledButton(onPressed: (parseInvoiceReturnQuantity(quantity.text) ?? 0) < 1 ||
+            (parseInvoiceReturnQuantity(quantity.text) ?? 0) > (available[selected] ?? 0)
+            ? null : () {
+              final q = parseInvoiceReturnQuantity(quantity.text);
+              if (q != null) Navigator.pop(dialogContext,
+                {'sourceItemIndex':selected,'quantity':q});
+            },child:const Text('تأكيد الكمية ومراجعة المرتجع')),
+      ]))));
+    quantity.dispose();if(choice==null||!context.mounted)return;
+    final index=choice['sourceItemIndex']!,qty=choice['quantity']!,row=items[index];
+    final lineQty=(row['quantity'] as num?)?.toInt()??0;final lineTotal=(row['lineTotal'] as num?)?.toDouble()??lineQty*((row['unitCost'] as num?)?.toDouble()??0);
+    final value=lineQty>0?allocatedPartialReturnCents(
+      (lineTotal*100).round(),lineQty,returnedByLine[index]??0,qty)/100:0.0;
+    final yes=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('تأكيد إرجاع الصنف'),content:Text('الصنف: ${row['productName']??''}\nالكمية: $qty\nقيمة الصنف: ${value.toStringAsFixed(2)} ج.م\nسيُخصم من المخزون الرئيسي ويُحدّث حساب المورد والصندوق.'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('رجوع')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('تأكيد الإرجاع'))]))??false;
+    if(!yes||!context.mounted)return;await returnPurchaseInvoiceItem(id,index,qty);
+    if(context.mounted)await showInvoiceSaveProblem(context,'تم إرجاع الصنف وتحديث المخزون وحساب المورد والصندوق مع حفظ الفاتورة الأصلية.',title:'تم تسجيل مرتجع الصنف',button:'تمام',success:true);
+  }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر إرجاع الصنف: $e',title:'لم يتم تسجيل المرتجع',button:'رجوع');}
+}
+
+Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantity) async {
+  if(sourceItemIndex<0||quantity<=0)throw StateError('بيانات الصنف غير صحيحة');
+  final actor=FirebaseAuth.instance.currentUser!.uid,invoiceRef=db.collection('purchases').doc(id);
+  await db.runTransaction((tx)async{
+    final snap=await tx.get(invoiceRef),d=snap.data();
+    if(d==null||d['status']=='returned'||!invoiceAllowedForReturn(d))throw StateError('الفاتورة غير متاحة للمرتجع');
+    final profile=(await tx.get(db.collection('users').doc(actor))).data();if(profile?['active']!=true||profile?['role']!='owner')throw StateError('المرتجعات للمدير فقط');
+    final rawItems=d['items'];final items=<Map<String,dynamic>>[];if(rawItems is List){for(final raw in rawItems){if(raw is Map)items.add(Map<String,dynamic>.from(raw));}}
+    if(items.isEmpty)items.add({'productId':d['productId'],'productName':d['productName'],'quantity':d['quantity']??0,'unitCost':d['unitCost']??0,'lineTotal':d['total']??0});
+    if(sourceItemIndex>=items.length)throw StateError('الصنف غير موجود في الفاتورة');
+    final item=items[sourceItemIndex],qty=(item['quantity'] as num?)?.toInt()??0;
+    final rawReturned=d['partialReturnQuantities'];final returnedByLine=<int,int>{};if(rawReturned is Map){for(final e in rawReturned.entries){final i=int.tryParse('${e.key}'),q=e.value;if(i!=null&&q is num&&q.isFinite&&q>=0)returnedByLine[i]=q.toInt();}}
+    final already=returnedByLine[sourceItemIndex]??0;if(qty<=0||quantity>qty-already)throw StateError('الكمية المطلوبة أكبر من المتبقي في الفاتورة');
+    final productId='${item['productId']??''}';if(productId.isEmpty||productId=='null')throw StateError('الصنف لا يحتوي على رمز مخزون');
+    final stockRef=db.collection('stock').doc('main_$productId'),stockSnap=await tx.get(stockRef),before=(stockSnap.data()?['quantity'] as num?)?.toInt()??0;
+    if(before<quantity)throw StateError('المخزون الرئيسي لا يكفي لإرجاع الصنف: ${item['productName']??''}');
+    final supplierId='${d['supplierId']??''}';if(supplierId.isEmpty)throw StateError('الفاتورة لا تحتوي على حساب مورد');
+    final supplierRef=db.collection('suppliers').doc(supplierId),supplierSnap=await tx.get(supplierRef);if(!supplierSnap.exists)throw StateError('حساب المورد غير موجود');
+    final cashRef=db.collection('settings').doc('cash'),cashSnap=await tx.get(cashRef);
+    final settlement=returnSettlement(d,sales:false);
+    final priorCash=((d['partialCashRefund'] as num?)?.toDouble()??0),priorDebt=((d['partialDebtReduction'] as num?)?.toDouble()??0);
+    final cashAvailable=((settlement.cash*100).round()-(priorCash*100).round()).clamp(0,1000000000000).toInt();
+    final debtAvailable=((settlement.debt*100).round()-(priorDebt*100).round()).clamp(0,1000000000000).toInt();
+    final lineValue=(item['lineTotal'] as num?)?.toDouble()??qty*((item['unitCost'] as num?)?.toDouble()??0);
+    final amount=allocatedPartialReturnCents(
+      (lineValue*100).round(),qty,already,quantity);
+    final cashRefund=partialReturnCashCents(valueCents:amount,cashAvailableCents:cashAvailable,debtAvailableCents:debtAvailable),debtReduction=amount-cashRefund;
+    if(amount<=0 || amount>cashAvailable+debtAvailable)throw StateError('قيمة المرتجع أكبر من المتبقي في تسوية الفاتورة');
+    final returnRef=db.collection('purchaseReturns').doc(),now=FieldValue.serverTimestamp();
+    tx.set(stockRef,{'branchId':'main','productId':productId,'quantity':before-quantity},SetOptions(merge:true));
+    tx.set(db.collection('stockMovements').doc(),{'productId':productId,'productName':item['productName'],'branchId':'main','kind':'purchase_return','quantity':-quantity,'balanceAfter':before-quantity,'referenceId':returnRef.id,'actorId':actor,'createdAt':now});
+    final supplierBefore=(supplierSnap.data()?['balance'] as num?)?.toDouble()??0,supplierAfter=((supplierBefore*100).round()-debtReduction)/100;
+    if(debtReduction>0){tx.update(supplierRef,{'balance':supplierAfter,'updatedAt':now});tx.set(db.collection('accountMovements').doc(),{'accountType':'suppliers','accountId':supplierId,'accountName':d['supplierName'],'kind':'purchase_return','amount':debtReduction/100,'balanceBefore':supplierBefore,'balanceAfter':supplierAfter,'referenceId':returnRef.id,'createdAt':now,'actorId':actor});}
+    final cashBefore=(cashSnap.data()?['balance'] as num?)?.toDouble()??0,cashAfter=((cashBefore*100).round()+cashRefund)/100;
+    if(cashRefund>0){tx.set(cashRef,{'balance':cashAfter,'updatedAt':now},SetOptions(merge:true));tx.set(db.collection('accountMovements').doc(),{'accountType':'cash','kind':'purchase_return','amount':cashRefund/100,'delta':cashRefund/100,'balanceBefore':cashBefore,'balanceAfter':cashAfter,'accountId':supplierId,'accountName':d['supplierName'],'referenceId':returnRef.id,'reason':'استرداد نقدية مرتجع صنف مشتريات','actorId':actor,'createdAt':now});}
+    tx.set(returnRef,{'sourceInvoiceId':id,'returnType':'partial','sourceItemIndex':sourceItemIndex,'sourceLineKey':'$sourceItemIndex','sourceQuantity':quantity,'items':[{'sourceItemIndex':sourceItemIndex,'productId':productId,'productName':item['productName'],'quantity':quantity,'unitCost':item['unitCost']??0,'lineTotal':amount/100}],'total':amount/100,'cashRefund':cashRefund/100,'debtReduction':debtReduction/100,'supplierId':supplierId,'supplierName':d['supplierName'],'invoiceNumber':d['invoiceNumber'],'internalNumber':d['internalNumber'],'invoiceBarcode':d['invoiceBarcode'],'createdAt':now,'actorId':actor});
+    final quantities=Map<String,dynamic>.from(rawReturned is Map?rawReturned:{});quantities['$sourceItemIndex']=already+quantity;
+    final allReturned=items.asMap().entries.every((entry) {
+      final original=(entry.value['quantity'] as num?)?.toInt()??0;
+      final returned=(quantities['${entry.key}'] as num?)?.toInt()??0;
+      return original>0 && returned>=original;
+    });
+    final priorTotal=((d['partialReturnTotal'] as num?)?.toDouble()??0),priorCashTotal=((d['partialCashRefund'] as num?)?.toDouble()??0),priorDebtTotal=((d['partialDebtReduction'] as num?)?.toDouble()??0);
+    tx.update(invoiceRef,{'partialReturnQuantities':quantities,'partialReturnTotal':((priorTotal*100).round()+amount)/100,'partialCashRefund':((priorCashTotal*100).round()+cashRefund)/100,'partialDebtReduction':((priorDebtTotal*100).round()+debtReduction)/100,'lastPartialReturnId':returnRef.id,if(allReturned)'status':'returned',if(allReturned)'returnedAt':now,if(allReturned)'returnId':returnRef.id});
+  });
+}
+
+({double cash, double debt}) returnSettlement(Map<String, dynamic> data, {required bool sales}) {
+  double read(String key, double fallback) {
+    final value = data[key];
+    if (value == null) return fallback;
+    if (value is! num || !value.isFinite || value < 0) throw StateError('قيمة تسوية الفاتورة غير صحيحة');
+    return value.toDouble();
+  }
+  final total = data['total'] == null ? read('paid', 0) + read('due', 0) : read('total', 0);
+  final paid = read('paid', total);
+  final due = read('due', total - paid);
+  if (((paid * 100).round() + (due * 100).round() - (total * 100).round()).abs() > 1) {
+    throw StateError('إجمالي الفاتورة لا يطابق المدفوع والباقي');
+  }
+  if (sales) {
+    final receipts = read('receiptPaid', 0);
+    if (receipts > due + 0.005) throw StateError('التحصيل المرتبط أكبر من باقي الفاتورة');
+    return (cash: paid + receipts, debt: (due - receipts).clamp(0, due).toDouble());
+  }
+  final postedCash = data['cashPosted'] == true ? paid : read('cashPaidPosted', 0);
+  if (postedCash > paid + 0.005) throw StateError('المبلغ المسجل في الصندوق أكبر من المدفوع');
+  return (cash: postedCash, debt: due);
+}
+
+Future<void> confirmReturn(BuildContext context, String type, String id, Map<String, dynamic> data) async {
+  try {
+    final current = (await db.collection(type).doc(id).get(const GetOptions(source: Source.server))).data();
+    if (current == null || current['status'] != 'completed' || !invoiceAllowedForReturn(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    if (type == 'sales' || type == 'purchases') {
+      final priorReturns = await db.collection(type=='sales'?'salesReturns':'purchaseReturns').where('sourceInvoiceId', isEqualTo: id)
+          .get(const GetOptions(source: Source.server));
+      if (priorReturns.docs.any((d) => d.data()['returnType'] == 'partial')) {
+        if (context.mounted) await showInvoiceSaveProblem(context,
+          'بدأ إرجاع أصناف منفردة من هذه الفاتورة. استخدم «إرجاع صنف من الفاتورة» للكميات المتبقية؛ لا يمكن إرجاع الفاتورة كاملة بعد بدء المرتجع الجزئي.',
+          title: 'أكمل المرتجع الجزئي', button: 'تمام');
+        return;
+      }
+    }
+    if(type=='sales' && ((current['onlinePaid'] as num?)??0)>0){
+      if(context.mounted){await showInvoiceSaveProblem(context,'الفاتورة لها سداد بالكارت. رد المبلغ من سجل جيديا وانتظر تأكيده قبل إرجاع الفاتورة.',title:'رد الكارت أولًا',button:'تمام');
+        if(context.mounted)await openGeideaPayments(context,invoiceId:id);}
+      return;
+    }
+    final sales = type == 'sales', settlement = returnSettlement(current, sales: type == 'sales');
+    final partyId = '${current[sales ? 'customerId' : 'supplierId'] ?? ''}';
+    final party = partyId.isEmpty ? null : (await db.collection(sales ? 'customers' : 'suppliers').doc(partyId).get(const GetOptions(source: Source.server))).data();
+    final balance = (party?['balance'] as num?)?.toDouble() ?? 0;
+    final after = ((balance * 100).round() - (settlement.debt * 100).round()) / 100;
+    if (!context.mounted) return;
+    final yes = await showDialog<bool>(context: context, builder: (c) => AlertDialog(title: const Text('مراجعة وتأكيد المرتجع'), content: SingleChildScrollView(child: Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+      Text('الفاتورة: $id\n${sales ? 'العميل' : 'المورد'}: ${current[sales ? 'customerName' : 'supplierName'] ?? ''}'),
+      Text(sales ? 'ستُضاف كميات الفاتورة إلى المخزون.' : 'ستُخصم كميات الفاتورة من المخزون الرئيسي.'),
+      Text('تخفيض الذمة: ${settlement.debt.toStringAsFixed(2)} ج.م'),
+      if(party != null) Text('الرصيد الحالي: ${balance.toStringAsFixed(2)}\nالرصيد بعد المرتجع: ${after.toStringAsFixed(2)} • ${accountBalanceLabel(after,supplier:!sales)}'),
+      Text('${sales ? 'رد من الصندوق' : 'استرداد إلى الصندوق'}: ${settlement.cash.toStringAsFixed(2)} ج.م'),
+      if(!sales) const Text('سندات الصرف العامة للمورد تظل مسجلة. أي رصيد سالب بعد المرتجع يُحسب مبلغًا لك عند المورد، ولا يُرد من الصندوق مرة أخرى.'),
+      if(sales) const Text('سندات القبض المرتبطة بهذه الفاتورة تدخل في رد النقدية. سندات القبض العامة تظل محفوظة؛ أي زيادة بعد المرتجع تصبح رصيدًا للعميل عندك.'),
+      const Text('الفاتورة الأصلية تظل محفوظة، ولا يمكن إرجاعها مرتين. الأرصدة تُراجع مجددًا عند التنفيذ.'),
+    ])), actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('إلغاء')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('تأكيد المرتجع'))])) ?? false;
+    if (!yes || !context.mounted) return;
+    await returnInvoice(type, id, expectedSignature: invoiceReturnSignature(current));
+    if (context.mounted) await showInvoiceSaveProblem(context,'تم تسجيل المرتجع وتحديث المخزون والذمة والصندوق وحفظ الفاتورة الأصلية.',title:'تم تسجيل المرتجع',button:'تمام',success:true);
+  } catch (e) { if (context.mounted) await showInvoiceSaveProblem(context,'تعذر المرتجع: $e',title:'لم يتم تسجيل المرتجع',button:'رجوع'); }
+}
+
+String accountBalanceLabel(num balance, {required bool supplier}) => balance < 0
+  ? (supplier ? 'رصيد لك عند المورد' : 'رصيد للعميل عندك')
+  : balance == 0 ? 'الحساب متعادل' : supplier ? 'المتبقي عليك للمورد' : 'المتبقي على العميل';
+
+String invoiceReturnSignature(Map<String,dynamic> data) => jsonEncode({for(final key in
+  ['status','revision','items','productId','quantity','branchId','stockBranchId','customerId','supplierId','total','due','paid','receiptPaid','onlinePaid','onlinePaymentEver','cashPosted','cashPaidPosted','partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction']) key:data[key]});
+
+Future<void> returnInvoice(String type, String id,
+    {String? expectedSignature, String? expectedCancellationSnapshot,
+     String? cancellationReason,
+     List<String> cancelledReceiptIds = const []}) async {
+  final cancellingSale = cancellationReason != null;
+  if (cancellingSale && type != 'sales') throw StateError('الإلغاء مخصص للمبيعات فقط');
+  if (cancellingSale && cancellationReason!.trim().length < 5) {
+    throw StateError('سبب الإلغاء مطلوب');
+  }
+  if (!['sales', 'purchases'].contains(type)) throw StateError('نوع الفاتورة غير صحيح');
+  final preflight = (await db.collection(type).doc(id).get()).data();
+  if (preflight == null) throw Exception('الفاتورة غير موجودة');
+  await db.runTransaction((tx) async {
+    final invoiceRef = db.collection(type).doc(id);
+    final invoiceSnap = await tx.get(invoiceRef);
+    final d = invoiceSnap.data();
+    if (d == null) throw Exception('الفاتورة غير موجودة');
+    final actor = FirebaseAuth.instance.currentUser!.uid;
+    final profile = await tx.get(db.collection('users').doc(actor));
+    if (profile.data()?['active'] != true || profile.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
+    if (!invoiceAllowedForReturn(d)) throw StateError('الفاتورة تخص دورة مالية مقفولة');
     if (cancellingSale) {
       if (expectedCancellationSnapshot == null ||
           saleCancellationFinancialSnapshot(d) != expectedCancellationSnapshot) {
