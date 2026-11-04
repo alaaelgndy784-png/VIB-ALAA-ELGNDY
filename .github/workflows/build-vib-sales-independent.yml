@@ -147,6 +147,7 @@ jobs:
           for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do cp /tmp/vib-launcher.png "android/app/src/main/res/mipmap-$density/ic_launcher.png"; done
           cp firebase/google-services.json android/app/google-services.json
           if [ "$APP" = manager ]; then python3 ../overrides/android/configure_manager_ringtone.py "$APP"; fi
+          if [ "$APP" = manager ]; then python3 ../overrides/android/generate_short_approval_sound.py; fi
           flutter pub get
 
       - name: Verify invoice PDF rendering
