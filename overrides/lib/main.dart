@@ -41,6 +41,7 @@ import 'inventory_rows.dart';
 
 part 'cheques.dart';
 part 'chat_alerts.dart';
+part 'approval_alerts.dart';
 
 part 'invoice_editor.dart';
 part 'pending_sales.dart';
@@ -141,6 +142,13 @@ Timestamp? activeResetAt;
 Timestamp? managerArchivedSalesBefore;
 Timestamp? managerArchivedPurchasesBefore;
 Timestamp? managerArchivedExpensesBefore;
+
+// Archive markers hide history only; returns remain permitted for open periods.
+bool invoiceAllowedForReturn(Map<String, dynamic> data) {
+  final cutoff = activeResetAt;
+  final stamp = data['createdAt'];
+  return cutoff == null || (stamp is Timestamp && stamp.compareTo(cutoff) >= 0);
+}
 
 bool visibleAfterReset(Map<String, dynamic> data) {
   final createdAt = data['createdAt'];
@@ -1062,6 +1070,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     if(widget.role=='owner') {
       ChequeReminders.instance.watch(widget.uid);
+      unawaited(ManagerApprovalAlerts.instance.watch());
       ManagerOfflineSaleSync.instance.start();
       ManagerOfflineVoucherSync.instance.start();
       unawaited(ManagerOfflineDraftStore.instance.syncPending());
@@ -1103,6 +1112,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     ChatAlerts.instance.stop();
     if(widget.role=='owner') {
       ChequeReminders.instance.stop();
+      unawaited(ManagerApprovalAlerts.instance.stop());
       ManagerOfflineSaleSync.instance.stop();
       ManagerOfflineVoucherSync.instance.stop();
     } else {
@@ -1435,7 +1445,7 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
             }
             return Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
               child: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.volunteer_activism_outlined,
+                const Icon(Icons.payments_outlined,
                   color: Color(0xFF45D483), size: 25),
                 const SizedBox(height: 5),
                 const Text('حركة السداد', maxLines: 2, textAlign: TextAlign.center,
@@ -1513,7 +1523,7 @@ class DashboardGrossProfitMetric extends StatelessWidget {
           }
           return Padding(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 9),
             child: Column(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.trending_up_outlined, color: Color(0xFFFFC857), size: 25),
+              const Icon(Icons.trending_up_rounded, color: Color(0xFFFFC857), size: 25),
               const SizedBox(height: 5),
               const Text('إجمالي الأرباح', textAlign: TextAlign.center, maxLines: 2,
                 style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 11)),
@@ -1583,11 +1593,11 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
         ? <Widget>[
             DashboardMetric(label: 'إجمالي المبيعات', collection: 'sales', valueField: 'total', selectedDay: metricDay,
               fromDate: selectedFrom, toDate: selectedTo,
-              accent: gold, icon: Icons.monetization_on_outlined),
+              accent: gold, icon: Icons.receipt_long_outlined),
             _divider(),
             DashboardMetric(label: 'إجمالي المشتريات', collection: 'purchases', valueField: 'total', selectedDay: metricDay,
               fromDate: selectedFrom, toDate: selectedTo,
-              accent: const Color(0xFF55B8FF), icon: Icons.shopping_cart_outlined),
+              accent: const Color(0xFF55B8FF), icon: Icons.shopping_bag_outlined),
             _divider(),
             DashboardCustomerPaymentsMetric(from: selectedFrom, to: selectedTo),
             _divider(),
@@ -4018,6 +4028,12 @@ class _PurchasesState extends State<Purchases>{
         if(owner) Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)), onPressed: () => openVibReport(context, 'تقرير حركة المشتريات', const InvoiceMovementReportPage(type: 'purchases')),
           icon: const Icon(Icons.summarize_outlined, size:18), label: const Text('تقرير الحركة', maxLines:1, overflow:TextOverflow.ellipsis))),
       ]),
+      if(owner) Padding(padding: const EdgeInsets.only(top: 4),
+        child: SizedBox(width: double.infinity, child: OutlinedButton.icon(
+          key: const ValueKey('purchases-full-ledger-shortcut'),
+          onPressed: () => openVibReport(context, 'كل فواتير المشتريات من البداية', const InvoiceHistoryPage(type: 'purchases')),
+          icon: const Icon(Icons.all_inbox_outlined, size: 18),
+          label: const Text('عرض جميع فواتير المشتريات القديمة والجديدة')))),
       if(owner) Padding(padding:const EdgeInsets.only(top:4),child:Row(children: [
         Expanded(child: OutlinedButton.icon(style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact, padding: const EdgeInsets.symmetric(horizontal:4)), onPressed: () => findInvoiceForEdit(context, 'purchases'), icon: const Icon(Icons.edit_note, size:18), label: const Text('تعديل فاتورة', maxLines:1, overflow:TextOverflow.ellipsis))),
         const SizedBox(width:6),
@@ -7477,7 +7493,7 @@ int allocatedPartialReturnCents(int lineCents, int lineQuantity,
 Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
   try {
     final invoice = (await db.collection('sales').doc(id).get(const GetOptions(source: Source.server))).data();
-    if (invoice == null || invoice['status'] != 'completed' || !visibleAfterReset(invoice)) {
+    if (invoice == null || invoice['status'] != 'completed' || !invoiceAllowedForReturn(invoice)) {
       throw StateError('الفاتورة غير متاحة للمرتجع');
     }
     if (((invoice['onlinePaid'] as num?) ?? 0) > 0) {
@@ -7702,7 +7718,7 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
 Future<void> confirmPartialPurchaseReturn(BuildContext context, String id) async {
   try {
     final invoice=(await db.collection('purchases').doc(id).get(const GetOptions(source:Source.server))).data();
-    if(invoice==null||invoice['status']=='returned'||!visibleAfterReset(invoice))throw StateError('الفاتورة غير متاحة للمرتجع');
+    if(invoice==null||invoice['status']=='returned'||!invoiceAllowedForReturn(invoice))throw StateError('الفاتورة غير متاحة للمرتجع');
     final items=_saleReturnInvoiceItems(invoice), returnedByLine=<int,int>{};
     final raw=invoice['partialReturnQuantities'];
     if(raw is Map){for(final entry in raw.entries){final i=int.tryParse('${entry.key}'),q=entry.value;if(i!=null&&q is num&&q.isFinite&&q>=0)returnedByLine[i]=q.toInt();}}
@@ -7735,7 +7751,7 @@ Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantit
   final actor=FirebaseAuth.instance.currentUser!.uid,invoiceRef=db.collection('purchases').doc(id);
   await db.runTransaction((tx)async{
     final snap=await tx.get(invoiceRef),d=snap.data();
-    if(d==null||d['status']=='returned'||!visibleAfterReset(d))throw StateError('الفاتورة غير متاحة للمرتجع');
+    if(d==null||d['status']=='returned'||!invoiceAllowedForReturn(d))throw StateError('الفاتورة غير متاحة للمرتجع');
     final profile=(await tx.get(db.collection('users').doc(actor))).data();if(profile?['active']!=true||profile?['role']!='owner')throw StateError('المرتجعات للمدير فقط');
     final rawItems=d['items'];final items=<Map<String,dynamic>>[];if(rawItems is List){for(final raw in rawItems){if(raw is Map)items.add(Map<String,dynamic>.from(raw));}}
     if(items.isEmpty)items.add({'productId':d['productId'],'productName':d['productName'],'quantity':d['quantity']??0,'unitCost':d['unitCost']??0,'lineTotal':d['total']??0});
@@ -7803,7 +7819,7 @@ Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantit
 Future<void> confirmReturn(BuildContext context, String type, String id, Map<String, dynamic> data) async {
   try {
     final current = (await db.collection(type).doc(id).get(const GetOptions(source: Source.server))).data();
-    if (current == null || current['status'] != 'completed' || !visibleAfterReset(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    if (current == null || current['status'] != 'completed' || !invoiceAllowedForReturn(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
     if (type == 'sales' || type == 'purchases') {
       final priorReturns = await db.collection(type=='sales'?'salesReturns':'purchaseReturns').where('sourceInvoiceId', isEqualTo: id)
           .get(const GetOptions(source: Source.server));
