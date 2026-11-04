@@ -39,12 +39,13 @@ class ManagerApprovalAlerts {
   // so it can be changed/muted in Android Settings without affecting calls.
   static const notificationDetails = NotificationDetails(
     android: AndroidNotificationDetails(
-      'vib_manager_approvals_message_short_v1',
+      'vib_manager_approvals_message_short_v2',
       'اعتمادات فواتير وسندات الموظفين',
       channelDescription: 'تنبيه رسالة لاعتماد فاتورة مبيعات أو سند قبض',
       importance: Importance.high,
       priority: Priority.high,
       playSound: true,
+      sound: RawResourceAndroidNotificationSound('vib_approval_message_short'),
       enableVibration: true,
       icon: 'vib_notification',
       visibility: NotificationVisibility.private,
