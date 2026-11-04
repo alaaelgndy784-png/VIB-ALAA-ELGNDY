@@ -4018,7 +4018,9 @@ class _PurchasesState extends State<Purchases>{
     });
   }
   bool get owner=>widget.owner;
-  @override void initState(){super.initState();if(owner)prepareInvoiceSerials('purchases').then((_){if(mounted)setState((){});}).catchError((Object e){if(mounted)ScaffoldMessenger.of(context).showSnackBar(SnackBar(content:Text('تعذر تجهيز أرقام المشتريات: $e')));});}
+  // Viewing purchases must not backfill all historical serial numbers.
+  // Invoice numbering for NEW purchases remains in their save transaction.
+  @override void initState(){super.initState();}
   @override
   Widget build(BuildContext context) => Column(children: [
     Padding(padding: const EdgeInsets.fromLTRB(10,8,10,4), child: Column(children: [
@@ -7490,6 +7492,24 @@ int allocatedPartialReturnCents(int lineCents, int lineQuantity,
   return upTo(alreadyReturned + returningNow) - upTo(alreadyReturned);
 }
 
+// A quota rejection is a server-side failure, not an invalid return quantity.
+// Never claim a financial or stock change succeeded without server proof.
+String returnFailureMessage(Object error) {
+  if (isFirestoreQuotaExhausted(error)) {
+    return 'Firebase رفض تسجيل المرتجع بسبب استنفاد الحصة أو موارد الخدمة '
+      '(resource-exhausted). تسجيل المرتجع لم يتأكد من السيرفر؛ '
+      'لا تكرر نفس العملية قبل مراجعة سجل المرتجعات وحركة الفاتورة. '
+      'لا تعدّل المخزون أو الأرصدة يدويًا. '
+      'يحتاج مدير المشروع إلى فحص Firestore Usage وBilling.';
+  }
+  if (error is FirebaseException &&
+      (error.code == 'unavailable' || error.code == 'deadline-exceeded')) {
+    return 'الاتصال بـ Firebase انقطع أثناء المرتجع؛ لا يمكن تأكيد حالته. '
+      'راجع الفاتورة وسجل المرتجعات قبل أي محاولة جديدة.';
+  }
+  return 'تعذر تسجيل المرتجع: $error';
+}
+
 Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
   try {
     final invoice = (await db.collection('sales').doc(id).get(const GetOptions(source: Source.server))).data();
@@ -7586,8 +7606,8 @@ Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
       'تم إرجاع الصنف وتحديث المخزون والذمة والصندوق، مع حفظ الفاتورة الأصلية.',
       title: 'تم تسجيل مرتجع الصنف', button: 'تمام', success: true);
   } catch (e) {
-    if (context.mounted) await showInvoiceSaveProblem(context, 'تعذر إرجاع الصنف: $e',
-      title: 'لم يتم تسجيل المرتجع', button: 'رجوع');
+    if (context.mounted) await showInvoiceSaveProblem(context, returnFailureMessage(e),
+      title: 'لم يتأكد تسجيل المرتجع', button: 'رجوع');
   }
 }
 
@@ -7751,7 +7771,7 @@ Future<void> confirmPartialPurchaseReturn(BuildContext context, String id) async
     final yes=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('تأكيد إرجاع الصنف'),content:Text('الصنف: ${row['productName']??''}\nالكمية: $qty\nقيمة الصنف: ${value.toStringAsFixed(2)} ج.م\nسيُخصم من المخزون الرئيسي ويُحدّث حساب المورد والصندوق.'),actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('رجوع')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('تأكيد الإرجاع'))]))??false;
     if(!yes||!context.mounted)return;await returnPurchaseInvoiceItem(id,index,qty);
     if(context.mounted)await showInvoiceSaveProblem(context,'تم إرجاع الصنف وتحديث المخزون وحساب المورد والصندوق مع حفظ الفاتورة الأصلية.',title:'تم تسجيل مرتجع الصنف',button:'تمام',success:true);
-  }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر إرجاع الصنف: $e',title:'لم يتم تسجيل المرتجع',button:'رجوع');}
+  }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,returnFailureMessage(e),title:'لم يتأكد تسجيل المرتجع',button:'رجوع');}
 }
 
 Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantity) async {
@@ -7862,7 +7882,7 @@ Future<void> confirmReturn(BuildContext context, String type, String id, Map<Str
     if (!yes || !context.mounted) return;
     await returnInvoice(type, id, expectedSignature: invoiceReturnSignature(current));
     if (context.mounted) await showInvoiceSaveProblem(context,'تم تسجيل المرتجع وتحديث المخزون والذمة والصندوق وحفظ الفاتورة الأصلية.',title:'تم تسجيل المرتجع',button:'تمام',success:true);
-  } catch (e) { if (context.mounted) await showInvoiceSaveProblem(context,'تعذر المرتجع: $e',title:'لم يتم تسجيل المرتجع',button:'رجوع'); }
+  } catch (e) { if (context.mounted) await showInvoiceSaveProblem(context,returnFailureMessage(e),title:'لم يتأكد تسجيل المرتجع',button:'رجوع'); }
 }
 
 String accountBalanceLabel(num balance, {required bool supplier}) => balance < 0
