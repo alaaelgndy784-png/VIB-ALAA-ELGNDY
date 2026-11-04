@@ -7541,12 +7541,18 @@ Future<void> confirmPartialSalesReturn(BuildContext context, String id) async {
           TextField(controller: quantity, keyboardType: TextInputType.number,
             textInputAction: TextInputAction.done,
             onSubmitted: (_) => FocusScope.of(dialogContext).unfocus(),
+            onChanged: (_) => setDialogState(() {}),
             decoration: InputDecoration(labelText: 'الكمية (المتاح ${available[selected]})')),
+          if ((int.tryParse(invoiceSearchText(quantity.text)) ?? 0) < 1 ||
+              (int.tryParse(invoiceSearchText(quantity.text)) ?? 0) > (available[selected] ?? 0))
+            Text('اختار كمية من 1 إلى ${available[selected]}', style: const TextStyle(color: Colors.redAccent, fontSize: 12)),
         ]),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('إلغاء')),
-          FilledButton(onPressed: () {
-            final qty = int.tryParse(quantity.text.trim());
+          FilledButton(onPressed: (int.tryParse(invoiceSearchText(quantity.text)) ?? 0) < 1 ||
+              (int.tryParse(invoiceSearchText(quantity.text)) ?? 0) > (available[selected] ?? 0)
+              ? null : () {
+            final qty = int.tryParse(invoiceSearchText(quantity.text));
             if (qty == null || qty < 1 || qty > (available[selected] ?? 0)) {
               ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content: Text('اكتب كمية صحيحة لا تتجاوز المتاح')));
               return;
@@ -7592,7 +7598,7 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
   await db.runTransaction((tx) async {
     final invoiceSnap = await tx.get(invoiceRef);
     final d = invoiceSnap.data();
-    if (d == null || d['status'] != 'completed' || !visibleAfterReset(d)) throw StateError('الفاتورة غير متاحة للمرتجع');
+    if (d == null || d['status'] != 'completed' || !invoiceAllowedForReturn(d)) throw StateError('الفاتورة غير متاحة للمرتجع');
     final profileSnap = await tx.get(db.collection('users').doc(actor));
     if (profileSnap.data()?['active'] != true || profileSnap.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
     if (((d['onlinePaid'] as num?) ?? 0) > 0) throw StateError('يجب تأكيد رد مبلغ الكارت أولًا');
@@ -7733,8 +7739,10 @@ Future<void> confirmPartialPurchaseReturn(BuildContext context, String id) async
       actionsPadding:const EdgeInsets.fromLTRB(12,6,12,12),
       title:const Text('إرجاع صنف من فاتورة المشتريات'),content:Column(mainAxisSize:MainAxisSize.min,children:[
         DropdownButtonFormField<int>(value:selected,isExpanded:true,decoration:const InputDecoration(labelText:'الصنف'),items:indexes.map((i)=>DropdownMenuItem(value:i,child:Text('${items[i]['productName']??'صنف'} • المتاح للإرجاع ${available[i]}'))).toList(),onChanged:(v){if(v!=null)setDialogState((){selected=v;quantity.text='1';});}),
-        TextField(controller:quantity,keyboardType:TextInputType.number,textInputAction:TextInputAction.done,onSubmitted:(_)=>FocusScope.of(dialogContext).unfocus(),decoration:InputDecoration(labelText:'الكمية (المتاح ${available[selected]})')),
-      ]),actions:[TextButton(onPressed:()=>Navigator.pop(dialogContext),child:const Text('إلغاء')),FilledButton(onPressed:(){final q=int.tryParse(quantity.text.trim());if(q==null||q<1||q>(available[selected]??0)){ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content:Text('اكتب كمية صحيحة لا تتجاوز المتاح')));return;}Navigator.pop(dialogContext,{'sourceItemIndex':selected,'quantity':q});},child:const Text('تأكيد الكمية ومراجعة المرتجع'))])));
+        TextField(controller:quantity,keyboardType:TextInputType.number,textInputAction:TextInputAction.done,onSubmitted:(_)=>FocusScope.of(dialogContext).unfocus(),onChanged:(_)=>setDialogState((){}),decoration:InputDecoration(labelText:'الكمية (المتاح ${available[selected]})')),
+        if((int.tryParse(invoiceSearchText(quantity.text))??0)<1 || (int.tryParse(invoiceSearchText(quantity.text))??0)>(available[selected]??0))
+          Text('اختار كمية من 1 إلى ${available[selected]}', style:const TextStyle(color:Colors.redAccent,fontSize:12)),
+      ]),actions:[TextButton(onPressed:()=>Navigator.pop(dialogContext),child:const Text('إلغاء')),FilledButton(onPressed:(int.tryParse(invoiceSearchText(quantity.text))??0)<1 || (int.tryParse(invoiceSearchText(quantity.text))??0)>(available[selected]??0) ? null : (){final q=int.tryParse(invoiceSearchText(quantity.text));if(q==null||q<1||q>(available[selected]??0)){ScaffoldMessenger.of(dialogContext).showSnackBar(const SnackBar(content:Text('اكتب كمية صحيحة لا تتجاوز المتاح')));return;}Navigator.pop(dialogContext,{'sourceItemIndex':selected,'quantity':q});},child:const Text('تأكيد الكمية ومراجعة المرتجع'))])));
     quantity.dispose();if(choice==null||!context.mounted)return;
     final index=choice['sourceItemIndex']!,qty=choice['quantity']!,row=items[index];
     final lineQty=(row['quantity'] as num?)?.toInt()??0;final lineTotal=(row['lineTotal'] as num?)?.toDouble()??lineQty*((row['unitCost'] as num?)?.toDouble()??0);
@@ -7884,7 +7892,7 @@ Future<void> returnInvoice(String type, String id,
     final actor = FirebaseAuth.instance.currentUser!.uid;
     final profile = await tx.get(db.collection('users').doc(actor));
     if (profile.data()?['active'] != true || profile.data()?['role'] != 'owner') throw StateError('المرتجعات للمدير فقط');
-    if (!visibleAfterReset(d)) throw StateError('الفاتورة تخص دورة قديمة');
+    if (!invoiceAllowedForReturn(d)) throw StateError('الفاتورة تخص دورة مالية مقفولة');
     if (cancellingSale) {
       if (expectedCancellationSnapshot == null ||
           saleCancellationFinancialSnapshot(d) != expectedCancellationSnapshot) {
