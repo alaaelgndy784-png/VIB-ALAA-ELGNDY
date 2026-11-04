@@ -469,6 +469,14 @@ class InvoiceOverviewContent extends StatelessWidget {
     ]);
   }
 }
+// Manager's historical purchases are an audit-only view. Archived invoices can
+// be opened and exported as PDF, but must not offer edit, return, or cancellation
+// actions; those operate only on the active accounting period.
+bool archivedPurchaseReviewAllowed(String type, {
+  required bool activeVisible,
+  required bool managerApp,
+}) => type == 'purchases' && managerApp && !activeVisible;
+
 Future<void> showInvoiceOverview(BuildContext context, String type, String id,
     {Map<String, dynamic>? initialData}) async {
   try {
@@ -489,14 +497,19 @@ Future<void> showInvoiceOverview(BuildContext context, String type, String id,
       if (!row.exists || row.data() == null) throw StateError('الفاتورة غير متاحة');
       data = row.data()!;
     }
-    if (!visibleAfterReset(data)) throw StateError('الفاتورة غير متاحة');
+    final activeVisible = visibleAfterReset(data);
+    final historicalPurchaseReadOnly = archivedPurchaseReviewAllowed(type,
+      activeVisible: activeVisible, managerApp: !staffApp);
+    if (!activeVisible && !historicalPurchaseReadOnly) {
+      throw StateError('الفاتورة غير متاحة');
+    }
     if (!context.mounted) return;
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (page) =>
       Directionality(textDirection: TextDirection.rtl, child: Scaffold(
         appBar: AppBar(
-          title: Text(type == 'sales' ? 'فاتورة المبيعات${data['status']=='cancelled' ? ' — ملغاة' : ''}' : 'فاتورة المشتريات'),
+          title: Text(type == 'sales' ? 'فاتورة المبيعات${data['status']=='cancelled' ? ' — ملغاة' : ''}' : historicalPurchaseReadOnly ? 'فاتورة مشتريات مؤرشفة — للعرض فقط' : 'فاتورة المشتريات'),
           actions: [
-            IconButton(
+            if (!historicalPurchaseReadOnly) IconButton(
               tooltip: 'إجراءات الفاتورة: تعديل وطباعة ومرتجعات',
               icon: const Icon(Icons.more_vert),
               onPressed: () => invoiceActions(page, type, id, data),
@@ -527,6 +540,10 @@ Future<void> showInvoiceOverview(BuildContext context, String type, String id,
         bottomNavigationBar: SafeArea(child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
+            if (historicalPurchaseReadOnly) const Padding(
+              padding: EdgeInsets.only(bottom: 6),
+              child: Text('فاتورة قديمة للعرض ومشاركة PDF فقط — لا تعديل أو مرتجع',
+                textAlign: TextAlign.center, style: TextStyle(color: gold, fontSize: 12))),
             if (type == 'sales' && !staffApp && saleInvoiceCanBeCancelled(data))
               Padding(padding: const EdgeInsets.only(bottom: 6),
                 child: SizedBox(width: double.infinity, height: 38,
