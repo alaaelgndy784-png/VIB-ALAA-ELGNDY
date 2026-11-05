@@ -214,8 +214,15 @@ class _ReturnInvoicesPageState extends State<ReturnInvoicesPage> {
         await file.writeAsBytes(pdf, flush: true);
         await Share.shareXFiles([XFile(file.path, mimeType: 'application/pdf')],
           text: 'فاتورة مرتجع ' + entry.number + ' - ' + entry.party);
+      } else if (paper == '80') {
+        // Use the existing paired Bluetooth ESC/POS printer, not the Android
+        // system A4 print dialog. It trims trailing white raster bands.
+        final prefs = await SharedPreferences.getInstance();
+        await _printPdfOnBluetoothThermal(context, pdf,
+            printerMac: prefs.getString(_thermalPrinterMacKey));
       } else {
-        await Printing.layoutPdf(name: fileName, onLayout: (_) async => pdf);
+        await Printing.layoutPdf(name: fileName, format: PdfPageFormat.a4,
+            dynamicLayout: false, onLayout: (_) async => pdf);
       }
     } catch (e) {
       if (mounted) await showInvoiceSaveProblem(context,
