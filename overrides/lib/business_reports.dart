@@ -500,16 +500,18 @@ Future<void> showInvoiceOverview(BuildContext context, String type, String id,
     final activeVisible = visibleAfterReset(data);
     final historicalPurchaseReadOnly = archivedPurchaseReviewAllowed(type,
       activeVisible: activeVisible, managerApp: !staffApp);
-    if (!activeVisible && !historicalPurchaseReadOnly) {
+    final historicalSalesReadOnly = type == 'sales' && !staffApp && !activeVisible;
+    final historicalReadOnly = historicalPurchaseReadOnly || historicalSalesReadOnly;
+    if (!activeVisible && !historicalReadOnly) {
       throw StateError('الفاتورة غير متاحة');
     }
     if (!context.mounted) return;
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (page) =>
       Directionality(textDirection: TextDirection.rtl, child: Scaffold(
         appBar: AppBar(
-          title: Text(type == 'sales' ? 'فاتورة المبيعات${data['status']=='cancelled' ? ' — ملغاة' : ''}' : historicalPurchaseReadOnly ? 'فاتورة مشتريات مؤرشفة — للعرض فقط' : 'فاتورة المشتريات'),
+          title: Text(historicalSalesReadOnly ? 'فاتورة مبيعات مؤرشفة — للعرض فقط' : type == 'sales' ? 'فاتورة المبيعات${data['status']=='cancelled' ? ' — ملغاة' : ''}' : historicalPurchaseReadOnly ? 'فاتورة مشتريات مؤرشفة — للعرض فقط' : 'فاتورة المشتريات'),
           actions: [
-            if (!historicalPurchaseReadOnly) IconButton(
+            if (!historicalReadOnly) IconButton(
               tooltip: 'إجراءات الفاتورة: تعديل وطباعة ومرتجعات',
               icon: const Icon(Icons.more_vert),
               onPressed: () => invoiceActions(page, type, id, data),
@@ -540,11 +542,11 @@ Future<void> showInvoiceOverview(BuildContext context, String type, String id,
         bottomNavigationBar: SafeArea(child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            if (historicalPurchaseReadOnly) const Padding(
+            if (historicalReadOnly) const Padding(
               padding: EdgeInsets.only(bottom: 6),
               child: Text('فاتورة قديمة للعرض ومشاركة PDF فقط — لا تعديل أو مرتجع',
                 textAlign: TextAlign.center, style: TextStyle(color: gold, fontSize: 12))),
-            if (type == 'sales' && !staffApp && saleInvoiceCanBeCancelled(data))
+            if (type == 'sales' && !staffApp && !historicalReadOnly && saleInvoiceCanBeCancelled(data))
               Padding(padding: const EdgeInsets.only(bottom: 6),
                 child: SizedBox(width: double.infinity, height: 38,
                   child: OutlinedButton.icon(
