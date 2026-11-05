@@ -1048,7 +1048,12 @@ class OfflineCacheNotice extends StatelessWidget {
       stream:db.collection('settings').doc('cash').snapshots(includeMetadataChanges:true),
       builder:(context,snapshot){
         final offline=snapshot.data?.metadata.isFromCache??false;
-        if(!offline && localCount==0)return const SizedBox.shrink();
+        if(!offline && localCount==0) return SizedBox(height:48,
+          child: Center(child: Text(
+            snapshot.hasError ? 'تعذر التأكد من حالة المزامنة'
+              : !snapshot.hasData ? 'جاري التحقق من المزامنة'
+              : 'المزامنة متصلة',
+            style: const TextStyle(color: Color(0xFF8D9FB5), fontSize: 11))));
         final pending=snapshot.data?.metadata.hasPendingWrites??false;
         return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
           stream:pendingSalesQuery(true).where('status',isEqualTo:'pending').snapshots(includeMetadataChanges:true),
@@ -1065,13 +1070,16 @@ class OfflineCacheNotice extends StatelessWidget {
                   : queued>0?'$queued عملية تنتظر المزامنة'
                   : pending?'تغييرات تنتظر المزامنة'
                   : 'غير متصل • بيانات محلية';
-                return Container(width:double.infinity,
+                return Container(width:double.infinity, height:48,
                   color:(pending||queued>0)?const Color(0xFF5A3B12):const Color(0xFF3B321C),
-                  padding:const EdgeInsets.symmetric(horizontal:12,vertical:5),
+                  padding:const EdgeInsets.symmetric(horizontal:12,vertical:3),
                   child:Row(children:[
-                    Expanded(child:Text(message,textAlign:TextAlign.center,
+                    Expanded(child:Text(message,textAlign:TextAlign.center,maxLines:1,
+                      overflow:TextOverflow.ellipsis,
                       style:const TextStyle(color:Colors.white,fontSize:12))),
                     if(localCount>0) IconButton(
+                      constraints:const BoxConstraints.tightFor(width:34,height:34),
+                      padding:EdgeInsets.zero,
                       tooltip:'إعادة محاولة مزامنة فواتير المدير (بعد توفر حصة Firebase)',
                       onPressed:()=>unawaited(retryManagerOfflineInvoices()),
                       icon:const Icon(Icons.sync,color:Colors.white,size:20)),
@@ -1392,7 +1400,7 @@ Widget vibDashboardMetricIcon(IconData symbol, Color accent) => Container(
   child: Icon(symbol, color: accent, size: 23),
 );
 
-class DashboardMetric extends StatelessWidget {
+class DashboardMetric extends StatefulWidget {
   final String label, collection, valueField;
   final String? actorId;
   final DateTime selectedDay;
@@ -1403,20 +1411,51 @@ class DashboardMetric extends StatelessWidget {
   const DashboardMetric({super.key, required this.label, required this.collection, required this.valueField,
     required this.accent, required this.icon, required this.selectedDay, this.fromDate, this.toDate,
     this.actorId, this.count = false});
-  @override
-  Widget build(BuildContext context) {
-    final start = _dashboardStartOfDay(fromDate ?? selectedDay);
-    final lastDay = _dashboardStartOfDay(toDate ?? selectedDay);
+
+  @override State<DashboardMetric> createState() => _DashboardMetricState();
+}
+
+class _DashboardMetricState extends State<DashboardMetric> {
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _metricStream;
+
+  @override void initState() {
+    super.initState();
+    _subscribe();
+  }
+
+  @override void didUpdateWidget(covariant DashboardMetric oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.collection != widget.collection || oldWidget.actorId != widget.actorId ||
+        oldWidget.selectedDay != widget.selectedDay ||
+        oldWidget.fromDate != widget.fromDate || oldWidget.toDate != widget.toDate) {
+      _subscribe();
+    }
+  }
+
+  void _subscribe() {
+    final start = _dashboardStartOfDay(widget.fromDate ?? widget.selectedDay);
+    final lastDay = _dashboardStartOfDay(widget.toDate ?? widget.selectedDay);
     final end = DateTime(lastDay.year, lastDay.month, lastDay.day + 1);
-    Query<Map<String, dynamic>> query = db.collection(collection);
-    if (actorId != null) {
-      query = query.where('actorId', isEqualTo: actorId);
+    Query<Map<String, dynamic>> query = db.collection(widget.collection);
+    if (widget.actorId != null) {
+      query = query.where('actorId', isEqualTo: widget.actorId);
     } else {
       query = query.where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
           .where('createdAt', isLessThan: Timestamp.fromDate(end));
     }
+    // Keep this listener stable when the parent account snapshot refreshes;
+    // restarting it on every build made the dashboard numbers flash.
+    _metricStream = query.snapshots();
+  }
+
+  @override Widget build(BuildContext context) {
+    final start = _dashboardStartOfDay(widget.fromDate ?? widget.selectedDay);
+    final lastDay = _dashboardStartOfDay(widget.toDate ?? widget.selectedDay);
+    final end = DateTime(lastDay.year, lastDay.month, lastDay.day + 1);
+    final label=widget.label, count=widget.count, valueField=widget.valueField;
+    final accent=widget.accent, icon=widget.icon;
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: query.snapshots(),
+      stream: _metricStream,
       builder: (context, snapshot) {
         final from = Timestamp.fromDate(start), until = Timestamp.fromDate(end);
         final docs = (snapshot.data?.docs ?? const []).where((doc) {
@@ -1427,7 +1466,9 @@ class DashboardMetric extends StatelessWidget {
           final value = doc.data()[valueField];
           return sum + (value is num ? value.toDouble() : 0);
         });
-        final value = snapshot.hasError ? '—' : count ? amount.toInt().toString() : amount.toStringAsFixed(2);
+        // Do not show a fake zero while the actual account numbers are loading.
+        final value = snapshot.hasError || !snapshot.hasData
+          ? '—' : count ? amount.toInt().toString() : amount.toStringAsFixed(2);
         return Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             vibDashboardMetricIcon(icon, accent),
@@ -1457,18 +1498,24 @@ ReceiptDayReport summarizeActiveCustomerReceipts(
   );
 }
 
-class DashboardCustomerPaymentsMetric extends StatelessWidget {
+class DashboardCustomerPaymentsMetric extends StatefulWidget {
   final DateTime from, to;
   const DashboardCustomerPaymentsMetric({super.key, required this.from, required this.to});
+  @override State<DashboardCustomerPaymentsMetric> createState() => _DashboardCustomerPaymentsMetricState();
+}
+
+class _DashboardCustomerPaymentsMetricState extends State<DashboardCustomerPaymentsMetric> {
+  late final Stream<QuerySnapshot<Map<String,dynamic>>> _cancelStream =
+    db.collection('voucherCancellations').where('type',isEqualTo:'receipt').snapshots(includeMetadataChanges:true);
+  late final Stream<QuerySnapshot<Map<String,dynamic>>> _receiptStream =
+    db.collection('receipts').snapshots(includeMetadataChanges:true);
 
   @override Widget build(BuildContext context) => Expanded(
     child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: db.collection('voucherCancellations')
-        .where('type', isEqualTo: 'receipt')
-        .snapshots(includeMetadataChanges: true),
+      stream: _cancelStream,
       builder: (context, cancellations) =>
         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: db.collection('receipts').snapshots(includeMetadataChanges: true),
+          stream: _receiptStream,
           builder: (context, receipts) {
             String amount = '—';
             String? warning;
@@ -1478,7 +1525,7 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
                   .map((d) => '${d.data()['originalId'] ?? ''}').toSet();
                 final rows = receipts.data!.docs.map((d) =>
                   <String, dynamic>{...d.data(), 'id': d.id}).toList();
-                final report = summarizeActiveCustomerReceipts(rows, cancelledIds, from, to);
+                final report = summarizeActiveCustomerReceipts(rows, cancelledIds, widget.from, widget.to);
                 amount = (report.totalCents / 100).toStringAsFixed(2);
                 if(cancellations.data!.metadata.isFromCache ||
                    receipts.data!.metadata.isFromCache ||
@@ -1517,24 +1564,36 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
 
 // Gross profit uses original item cost snapshots, not current catalog prices.
 // Negative salesReturns adjust both revenue and original cost.
-class DashboardGrossProfitMetric extends StatelessWidget {
+class DashboardGrossProfitMetric extends StatefulWidget {
   final DateTime from, to;
   const DashboardGrossProfitMetric({super.key, required this.from, required this.to});
+  @override State<DashboardGrossProfitMetric> createState() => _DashboardGrossProfitMetricState();
+}
 
-  @override Widget build(BuildContext context) {
-    final start = _dashboardStartOfDay(from);
-    final endDay = _dashboardStartOfDay(to);
+class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric> {
+  late Stream<QuerySnapshot<Map<String,dynamic>>> _salesStream, _returnsStream;
+  @override void initState() { super.initState(); _subscribe(); }
+  @override void didUpdateWidget(covariant DashboardGrossProfitMetric oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if(oldWidget.from!=widget.from || oldWidget.to!=widget.to) _subscribe();
+  }
+  void _subscribe() {
+    final start = _dashboardStartOfDay(widget.from);
+    final endDay = _dashboardStartOfDay(widget.to);
     final end = DateTime(endDay.year, endDay.month, endDay.day + 1);
-    final startStamp = Timestamp.fromDate(start);
-    final endStamp = Timestamp.fromDate(end);
+    final startStamp = Timestamp.fromDate(start), endStamp=Timestamp.fromDate(end);
+    _salesStream = db.collection('sales')
+      .where('createdAt',isGreaterThanOrEqualTo:startStamp)
+      .where('createdAt',isLessThan:endStamp).snapshots();
+    _returnsStream = db.collection('salesReturns')
+      .where('createdAt',isGreaterThanOrEqualTo:startStamp)
+      .where('createdAt',isLessThan:endStamp).snapshots();
+  }
+  @override Widget build(BuildContext context) {
     return Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: db.collection('sales')
-        .where('createdAt', isGreaterThanOrEqualTo: startStamp)
-        .where('createdAt', isLessThan: endStamp).snapshots(),
+      stream: _salesStream,
       builder: (context, salesSnap) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: db.collection('salesReturns')
-          .where('createdAt', isGreaterThanOrEqualTo: startStamp)
-          .where('createdAt', isLessThan: endStamp).snapshots(),
+        stream: _returnsStream,
         builder: (context, returnsSnap) {
           String value = '—';
           var hasMissingCost = false;
