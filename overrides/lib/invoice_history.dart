@@ -279,15 +279,22 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
           return timeB.compareTo(timeA);
         });
       }
+      final displayRows = sales
+          ? [for (final original in rows)
+              VibPurchaseGroup([VibPurchaseRow(original.id, original.data())])]
+          : vibGroupLegacyPurchases([
+              for (final original in rows)
+                VibPurchaseRow(original.id, original.data()),
+            ]);
       final totalCents=rows.fold<int>(0,(sum,row){final value=row.data()['total'];if(value is! num || !value.isFinite)return sum;return sum+(value*100).round();});
       return Column(children: [
         if (snapshot.data!.metadata.isFromCache) const Padding(
           padding: EdgeInsets.all(5),
           child: Text('البيانات من ذاكرة الجهاز؛ اتصل بالإنترنت للتأكد من السجل الكامل.', style: TextStyle(color: Colors.orangeAccent, fontSize: 12))),
-        Padding(padding: const EdgeInsets.only(bottom: 4), child: Text('الفواتير: ${rows.length} • الإجمالي: ${movementReportMoney(totalCents)}',
+        Padding(padding: const EdgeInsets.only(bottom: 4), child: Text('الفواتير: ${displayRows.length} • الإجمالي: ${movementReportMoney(totalCents)}',
           style: const TextStyle(color: gold, fontSize: 13, fontWeight: FontWeight.bold))),
-        Expanded(child: rows.isEmpty ? const Center(child:Text('لا توجد فواتير في الفترة المختارة')) : ListView.builder(itemCount: rows.length, itemBuilder: (context, index) {
-          final row = rows[index], data = row.data();
+        Expanded(child: displayRows.isEmpty ? const Center(child:Text('لا توجد فواتير في الفترة المختارة')) : ListView.builder(itemCount: displayRows.length, itemBuilder: (context, index) {
+          final row = displayRows[index], data = row.data;
           final dayColor = _invoiceDayColor(data);
           final number=invoiceDisplayNumber(widget.type,row.id,data);
           final party = '${data[sales ? 'customerName' : 'supplierName'] ?? ''}'.trim();
@@ -308,9 +315,11 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
                   style:TextStyle(color:dayColor,fontWeight:FontWeight.bold,fontSize:16)),
                 Text('رقم الفاتورة: ${invoiceDisplayNumber(widget.type,row.id,data)}'),
               ])),
-              subtitle: Text('${formatDate(data['createdAt'])}${sales ? ' • فرع: ${data['branchId'] ?? ''}' : ''}${cancelled ? '\nفاتورة ملغاة بالخطأ' : returned ? '\nفاتورة مرتجعة' : ''}'),
+              subtitle: Text('${formatDate(data['createdAt'])}${sales ? ' • فرع: ${data['branchId'] ?? ''}' : ''}${cancelled ? '\nفاتورة ملغاة بالخطأ' : returned ? '\nفاتورة مرتجعة' : ''}${row.grouped ? '\n${row.sources.length} أصناف قديمة مجمعة' : ''}'),
               trailing: Text('$total ج.م', style: TextStyle(color: returned ? Colors.redAccent : dayColor, fontWeight: FontWeight.bold)),
-              onTap: () => showInvoiceOverview(context, widget.type, row.id, initialData: data),
+              onTap: () => !sales && row.grouped
+                  ? showVibGroupedPurchase(context, row)
+                  : showInvoiceOverview(context, widget.type, row.id, initialData: data),
             ),
           );
         })),
