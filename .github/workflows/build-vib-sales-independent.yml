@@ -260,3 +260,60 @@ jobs:
           files: manager-files/VIB-SALES-MANAGER.apk
           overwrite_files: true
           make_latest: false
+
+  # Publish an installable APK only after tests, the release build, and
+  # package/version/signature checks all succeed.
+  publish-manager-login-fix:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/feat/manager-return-invoices-20261105'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download current manager build
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+
+      - name: Verify in-place update matches the installed manager
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.62-legacy-purchases-20261105 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT"
+          test -x "$SIGNER"
+          BADGING="$("$AAPT" dump badging "$NEW" | head -n 3)"
+          echo "$BADGING"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
+          grep -F "versionCode='8203'" <<< "$BADGING"
+          grep -F "versionName='0.2.63'" <<< "$BADGING"
+          "$SIGNER" verify --print-certs "$NEW" | tee /tmp/new-cert.txt
+          "$SIGNER" verify --print-certs "$OLD" | tee /tmp/old-cert.txt
+          NEW_SHA="$(grep -m1 'Signer #1 certificate SHA-256 digest:' /tmp/new-cert.txt | cut -d: -f2 | tr -d '[:space:]')"
+          OLD_SHA="$(grep -m1 'Signer #1 certificate SHA-256 digest:' /tmp/old-cert.txt | cut -d: -f2 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          echo "Update package, code and signing certificate match previous release"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+
+      - name: Publish standalone direct APK update
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.63-login-recovery-20261105
+          name: VIB Manager 0.2.63 — Login resilience hotfix
+          target_commitish: ${{ github.sha }}
+          body: |
+            APK مباشر لتحديث مدير VIB فوق 0.2.62 دون حذف بيانات الجهاز.
+            معالجة انتظار تسجيل الدخول، رسائل مهلة الاتصال، وتجنب تكرار تهيئة ترقيم الفواتير.
+            لا يمكن لهذا الإصدار تجاوز توقف مشروع Firebase عند نفاد الحصة؛ يلزم إصلاح Billing/Quota بصورة مستقلة.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
