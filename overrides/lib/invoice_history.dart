@@ -24,8 +24,9 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     final now = DateTime.now();
-    if (!sales && !staffApp) {
-      // The manager should never have to guess a date to find old purchases.
+    if (!staffApp) {
+      // Show complete legacy sales AND purchase invoices for the manager.
+      // Searching a date window alone excludes older imported receipts without createdAt.
       from = DateTime(2000, 1, 1);
       to = DateTime(now.year, now.month, now.day);
       _allDates = true;
@@ -216,13 +217,15 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
           ),
         ],
       ])),
-    if (!sales && !staffApp) Padding(
+    if (!staffApp) Padding(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
       child: SizedBox(width: double.infinity, child: OutlinedButton.icon(
-        key: const ValueKey('purchases-complete-history'),
+        key: ValueKey(sales ? 'sales-complete-history' : 'purchases-complete-history'),
         onPressed: showAllHistory,
         icon: const Icon(Icons.all_inbox_outlined, size: 18),
-        label: const Text('كل فواتير المشتريات من أول يوم — شاملة المؤرشفة'),
+        label: Text(sales
+            ? 'كل فواتير المبيعات من أول يوم — شاملة المؤرشفة'
+            : 'كل فواتير المشتريات من أول يوم — شاملة المؤرشفة'),
       ))),
     if (_allDates) const Padding(
       padding: EdgeInsets.symmetric(horizontal: 10, vertical: 3),
