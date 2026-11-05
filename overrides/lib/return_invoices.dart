@@ -35,7 +35,7 @@ List<Map<String, dynamic>> _vibReturnItems(Map<String, dynamic> data) {
 
 // Older returns saved before this screen did not have a snapshot of account
 // balances. Never make up a historical balance by using today's account amount.
-({double refunded, double debt}) _vibReturnSettlement(VibReturnInvoiceEntry entry) {
+({double refunded, double debt}) vibReturnSettlement(VibReturnInvoiceEntry entry) {
   final d = entry.data;
   if (d['cashRefund'] is num && d['debtReduction'] is num) {
     return (refunded: _vibReturnAmount(d['cashRefund']), debt: _vibReturnAmount(d['debtReduction']));
@@ -54,7 +54,7 @@ Future<Uint8List> createVibReturnInvoicePdf(
   final doc = pw.Document();
   final thermal = paper == '80';
   final data = entry.data;
-  final settled = _vibReturnSettlement(entry);
+  final settled = vibReturnSettlement(entry);
   final items = _vibReturnItems(data);
   final total = _vibReturnAmount(data['total']);
   final savedAfter = data['balanceAfter'];
@@ -123,6 +123,9 @@ Future<Uint8List> createVibReturnInvoicePdf(
           accountBalanceLabel(savedAfter, supplier: !entry.sales)),
     ] else
       line('الرصيد وقت تسجيل المرتجع', 'غير محفوظ في السجل القديم'),
+    if ((total - settled.debt - settled.refunded).abs() > 0.011)
+      line('فرق يحتاج مراجعة تسوية الفاتورة',
+          _vibReturnMoney(total - settled.debt - settled.refunded) + ' ج.م', strong: true),
     if (currentBalance != null) ...[
       pw.Divider(color: black),
       line('رصيد الحساب الحالي وقت الطباعة',
@@ -154,8 +157,8 @@ Future<Uint8List> createVibReturnInvoicePdf(
     doc.addPage(pw.MultiPage(
       pageFormat: PdfPageFormat.a4, theme: pageTheme,
       margin: const pw.EdgeInsets.all(16 * PdfPageFormat.mm),
-      build: (_) => [pw.Directionality(textDirection: pw.TextDirection.rtl,
-        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: parts))],
+      build: (_) => [for (final part in parts)
+        pw.Directionality(textDirection: pw.TextDirection.rtl, child: part)],
     ));
   }
   return doc.save();
@@ -220,7 +223,7 @@ class _ReturnInvoicesPageState extends State<ReturnInvoicesPage> {
     }
   }
   void _details(VibReturnInvoiceEntry entry) {
-    final d = entry.data, settlement = _vibReturnSettlement(entry);
+    final d = entry.data, settlement = vibReturnSettlement(entry);
     showModalBottomSheet<void>(context: context, isScrollControlled: true,
       showDragHandle: true, builder: (ctx) => SafeArea(child: Padding(
         padding: const EdgeInsets.all(16),
