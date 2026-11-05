@@ -244,11 +244,19 @@ class _ReturnInvoicesPageState extends State<ReturnInvoicesPage> {
           Text('قيمة المرتجع: ' + _vibReturnMoney(_vibReturnAmount(d['total'])) + ' ج.م',
               style: const TextStyle(fontWeight: FontWeight.bold)),
           Text('الخصم من الذمة: ' + _vibReturnMoney(settlement.debt) + ' ج.م'),
-          Text('النقدية المستردة/المردودة: ' + _vibReturnMoney(settlement.refunded) + ' ج.م'),
+          Text((entry.sales ? 'المبلغ المردود للعميل: ' : 'النقدية المستردة من المورد: ') +
+              _vibReturnMoney(settlement.refunded) + ' ج.م'),
           if (d['balanceAfter'] is num) Text('الرصيد بعد المرتجع: ' +
               _vibReturnMoney(d['balanceAfter'] as num) + ' ج.م'),
           if (d['balanceAfter'] is! num)
             const Text('الرصيد وقت المرتجع غير محفوظ في الفواتير القديمة.'),
+          FutureBuilder<double?>(future: _balance(entry), builder: (context, snapshot) {
+            if (snapshot.hasError) return const Text('تعذر قراءة رصيد الحساب الحالي');
+            if (!snapshot.hasData) return const SizedBox.shrink();
+            return Text('الرصيد الحالي وقت العرض: ' + _vibReturnMoney(snapshot.data!) +
+                ' ج.م • ' + accountBalanceLabel(snapshot.data!, supplier: !entry.sales),
+                style: const TextStyle(fontWeight: FontWeight.bold));
+          }),
           const SizedBox(height: 12),
           Wrap(alignment: WrapAlignment.center, spacing: 8, runSpacing: 6, children: [
             FilledButton.icon(onPressed: () => _print(entry, 'a4'),
