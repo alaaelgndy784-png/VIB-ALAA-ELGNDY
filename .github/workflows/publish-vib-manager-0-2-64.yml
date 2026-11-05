@@ -1,0 +1,65 @@
+name: Direct VIB Manager 0.2.64 APK update
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feat/manager-return-invoices-20261105']
+    paths:
+      - '.github/workflows/publish-vib-manager-0-2-64.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download successful VIB 0.2.64 manager APK and previous version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p manager previous
+          gh run download 42041817286 --repo "$GITHUB_REPOSITORY" --name VIB-SALES-MANAGER-APK --dir manager
+          gh release download vib-manager-0.2.63-login-recovery-20261105 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          test -s manager/VIB-SALES-MANAGER.apk
+
+      - name: Verify APK version package and original signature
+        run: |
+          set -euo pipefail
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          BADGING="$("$AAPT" dump badging "$NEW" | head -n 3)"
+          echo "$BADGING"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
+          grep -F "versionCode='8204'" <<< "$BADGING"
+          grep -F "versionName='0.2.64'" <<< "$BADGING"
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/new-cert
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/old-cert
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-cert | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+          echo "Manager in-place update confirmed; same signer and version is newer."
+
+      - name: Publish direct installer for phone
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=vib-manager-0.2.64-stable-dashboard-20261105
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" manager/VIB-SALES-MANAGER.apk manager/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" manager/VIB-SALES-MANAGER.apk manager/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "VIB Manager 0.2.64 - Stable home screen" \
+              --notes "Direct signed Android manager update. Stable-height sync notice and memoized dashboard data subscriptions reduce screen and number flicker on initial app launch. Does not modify invoices, cash balances, or inventory. Does not resolve an exhausted Firebase billing quota. Install on top of version 0.2.63 without clearing app data." \
+              --latest=false
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets,url

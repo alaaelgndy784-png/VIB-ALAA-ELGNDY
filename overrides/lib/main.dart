@@ -52,6 +52,7 @@ part 'data_maintenance.dart';
 part 'manager_ringtone.dart';
 part 'online_payments.dart';
 part 'invoice_history.dart';
+part 'legacy_purchase_groups.dart';
 part 'invoice_serials.dart';
 part 'invoice_a4.dart';
 part 'invoice_parties.dart';
@@ -68,6 +69,7 @@ part 'voucher_cancellations.dart';
 part 'sales_invoice_cancellations.dart';
 part 'employee_visits.dart';
 part 'employee_collections.dart';
+part 'return_invoices.dart';
 
 // Report filters use the existing invoice and movement records.
 
@@ -89,6 +91,8 @@ bool staffApp = false;
 bool _managerBiometricVerifiedForSignIn = false;
 final saleCostVisible = ValueNotifier<bool>(false);
 final salePriceEditable = ValueNotifier<bool>(false);
+// Avoid duplicate server work every time the user stream emits an update.
+final Set<String> _vibPreparedInvoiceSeriesUids = <String>{};
 Future<FirebaseOptions> _firebaseOptionsForThisApp() async {
   final packageName = (await PackageInfo.fromPlatform()).packageName;
   staffApp = packageName == 'com.alaa.vibsales.staffscan';
@@ -373,8 +377,17 @@ class Gate extends StatelessWidget {
       return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: db.collection('users').doc(auth.data!.uid).snapshots(includeMetadataChanges: true),
         builder: (context, user) {
-          if (user.hasError) return const Center(child: Text('تعذر تحميل الحساب'));
-          if (!user.hasData) return const Center(child: CircularProgressIndicator());
+          if (user.hasError && !user.hasData) return const Center(child: Padding(
+            padding: EdgeInsets.all(24), child: Text(
+              'تعذر تحميل صلاحيات الحساب من Firebase. قد تكون الحصة انتهت أو الاتصال ضعيفًا.\n'
+              'راجع حصة مشروع vib-sales، ولا تمسح بيانات التطبيق.',
+              textAlign: TextAlign.center)));
+          if (!user.hasData) return const Center(child: Column(
+            mainAxisSize: MainAxisSize.min, children: [
+              CircularProgressIndicator(), SizedBox(height: 14),
+              Padding(padding: EdgeInsets.symmetric(horizontal: 20), child: Text(
+                'جاري فتح بيانات الحساب. لو استمر الانتظار، راجع اتصال Firebase أو حصة قاعدة البيانات.',
+                textAlign: TextAlign.center))]));
           final data = user.data!.data();
           if (data == null || data['active'] != true || !['owner', 'employee'].contains(data['role'])) {
             return Scaffold(body: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -425,7 +438,8 @@ class Gate extends StatelessWidget {
           if (data['role'] == 'owner') {
             // Use the cached profile to open immediately offline. Prepare legacy invoice
             // numbering only after Firestore confirms it is online, without blocking UI.
-            if (!user.data!.metadata.isFromCache) {
+            if (!user.data!.metadata.isFromCache &&
+                _vibPreparedInvoiceSeriesUids.add(auth.data!.uid)) {
               unawaited(initializeRequestedInvoiceSeries().catchError((Object error) {
                 if (!isTemporaryFirestoreOffline(error)) {
                   debugPrint('تعذر تجهيز تسلسل الفواتير في الخلفية: $error');
@@ -506,9 +520,14 @@ class _OwnerSecurityState extends State<OwnerSecurity> {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user?.email == null) throw StateError('لا يوجد حساب مدير');
-      await user!.reauthenticateWithCredential(EmailAuthProvider.credential(email: user.email!, password: password.text));
+      await user!.reauthenticateWithCredential(EmailAuthProvider.credential(email: user.email!, password: password.text))
+        .timeout(const Duration(seconds: 28));
       if (mounted) await _unlockManager();
-    } catch (_) { if (mounted) setState(() => message = 'الرقم السري غير صحيح'); }
+    } catch (e) { if (mounted) setState(() => message =
+      e is TimeoutException || (e is FirebaseAuthException &&
+        (e.code == 'network-request-failed' || e.code == 'too-many-requests'))
+      ? 'خدمة التأكد من الرقم السري غير متاحة حاليًا. ده مش معناه إن الرقم السري غلط؛ افتح بالبصمة لو متاحة.'
+      : 'تعذر فتح الحساب بالرقم السري؛ راجع الرقم أو استخدم البصمة'); }
     finally { if (mounted) setState(() => busy = false); }
   }
   @override Widget build(BuildContext context) {
@@ -586,12 +605,17 @@ class _LoginPageState extends State<LoginPage> {
       _managerBiometricVerifiedForSignIn = true;
       try {
         await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: emailFor(savedPhone), password: savedPin);
+          email: emailFor(savedPhone), password: savedPin)
+          .timeout(const Duration(seconds: 28));
       } catch (_) { _managerBiometricVerifiedForSignIn = false; rethrow; }
     } catch (e) {
       _managerBiometricVerifiedForSignIn = false;
       if (mounted) setState(() { showManualLogin = true;
-        error = 'تعذر الدخول بالبصمة؛ استخدم رقم الهاتف والرقم السري'; });
+        error = e is TimeoutException
+          ? 'خدمة الدخول اتأخرت في الرد. افتح البرنامج تاني أو استخدم رقم الهاتف؛ ده مش معناه إن الرقم السري غلط.'
+          : (e is FirebaseAuthException && (e.code == 'network-request-failed' || e.code == 'too-many-requests'))
+            ? 'خدمة تسجيل الدخول غير متاحة حاليًا. جرّب بعد تحسن الاتصال ولا تمسح بيانات التطبيق.'
+            : 'تعذر الدخول بالبصمة؛ استخدم رقم الهاتف والرقم السري'; });
     } finally { if (mounted) setState(() => biometricBusy = false); }
   }
 
@@ -643,7 +667,8 @@ class _LoginPageState extends State<LoginPage> {
         });
       } else {
         await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: emailFor(number), password: password);
+          email: emailFor(number), password: password)
+          .timeout(const Duration(seconds: 28));
       }
       await _secure.write(key: 'vib_saved_phone', value: number);
       await _secure.write(key: 'vib_saved_pin', value: password);
@@ -654,11 +679,16 @@ class _LoginPageState extends State<LoginPage> {
           debugPrint('VIB login chime failed: $soundError');
         }
       }
+    } on TimeoutException catch (_) {
+      if (mounted) setState(() => error =
+        'مهلة اتصال بخدمة تسجيل الدخول بعد 28 ثانية. ده مش معناه إن الرقم السري غلط. راجع اتصال Firebase ثم افتح التطبيق تاني، وماتمسحش بياناته.');
     } on FirebaseAuthException catch (e) {
       final message = switch (e.code) {
         'user-not-found' || 'invalid-credential' => 'الرقم أو الرقم السري غير صحيح',
         'email-already-in-use' => 'الرقم مسجل بالفعل؛ اضغط دخول',
         'weak-password' => 'اختر رقمًا سريًا أقوى',
+        'network-request-failed' => 'تعذر الاتصال بخدمة الدخول. راجع الإنترنت وحالة Firebase.',
+        'too-many-requests' => 'تم إيقاف المحاولات مؤقتًا بسبب كثرة الطلبات. حاول لاحقًا، ولا تغيّر كلمة السر.',
         _ => e.message ?? 'تعذر تسجيل الدخول',
       };
       if (mounted) setState(() => error = message);
@@ -1018,7 +1048,12 @@ class OfflineCacheNotice extends StatelessWidget {
       stream:db.collection('settings').doc('cash').snapshots(includeMetadataChanges:true),
       builder:(context,snapshot){
         final offline=snapshot.data?.metadata.isFromCache??false;
-        if(!offline && localCount==0)return const SizedBox.shrink();
+        if(!offline && localCount==0) return SizedBox(height:48,
+          child: Center(child: Text(
+            snapshot.hasError ? 'تعذر التأكد من حالة المزامنة'
+              : !snapshot.hasData ? 'جاري التحقق من المزامنة'
+              : 'المزامنة متصلة',
+            style: const TextStyle(color: Color(0xFF8D9FB5), fontSize: 11))));
         final pending=snapshot.data?.metadata.hasPendingWrites??false;
         return StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
           stream:pendingSalesQuery(true).where('status',isEqualTo:'pending').snapshots(includeMetadataChanges:true),
@@ -1035,13 +1070,16 @@ class OfflineCacheNotice extends StatelessWidget {
                   : queued>0?'$queued عملية تنتظر المزامنة'
                   : pending?'تغييرات تنتظر المزامنة'
                   : 'غير متصل • بيانات محلية';
-                return Container(width:double.infinity,
+                return Container(width:double.infinity, height:48,
                   color:(pending||queued>0)?const Color(0xFF5A3B12):const Color(0xFF3B321C),
-                  padding:const EdgeInsets.symmetric(horizontal:12,vertical:5),
+                  padding:const EdgeInsets.symmetric(horizontal:12,vertical:3),
                   child:Row(children:[
-                    Expanded(child:Text(message,textAlign:TextAlign.center,
+                    Expanded(child:Text(message,textAlign:TextAlign.center,maxLines:1,
+                      overflow:TextOverflow.ellipsis,
                       style:const TextStyle(color:Colors.white,fontSize:12))),
                     if(localCount>0) IconButton(
+                      constraints:const BoxConstraints.tightFor(width:34,height:34),
+                      padding:EdgeInsets.zero,
                       tooltip:'إعادة محاولة مزامنة فواتير المدير (بعد توفر حصة Firebase)',
                       onPressed:()=>unawaited(retryManagerOfflineInvoices()),
                       icon:const Icon(Icons.sync,color:Colors.white,size:20)),
@@ -1362,7 +1400,7 @@ Widget vibDashboardMetricIcon(IconData symbol, Color accent) => Container(
   child: Icon(symbol, color: accent, size: 23),
 );
 
-class DashboardMetric extends StatelessWidget {
+class DashboardMetric extends StatefulWidget {
   final String label, collection, valueField;
   final String? actorId;
   final DateTime selectedDay;
@@ -1373,20 +1411,51 @@ class DashboardMetric extends StatelessWidget {
   const DashboardMetric({super.key, required this.label, required this.collection, required this.valueField,
     required this.accent, required this.icon, required this.selectedDay, this.fromDate, this.toDate,
     this.actorId, this.count = false});
-  @override
-  Widget build(BuildContext context) {
-    final start = _dashboardStartOfDay(fromDate ?? selectedDay);
-    final lastDay = _dashboardStartOfDay(toDate ?? selectedDay);
+
+  @override State<DashboardMetric> createState() => _DashboardMetricState();
+}
+
+class _DashboardMetricState extends State<DashboardMetric> {
+  late Stream<QuerySnapshot<Map<String, dynamic>>> _metricStream;
+
+  @override void initState() {
+    super.initState();
+    _subscribe();
+  }
+
+  @override void didUpdateWidget(covariant DashboardMetric oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.collection != widget.collection || oldWidget.actorId != widget.actorId ||
+        oldWidget.selectedDay != widget.selectedDay ||
+        oldWidget.fromDate != widget.fromDate || oldWidget.toDate != widget.toDate) {
+      _subscribe();
+    }
+  }
+
+  void _subscribe() {
+    final start = _dashboardStartOfDay(widget.fromDate ?? widget.selectedDay);
+    final lastDay = _dashboardStartOfDay(widget.toDate ?? widget.selectedDay);
     final end = DateTime(lastDay.year, lastDay.month, lastDay.day + 1);
-    Query<Map<String, dynamic>> query = db.collection(collection);
-    if (actorId != null) {
-      query = query.where('actorId', isEqualTo: actorId);
+    Query<Map<String, dynamic>> query = db.collection(widget.collection);
+    if (widget.actorId != null) {
+      query = query.where('actorId', isEqualTo: widget.actorId);
     } else {
       query = query.where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
           .where('createdAt', isLessThan: Timestamp.fromDate(end));
     }
+    // Keep this listener stable when the parent account snapshot refreshes;
+    // restarting it on every build made the dashboard numbers flash.
+    _metricStream = query.snapshots();
+  }
+
+  @override Widget build(BuildContext context) {
+    final start = _dashboardStartOfDay(widget.fromDate ?? widget.selectedDay);
+    final lastDay = _dashboardStartOfDay(widget.toDate ?? widget.selectedDay);
+    final end = DateTime(lastDay.year, lastDay.month, lastDay.day + 1);
+    final label=widget.label, count=widget.count, valueField=widget.valueField;
+    final accent=widget.accent, icon=widget.icon;
     return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: query.snapshots(),
+      stream: _metricStream,
       builder: (context, snapshot) {
         final from = Timestamp.fromDate(start), until = Timestamp.fromDate(end);
         final docs = (snapshot.data?.docs ?? const []).where((doc) {
@@ -1397,7 +1466,9 @@ class DashboardMetric extends StatelessWidget {
           final value = doc.data()[valueField];
           return sum + (value is num ? value.toDouble() : 0);
         });
-        final value = snapshot.hasError ? '—' : count ? amount.toInt().toString() : amount.toStringAsFixed(2);
+        // Do not show a fake zero while the actual account numbers are loading.
+        final value = snapshot.hasError || !snapshot.hasData
+          ? '—' : count ? amount.toInt().toString() : amount.toStringAsFixed(2);
         return Expanded(child: Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
             vibDashboardMetricIcon(icon, accent),
@@ -1427,18 +1498,24 @@ ReceiptDayReport summarizeActiveCustomerReceipts(
   );
 }
 
-class DashboardCustomerPaymentsMetric extends StatelessWidget {
+class DashboardCustomerPaymentsMetric extends StatefulWidget {
   final DateTime from, to;
   const DashboardCustomerPaymentsMetric({super.key, required this.from, required this.to});
+  @override State<DashboardCustomerPaymentsMetric> createState() => _DashboardCustomerPaymentsMetricState();
+}
+
+class _DashboardCustomerPaymentsMetricState extends State<DashboardCustomerPaymentsMetric> {
+  late final Stream<QuerySnapshot<Map<String,dynamic>>> _cancelStream =
+    db.collection('voucherCancellations').where('type',isEqualTo:'receipt').snapshots(includeMetadataChanges:true);
+  late final Stream<QuerySnapshot<Map<String,dynamic>>> _receiptStream =
+    db.collection('receipts').snapshots(includeMetadataChanges:true);
 
   @override Widget build(BuildContext context) => Expanded(
     child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: db.collection('voucherCancellations')
-        .where('type', isEqualTo: 'receipt')
-        .snapshots(includeMetadataChanges: true),
+      stream: _cancelStream,
       builder: (context, cancellations) =>
         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-          stream: db.collection('receipts').snapshots(includeMetadataChanges: true),
+          stream: _receiptStream,
           builder: (context, receipts) {
             String amount = '—';
             String? warning;
@@ -1448,7 +1525,7 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
                   .map((d) => '${d.data()['originalId'] ?? ''}').toSet();
                 final rows = receipts.data!.docs.map((d) =>
                   <String, dynamic>{...d.data(), 'id': d.id}).toList();
-                final report = summarizeActiveCustomerReceipts(rows, cancelledIds, from, to);
+                final report = summarizeActiveCustomerReceipts(rows, cancelledIds, widget.from, widget.to);
                 amount = (report.totalCents / 100).toStringAsFixed(2);
                 if(cancellations.data!.metadata.isFromCache ||
                    receipts.data!.metadata.isFromCache ||
@@ -1487,24 +1564,36 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
 
 // Gross profit uses original item cost snapshots, not current catalog prices.
 // Negative salesReturns adjust both revenue and original cost.
-class DashboardGrossProfitMetric extends StatelessWidget {
+class DashboardGrossProfitMetric extends StatefulWidget {
   final DateTime from, to;
   const DashboardGrossProfitMetric({super.key, required this.from, required this.to});
+  @override State<DashboardGrossProfitMetric> createState() => _DashboardGrossProfitMetricState();
+}
 
-  @override Widget build(BuildContext context) {
-    final start = _dashboardStartOfDay(from);
-    final endDay = _dashboardStartOfDay(to);
+class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric> {
+  late Stream<QuerySnapshot<Map<String,dynamic>>> _salesStream, _returnsStream;
+  @override void initState() { super.initState(); _subscribe(); }
+  @override void didUpdateWidget(covariant DashboardGrossProfitMetric oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if(oldWidget.from!=widget.from || oldWidget.to!=widget.to) _subscribe();
+  }
+  void _subscribe() {
+    final start = _dashboardStartOfDay(widget.from);
+    final endDay = _dashboardStartOfDay(widget.to);
     final end = DateTime(endDay.year, endDay.month, endDay.day + 1);
-    final startStamp = Timestamp.fromDate(start);
-    final endStamp = Timestamp.fromDate(end);
+    final startStamp = Timestamp.fromDate(start), endStamp=Timestamp.fromDate(end);
+    _salesStream = db.collection('sales')
+      .where('createdAt',isGreaterThanOrEqualTo:startStamp)
+      .where('createdAt',isLessThan:endStamp).snapshots();
+    _returnsStream = db.collection('salesReturns')
+      .where('createdAt',isGreaterThanOrEqualTo:startStamp)
+      .where('createdAt',isLessThan:endStamp).snapshots();
+  }
+  @override Widget build(BuildContext context) {
     return Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-      stream: db.collection('sales')
-        .where('createdAt', isGreaterThanOrEqualTo: startStamp)
-        .where('createdAt', isLessThan: endStamp).snapshots(),
+      stream: _salesStream,
       builder: (context, salesSnap) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: db.collection('salesReturns')
-          .where('createdAt', isGreaterThanOrEqualTo: startStamp)
-          .where('createdAt', isLessThan: endStamp).snapshots(),
+        stream: _returnsStream,
         builder: (context, returnsSnap) {
           String value = '—';
           var hasMissingCost = false;
@@ -3388,6 +3477,7 @@ class Management extends StatelessWidget {
     option(context, 'عرض فواتير المشتريات', Icons.shopping_bag_outlined, const InvoiceHistoryPage(type: 'purchases')),
     option(context, 'إرجاع فاتورة مبيعات', Icons.assignment_return, const InvoiceReturnPage(type: 'sales')),
     option(context, 'إرجاع فاتورة مشتريات', Icons.assignment_return_outlined, const InvoiceReturnPage(type: 'purchases')),
+    option(context, 'فواتير المرتجع – طباعة وإرسال', Icons.receipt_long, const ReturnInvoicesPage(), highlight: true),
     option(context, 'جيديا — روابط الدفع بالكارت', Icons.credit_card, const GeideaPayments()),
     option(context, 'الصندوق', Icons.account_balance_wallet_outlined, const CashBox()),
     option(context, 'المصروفات', Icons.receipt_long_outlined, const Expenses()),
@@ -4075,15 +4165,18 @@ class _PurchasesState extends State<Purchases>{
         if (snap.hasError) return const Center(child: Text('تعذر تحميل المشتريات'));
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final rows = snap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
+        final groupedRows = vibGroupLegacyPurchases([
+          for (final row in rows) VibPurchaseRow(row.id, row.data()),
+        ]);
         final hasOlder = snap.data!.docs.length >= _visibleLimit;
         final loading = snap.connectionState == ConnectionState.waiting;
         if (rows.isEmpty && !hasOlder) return const Center(child: Text('لا توجد فواتير مشتريات بعد'));
         return ListView.builder(
-          itemCount: rows.length + 1,
+          itemCount: groupedRows.length + 1,
           itemBuilder: (context, index) {
-          if (index == rows.length) {
+          if (index == groupedRows.length) {
             return Padding(padding: const EdgeInsets.all(16), child: Column(children: [
-              Text('المعروض: ${rows.length} فاتورة مشتريات'),
+              Text('المعروض: ${groupedRows.length} فاتورة مشتريات من ${rows.length} سجل محفوظ'),
               if (hasOlder || loading) OutlinedButton.icon(
                 onPressed: loading ? null : _showOlderPurchases,
                 icon: loading ? const SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2)) : const Icon(Icons.expand_more),
@@ -4091,8 +4184,8 @@ class _PurchasesState extends State<Purchases>{
               ) else const Text('نهاية فواتير المشتريات'),
             ]));
           }
-          final d = rows[index];
-          final p = d.data();
+          final d = groupedRows[index];
+          final p = d.data;
           return Card(child: ListTile(
             leading: const Icon(Icons.receipt_long_outlined, color: gold),
             title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -4100,9 +4193,9 @@ class _PurchasesState extends State<Purchases>{
                 style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
               Text('رقم الفاتورة: ${invoiceDisplayNumber('purchases',d.id,p)}'),
             ]),
-            subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),
+            subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}${d.grouped ? ' • ${d.sources.length} أصناف أصلية مجمعة' : ''}'),
             trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
-            onTap: () => showInvoiceOverview(context, 'purchases', d.id, initialData: p),
+            onTap: () => showVibGroupedPurchase(context, d),
           ));
         });
       },
@@ -7722,6 +7815,7 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
         'reason': 'رد قيمة صنف من فاتورة مبيعات', 'createdAt': now, 'actorId': actor,
       });
     }
+    final historicalCustomerBalance = (customerSnap?.data()?['balance'] as num?)?.toDouble();
     final newReturn = {
       'sourceInvoiceId': id, 'returnType': 'partial', 'sourceItemIndex': sourceItemIndex,
       'items': [{'sourceItemIndex': sourceItemIndex, 'productId': productId,
@@ -7732,6 +7826,9 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
         'lineTotal': amountCents / 100}],
       'total': amountCents / 100, 'cashRefund': cashRefundCents / 100,
       'debtReduction': debtReductionCents / 100, 'branchId': branchId,
+      if (historicalCustomerBalance != null) 'balanceBefore': historicalCustomerBalance,
+      if (historicalCustomerBalance != null) 'balanceAfter':
+        (((historicalCustomerBalance * 100).round() - debtReductionCents) / 100),
       'customerId': customerId, 'customerName': d['customerName'],
       'invoiceNumber': d['invoiceNumber'], 'internalNumber': d['internalNumber'],
       'invoiceBarcode': d['invoiceBarcode'], 'createdAt': now, 'actorId': actor,
@@ -7828,7 +7925,7 @@ Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantit
     if(debtReduction>0){tx.update(supplierRef,{'balance':supplierAfter,'updatedAt':now});tx.set(db.collection('accountMovements').doc(),{'accountType':'suppliers','accountId':supplierId,'accountName':d['supplierName'],'kind':'purchase_return','amount':debtReduction/100,'balanceBefore':supplierBefore,'balanceAfter':supplierAfter,'referenceId':returnRef.id,'createdAt':now,'actorId':actor});}
     final cashBefore=(cashSnap.data()?['balance'] as num?)?.toDouble()??0,cashAfter=((cashBefore*100).round()+cashRefund)/100;
     if(cashRefund>0){tx.set(cashRef,{'balance':cashAfter,'updatedAt':now},SetOptions(merge:true));tx.set(db.collection('accountMovements').doc(),{'accountType':'cash','kind':'purchase_return','amount':cashRefund/100,'delta':cashRefund/100,'balanceBefore':cashBefore,'balanceAfter':cashAfter,'accountId':supplierId,'accountName':d['supplierName'],'referenceId':returnRef.id,'reason':'استرداد نقدية مرتجع صنف مشتريات','actorId':actor,'createdAt':now});}
-    tx.set(returnRef,{'sourceInvoiceId':id,'returnType':'partial','sourceItemIndex':sourceItemIndex,'sourceLineKey':'$sourceItemIndex','sourceQuantity':quantity,'items':[{'sourceItemIndex':sourceItemIndex,'productId':productId,'productName':item['productName'],'quantity':quantity,'unitCost':item['unitCost']??0,'lineTotal':amount/100}],'total':amount/100,'cashRefund':cashRefund/100,'debtReduction':debtReduction/100,'supplierId':supplierId,'supplierName':d['supplierName'],'invoiceNumber':d['invoiceNumber'],'internalNumber':d['internalNumber'],'invoiceBarcode':d['invoiceBarcode'],'createdAt':now,'actorId':actor});
+    tx.set(returnRef,{'sourceInvoiceId':id,'returnType':'partial','sourceItemIndex':sourceItemIndex,'sourceLineKey':'$sourceItemIndex','sourceQuantity':quantity,'items':[{'sourceItemIndex':sourceItemIndex,'productId':productId,'productName':item['productName'],'quantity':quantity,'unitCost':item['unitCost']??0,'lineTotal':amount/100}],'total':amount/100,'cashRefund':cashRefund/100,'debtReduction':debtReduction/100,'balanceBefore':supplierBefore,'balanceAfter':supplierAfter,'supplierId':supplierId,'supplierName':d['supplierName'],'invoiceNumber':d['invoiceNumber'],'internalNumber':d['internalNumber'],'invoiceBarcode':d['invoiceBarcode'],'createdAt':now,'actorId':actor});
     final quantities=Map<String,dynamic>.from(rawReturned is Map?rawReturned:{});quantities['$sourceItemIndex']=already+quantity;
     final allReturned=items.asMap().entries.every((entry) {
       final original=(entry.value['quantity'] as num?)?.toInt()??0;
@@ -8084,8 +8181,13 @@ Future<void> returnInvoice(String type, String id,
         });
       }
 
+      final balanceAtReturn = (customerSnap?.data()?['balance'] as num?)?.toDouble();
       tx.set(ret, {...d, 'sourceInvoiceId': id,
         'returnType': cancellingSale ? 'cancellation' : 'full',
+        'cashRefund': paid, 'debtReduction': due,
+        if (balanceAtReturn != null) 'balanceBefore': balanceAtReturn,
+        if (balanceAtReturn != null) 'balanceAfter':
+          (((balanceAtReturn * 100).round() - (due * 100).round()) / 100),
         if (cancellingSale) 'cancellationReason': cancellationReason,
         if (cancellingSale) 'cancelledReceiptIds': cancelledReceiptIds,
         'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
@@ -8143,7 +8245,10 @@ Future<void> returnInvoice(String type, String id,
         tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'purchase_return', 'amount': refund, 'delta': refund, 'balanceBefore': cashBefore, 'balanceAfter': cashAfter, 'accountId': d['supplierId'], 'accountName': d['supplierName'], 'referenceId': ret.id, 'reason': 'استرداد نقدية مرتجع مشتريات', 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
       }
       tx.update(supplierRef, {'balance': supplierAfter, 'updatedAt': now});
-      tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+      tx.set(ret, {...d, 'sourceInvoiceId': id, 'returnType': 'full',
+        'cashRefund': refund, 'debtReduction': due,
+        'balanceBefore': oldBalance, 'balanceAfter': supplierAfter,
+        'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
       tx.set(db.collection('accountMovements').doc(), {
         'accountType': 'suppliers',
         'accountId': d['supplierId'],

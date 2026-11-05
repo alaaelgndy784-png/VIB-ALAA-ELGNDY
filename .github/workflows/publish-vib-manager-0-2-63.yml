@@ -1,0 +1,65 @@
+name: Publish direct VIB Manager 0.2.63 login hotfix APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feat/manager-return-invoices-20261105']
+    paths:
+      - '.github/workflows/publish-vib-manager-0-2-63.yml'
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish-direct-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download passed 0.2.63 manager build artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p manager previous
+          gh run download 42029337305 --repo "$GITHUB_REPOSITORY" --name VIB-SALES-MANAGER-APK --dir manager
+          gh release download vib-manager-0.2.62-legacy-purchases-20261105 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          test -s manager/VIB-SALES-MANAGER.apk
+
+      - name: Validate APK identity signing and version
+        run: |
+          set -euo pipefail
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          unzip -t "$NEW" > /dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          BADGING="$("$AAPT" dump badging "$NEW" | head -n 3)"
+          echo "$BADGING"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
+          grep -F "versionCode='8203'" <<< "$BADGING"
+          grep -F "versionName='0.2.63'" <<< "$BADGING"
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/new-cert.txt
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/old-cert.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-cert.txt | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          echo "Success: same manager package, higher version and same signing certificate: $NEW_SHA"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+
+      - name: Publish verified direct APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=vib-manager-0.2.63-login-recovery-20261105
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" manager/VIB-SALES-MANAGER.apk manager/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" manager/VIB-SALES-MANAGER.apk manager/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "VIB Manager 0.2.63 - Login timeout recovery" \
+              --notes "Direct in-place Android APK update. Fixes indefinite login waits and duplicate server preparation; distinguishes network timeout from wrong password. Firebase billing/quota failures must still be fixed on Google Cloud. Do not clear device app data." \
+              --latest=false
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets,url

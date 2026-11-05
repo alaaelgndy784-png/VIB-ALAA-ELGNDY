@@ -153,7 +153,7 @@ jobs:
       - name: Verify invoice PDF rendering
         if: matrix.app == 'manager'
         working-directory: VIB-SALES-INDEPENDENT
-        run: flutter test test/store_movement_test.dart test/receipt_voucher_test.dart test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart test/chat_alerts_test.dart test/approval_alerts_test.dart test/archived_purchase_view_test.dart test/return_quota_message_test.dart test/dashboard_metric_icons_test.dart test/product_import_test.dart test/inventory_tools_test.dart test/inventory_rows_test.dart test/invoice_serial_core_test.dart test/invoice_parties_test.dart test/reports_test.dart test/pending_sale_data_test.dart test/pending_sale_review_test.dart test/customer_sales_report_test.dart test/sales_invoice_cancellations_test.dart test/product_invoice_movement_test.dart test/product_movement_layout_test.dart test/payment_receipt_scope_test.dart
+        run: flutter test test/store_movement_test.dart test/receipt_voucher_test.dart test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart test/chat_alerts_test.dart test/approval_alerts_test.dart test/archived_purchase_view_test.dart test/return_quota_message_test.dart test/dashboard_metric_icons_test.dart test/product_import_test.dart test/inventory_tools_test.dart test/inventory_rows_test.dart test/invoice_serial_core_test.dart test/invoice_parties_test.dart test/reports_test.dart test/pending_sale_data_test.dart test/pending_sale_review_test.dart test/customer_sales_report_test.dart test/sales_invoice_cancellations_test.dart test/product_invoice_movement_test.dart test/product_movement_layout_test.dart test/payment_receipt_scope_test.dart test/legacy_purchase_groups_test.dart test/return_invoice_test.dart
 
       - name: Upload invoice PDF previews
         if: matrix.app == 'manager'
@@ -170,7 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4200 --build-name=0.2.60
+          sed -i -E 's/versionCode = .*/versionCode = 6204/; s/versionName = .*/versionName = "0.2.64"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 6204' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.64"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=6204 --build-name=0.2.64
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -256,4 +259,61 @@ jobs:
           body: "آخر نسخة مباشرة من تطبيق VIB Manager."
           files: manager-files/VIB-SALES-MANAGER.apk
           overwrite_files: true
+          make_latest: false
+
+  # Publish an installable APK only after tests, the release build, and
+  # package/version/signature checks all succeed.
+  publish-manager-login-fix:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/feat/manager-return-invoices-20261105'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download current manager build
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+
+      - name: Verify in-place update matches the installed manager
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.63-login-recovery-20261105 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT"
+          test -x "$SIGNER"
+          BADGING="$("$AAPT" dump badging "$NEW" | head -n 3)"
+          echo "$BADGING"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
+          grep -F "versionCode='8204'" <<< "$BADGING"
+          grep -F "versionName='0.2.64'" <<< "$BADGING"
+          "$SIGNER" verify --print-certs "$NEW" | tee /tmp/new-cert.txt
+          "$SIGNER" verify --print-certs "$OLD" | tee /tmp/old-cert.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-cert.txt | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          echo "Update package, code and signing certificate match previous release"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+
+      - name: Publish standalone direct APK update
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.64-stable-dashboard-20261105
+          name: VIB Manager 0.2.64 — Stable dashboard on launch
+          target_commitish: ${{ github.sha }}
+          body: |
+            APK مباشر لتحديث مدير VIB فوق 0.2.63 دون حذف بيانات الجهاز.
+            تثبيت شريط المزامنة في مكان واحد، ومنع وميض أرقام الملخص والاشتراكات المتكررة وقت الفتح، مع الاحتفاظ بإصلاحات الدخول السابقة.
+            لا يمكن لهذا الإصدار تجاوز توقف مشروع Firebase عند نفاد الحصة؛ يلزم إصلاح Billing/Quota بصورة مستقلة.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
           make_latest: false

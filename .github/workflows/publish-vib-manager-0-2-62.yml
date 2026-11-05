@@ -1,0 +1,58 @@
+name: Publish direct VIB Manager 0.2.62 APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feat/manager-return-invoices-20261105']
+    paths:
+      - '.github/workflows/publish-vib-manager-0-2-62.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-manager-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download successful Manager APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p manager
+          gh run download 42014965204 --repo "$GITHUB_REPOSITORY" --name VIB-SALES-MANAGER-APK --dir manager
+          test -s manager/VIB-SALES-MANAGER.apk
+
+      - name: Verify Android package identity and APK integrity
+        run: |
+          set -euo pipefail
+          APK=manager/VIB-SALES-MANAGER.apk
+          unzip -t "$APK" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT"
+          test -x "$SIGNER"
+          BADGING="$("$AAPT" dump badging "$APK" | head -n 3)"
+          echo "$BADGING"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
+          grep -F "versionCode='8202'" <<< "$BADGING"
+          grep -F "versionName='0.2.62'" <<< "$BADGING"
+          "$SIGNER" verify --print-certs "$APK"
+          sha256sum "$APK" > manager/SHA256SUMS.txt
+
+      - name: Publish direct APK without replacing older releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG=vib-manager-0.2.62-legacy-purchases-20261105
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" manager/VIB-SALES-MANAGER.apk manager/SHA256SUMS.txt --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" manager/VIB-SALES-MANAGER.apk manager/SHA256SUMS.txt \
+              --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "VIB Manager 0.2.62 — Legacy Purchase Invoice Grouping" \
+              --notes "Android Manager arm64 direct update. Historical camera purchases with a shared scanGroupId are displayed as grouped invoices. Older sales and purchase history is visible in read-only audit views. Existing source transactions, stock and supplier balances are not rewritten. On-device financial checks still required." \
+              --latest=false
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets,url
