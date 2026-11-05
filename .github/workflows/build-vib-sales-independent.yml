@@ -170,10 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 6201/; s/versionName = .*/versionName = "0.2.61"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 6201' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.61"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=6201 --build-name=0.2.61
+          sed -i -E 's/versionCode = .*/versionCode = 6202/; s/versionName = .*/versionName = "0.2.62"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 6202' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.62"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=6202 --build-name=0.2.62
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
