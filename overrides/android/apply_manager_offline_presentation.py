@@ -37,8 +37,8 @@ source = replace_once(source,
     "if (snap.hasError) return const Center(child: Text('تعذر تحميل المشتريات'));",
     "if (snap.hasError && !snap.hasData) return const Center(child: Text('لا توجد مشتريات محفوظة على الجهاز. اتصل بالإنترنت لتحميلها أول مرة.'));")
 source = replace_once(source,
-    "subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),",
-    "subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}',style:const TextStyle(color:Colors.redAccent)),")
+    "subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}${d.grouped ? ' • ${d.sources.length} أصناف أصلية مجمعة' : ''}'),",
+    "subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}${d.grouped ? ' • ${d.sources.length} أصناف أصلية مجمعة' : ''}',style:const TextStyle(color:Colors.redAccent)),")
 source = replace_once(source,
     "trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),",
     "trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: Colors.lightBlueAccent, fontWeight: FontWeight.bold)),")
