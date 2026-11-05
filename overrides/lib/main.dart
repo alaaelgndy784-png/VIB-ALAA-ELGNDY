@@ -381,7 +381,7 @@ class Gate extends StatelessWidget {
             padding: EdgeInsets.all(24), child: Text(
               'تعذر تحميل صلاحيات الحساب من Firebase. قد تكون الحصة انتهت أو الاتصال ضعيفًا.\n'
               'راجع حصة مشروع vib-sales، ولا تمسح بيانات التطبيق.',
-              textAlign: TextAlign.center))));
+              textAlign: TextAlign.center)));
           if (!user.hasData) return const Center(child: Column(
             mainAxisSize: MainAxisSize.min, children: [
               CircularProgressIndicator(), SizedBox(height: 14),
