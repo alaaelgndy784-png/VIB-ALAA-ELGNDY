@@ -52,6 +52,7 @@ part 'data_maintenance.dart';
 part 'manager_ringtone.dart';
 part 'online_payments.dart';
 part 'invoice_history.dart';
+part 'legacy_purchase_groups.dart';
 part 'invoice_serials.dart';
 part 'invoice_a4.dart';
 part 'invoice_parties.dart';
@@ -4077,15 +4078,18 @@ class _PurchasesState extends State<Purchases>{
         if (snap.hasError) return const Center(child: Text('تعذر تحميل المشتريات'));
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
         final rows = snap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
+        final groupedRows = vibGroupLegacyPurchases([
+          for (final row in rows) VibPurchaseRow(row.id, row.data()),
+        ]);
         final hasOlder = snap.data!.docs.length >= _visibleLimit;
         final loading = snap.connectionState == ConnectionState.waiting;
         if (rows.isEmpty && !hasOlder) return const Center(child: Text('لا توجد فواتير مشتريات بعد'));
         return ListView.builder(
-          itemCount: rows.length + 1,
+          itemCount: groupedRows.length + 1,
           itemBuilder: (context, index) {
-          if (index == rows.length) {
+          if (index == groupedRows.length) {
             return Padding(padding: const EdgeInsets.all(16), child: Column(children: [
-              Text('المعروض: ${rows.length} فاتورة مشتريات'),
+              Text('المعروض: ${groupedRows.length} فاتورة مشتريات من ${rows.length} سجل محفوظ'),
               if (hasOlder || loading) OutlinedButton.icon(
                 onPressed: loading ? null : _showOlderPurchases,
                 icon: loading ? const SizedBox(width:18,height:18,child:CircularProgressIndicator(strokeWidth:2)) : const Icon(Icons.expand_more),
@@ -4093,8 +4097,8 @@ class _PurchasesState extends State<Purchases>{
               ) else const Text('نهاية فواتير المشتريات'),
             ]));
           }
-          final d = rows[index];
-          final p = d.data();
+          final d = groupedRows[index];
+          final p = d.data;
           return Card(child: ListTile(
             leading: const Icon(Icons.receipt_long_outlined, color: gold),
             title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -4102,9 +4106,9 @@ class _PurchasesState extends State<Purchases>{
                 style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
               Text('رقم الفاتورة: ${invoiceDisplayNumber('purchases',d.id,p)}'),
             ]),
-            subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),
+            subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}${d.grouped ? ' • ${d.sources.length} أصناف أصلية مجمعة' : ''}'),
             trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
-            onTap: () => showInvoiceOverview(context, 'purchases', d.id, initialData: p),
+            onTap: () => showVibGroupedPurchase(context, d),
           ));
         });
       },
