@@ -125,7 +125,7 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
     to = DateTime(end.year, end.month, end.day);
     _showYesterdayAndToday = includeYesterday;
     _allDates = false;
-    _includeArchived = false;
+    _includeArchived = !staffApp; // Date filters keep archived invoices visible to manager.
     _searchingByParty = false;
     _partySearchError = '';
     partySearchController.clear();
