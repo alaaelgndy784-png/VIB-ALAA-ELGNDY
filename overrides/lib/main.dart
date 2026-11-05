@@ -91,6 +91,8 @@ bool staffApp = false;
 bool _managerBiometricVerifiedForSignIn = false;
 final saleCostVisible = ValueNotifier<bool>(false);
 final salePriceEditable = ValueNotifier<bool>(false);
+// Avoid duplicate server work every time the user stream emits an update.
+final Set<String> _vibPreparedInvoiceSeriesUids = <String>{};
 Future<FirebaseOptions> _firebaseOptionsForThisApp() async {
   final packageName = (await PackageInfo.fromPlatform()).packageName;
   staffApp = packageName == 'com.alaa.vibsales.staffscan';
@@ -375,8 +377,17 @@ class Gate extends StatelessWidget {
       return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
         stream: db.collection('users').doc(auth.data!.uid).snapshots(includeMetadataChanges: true),
         builder: (context, user) {
-          if (user.hasError) return const Center(child: Text('تعذر تحميل الحساب'));
-          if (!user.hasData) return const Center(child: CircularProgressIndicator());
+          if (user.hasError && !user.hasData) return const Center(child: Padding(
+            padding: EdgeInsets.all(24), child: Text(
+              'تعذر تحميل صلاحيات الحساب من Firebase. قد تكون الحصة انتهت أو الاتصال ضعيفًا.\n'
+              'راجع حصة مشروع vib-sales، ولا تمسح بيانات التطبيق.',
+              textAlign: TextAlign.center))));
+          if (!user.hasData) return const Center(child: Column(
+            mainAxisSize: MainAxisSize.min, children: [
+              CircularProgressIndicator(), SizedBox(height: 14),
+              Padding(padding: EdgeInsets.symmetric(horizontal: 20), child: Text(
+                'جاري فتح بيانات الحساب. لو استمر الانتظار، راجع اتصال Firebase أو حصة قاعدة البيانات.',
+                textAlign: TextAlign.center))]));
           final data = user.data!.data();
           if (data == null || data['active'] != true || !['owner', 'employee'].contains(data['role'])) {
             return Scaffold(body: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -427,7 +438,8 @@ class Gate extends StatelessWidget {
           if (data['role'] == 'owner') {
             // Use the cached profile to open immediately offline. Prepare legacy invoice
             // numbering only after Firestore confirms it is online, without blocking UI.
-            if (!user.data!.metadata.isFromCache) {
+            if (!user.data!.metadata.isFromCache &&
+                _vibPreparedInvoiceSeriesUids.add(auth.data!.uid)) {
               unawaited(initializeRequestedInvoiceSeries().catchError((Object error) {
                 if (!isTemporaryFirestoreOffline(error)) {
                   debugPrint('تعذر تجهيز تسلسل الفواتير في الخلفية: $error');
@@ -508,9 +520,14 @@ class _OwnerSecurityState extends State<OwnerSecurity> {
     try {
       final user = FirebaseAuth.instance.currentUser;
       if (user?.email == null) throw StateError('لا يوجد حساب مدير');
-      await user!.reauthenticateWithCredential(EmailAuthProvider.credential(email: user.email!, password: password.text));
+      await user!.reauthenticateWithCredential(EmailAuthProvider.credential(email: user.email!, password: password.text))
+        .timeout(const Duration(seconds: 28));
       if (mounted) await _unlockManager();
-    } catch (_) { if (mounted) setState(() => message = 'الرقم السري غير صحيح'); }
+    } catch (e) { if (mounted) setState(() => message =
+      e is TimeoutException || (e is FirebaseAuthException &&
+        (e.code == 'network-request-failed' || e.code == 'too-many-requests'))
+      ? 'خدمة التأكد من الرقم السري غير متاحة حاليًا. ده مش معناه إن الرقم السري غلط؛ افتح بالبصمة لو متاحة.'
+      : 'تعذر فتح الحساب بالرقم السري؛ راجع الرقم أو استخدم البصمة'); }
     finally { if (mounted) setState(() => busy = false); }
   }
   @override Widget build(BuildContext context) {
@@ -588,12 +605,17 @@ class _LoginPageState extends State<LoginPage> {
       _managerBiometricVerifiedForSignIn = true;
       try {
         await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: emailFor(savedPhone), password: savedPin);
+          email: emailFor(savedPhone), password: savedPin)
+          .timeout(const Duration(seconds: 28));
       } catch (_) { _managerBiometricVerifiedForSignIn = false; rethrow; }
     } catch (e) {
       _managerBiometricVerifiedForSignIn = false;
       if (mounted) setState(() { showManualLogin = true;
-        error = 'تعذر الدخول بالبصمة؛ استخدم رقم الهاتف والرقم السري'; });
+        error = e is TimeoutException
+          ? 'خدمة الدخول اتأخرت في الرد. افتح البرنامج تاني أو استخدم رقم الهاتف؛ ده مش معناه إن الرقم السري غلط.'
+          : (e is FirebaseAuthException && (e.code == 'network-request-failed' || e.code == 'too-many-requests'))
+            ? 'خدمة تسجيل الدخول غير متاحة حاليًا. جرّب بعد تحسن الاتصال ولا تمسح بيانات التطبيق.'
+            : 'تعذر الدخول بالبصمة؛ استخدم رقم الهاتف والرقم السري'; });
     } finally { if (mounted) setState(() => biometricBusy = false); }
   }
 
@@ -645,7 +667,8 @@ class _LoginPageState extends State<LoginPage> {
         });
       } else {
         await FirebaseAuth.instance.signInWithEmailAndPassword(
-          email: emailFor(number), password: password);
+          email: emailFor(number), password: password)
+          .timeout(const Duration(seconds: 28));
       }
       await _secure.write(key: 'vib_saved_phone', value: number);
       await _secure.write(key: 'vib_saved_pin', value: password);
@@ -656,11 +679,16 @@ class _LoginPageState extends State<LoginPage> {
           debugPrint('VIB login chime failed: $soundError');
         }
       }
+    } on TimeoutException catch (_) {
+      if (mounted) setState(() => error =
+        'مهلة اتصال بخدمة تسجيل الدخول بعد 28 ثانية. ده مش معناه إن الرقم السري غلط. راجع اتصال Firebase ثم افتح التطبيق تاني، وماتمسحش بياناته.');
     } on FirebaseAuthException catch (e) {
       final message = switch (e.code) {
         'user-not-found' || 'invalid-credential' => 'الرقم أو الرقم السري غير صحيح',
         'email-already-in-use' => 'الرقم مسجل بالفعل؛ اضغط دخول',
         'weak-password' => 'اختر رقمًا سريًا أقوى',
+        'network-request-failed' => 'تعذر الاتصال بخدمة الدخول. راجع الإنترنت وحالة Firebase.',
+        'too-many-requests' => 'تم إيقاف المحاولات مؤقتًا بسبب كثرة الطلبات. حاول لاحقًا، ولا تغيّر كلمة السر.',
         _ => e.message ?? 'تعذر تسجيل الدخول',
       };
       if (mounted) setState(() => error = message);
