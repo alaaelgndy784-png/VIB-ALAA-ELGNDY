@@ -205,6 +205,16 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
             setState(() => selectRange(DateTime(now.year, now.month, now.day - 1),
               DateTime(now.year, now.month, now.day), includeYesterday:true)); },
           icon: const Icon(Icons.today, size: 15), label: const Text('اليوم وأمس', maxLines: 1))),
+        if (!staffApp) ...[
+          const SizedBox(width: 4),
+          IconButton.filledTonal(
+            tooltip: sales ? 'فواتير مرتجع التجار' : 'فواتير مرتجع الموردين',
+            icon: const Icon(Icons.assignment_return, size: 19),
+            onPressed: () => openVibReport(context,
+              sales ? 'فواتير مرتجع المبيعات' : 'فواتير مرتجع المشتريات',
+              ReturnInvoicesPage(type: widget.type)),
+          ),
+        ],
       ])),
     if (!sales && !staffApp) Padding(
       padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
