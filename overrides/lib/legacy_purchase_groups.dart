@@ -13,7 +13,10 @@ class VibPurchaseGroup {
   final List<VibPurchaseRow> sources;
   const VibPurchaseGroup(this.sources);
   bool get grouped => sources.length > 1;
-  String get id => sources.first.id;
+  String get id => grouped
+      ? 'legacy_scan_' + (sources.first.data['supplierId'] ?? '').toString() +
+          '_' + (sources.first.data['scanGroupId'] ?? '').toString()
+      : sources.first.id;
   bool get completeSettlement => sources.every((r) =>
     r.data['total'] is num &&
     (r.data['paid'] is num || r.data['due'] is num));
@@ -62,7 +65,8 @@ String? vibLegacyPurchaseKey(VibPurchaseRow row) {
   final supplier = (d['supplierId'] ?? '').toString().trim();
   final status = (d['status'] ?? '').toString().trim();
   if (scanId.isEmpty || scanId == 'null' ||
-      supplier.isEmpty || supplier == 'null') return null;
+      supplier.isEmpty || supplier == 'null' ||
+      d['total'] is! num || !(d['total'] as num).isFinite) return null;
   // Modern grouped invoices and independent purchases are always separate.
   if (d['items'] is List && (d['items'] as List).isNotEmpty) return null;
   return 'scan|' + supplier + '|' + status + '|' + scanId;
