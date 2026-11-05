@@ -68,6 +68,7 @@ part 'voucher_cancellations.dart';
 part 'sales_invoice_cancellations.dart';
 part 'employee_visits.dart';
 part 'employee_collections.dart';
+part 'return_invoices.dart';
 
 // Report filters use the existing invoice and movement records.
 
@@ -3388,6 +3389,7 @@ class Management extends StatelessWidget {
     option(context, 'عرض فواتير المشتريات', Icons.shopping_bag_outlined, const InvoiceHistoryPage(type: 'purchases')),
     option(context, 'إرجاع فاتورة مبيعات', Icons.assignment_return, const InvoiceReturnPage(type: 'sales')),
     option(context, 'إرجاع فاتورة مشتريات', Icons.assignment_return_outlined, const InvoiceReturnPage(type: 'purchases')),
+    option(context, 'فواتير المرتجع – طباعة وإرسال', Icons.receipt_long, const ReturnInvoicesPage(), highlight: true),
     option(context, 'جيديا — روابط الدفع بالكارت', Icons.credit_card, const GeideaPayments()),
     option(context, 'الصندوق', Icons.account_balance_wallet_outlined, const CashBox()),
     option(context, 'المصروفات', Icons.receipt_long_outlined, const Expenses()),
@@ -7722,6 +7724,7 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
         'reason': 'رد قيمة صنف من فاتورة مبيعات', 'createdAt': now, 'actorId': actor,
       });
     }
+    final historicalCustomerBalance = (customerSnap?.data()?['balance'] as num?)?.toDouble();
     final newReturn = {
       'sourceInvoiceId': id, 'returnType': 'partial', 'sourceItemIndex': sourceItemIndex,
       'items': [{'sourceItemIndex': sourceItemIndex, 'productId': productId,
@@ -7732,6 +7735,9 @@ Future<void> returnSalesInvoiceItem(String id, int sourceItemIndex, int quantity
         'lineTotal': amountCents / 100}],
       'total': amountCents / 100, 'cashRefund': cashRefundCents / 100,
       'debtReduction': debtReductionCents / 100, 'branchId': branchId,
+      if (historicalCustomerBalance != null) 'balanceBefore': historicalCustomerBalance,
+      if (historicalCustomerBalance != null) 'balanceAfter':
+        (((historicalCustomerBalance * 100).round() - debtReductionCents) / 100),
       'customerId': customerId, 'customerName': d['customerName'],
       'invoiceNumber': d['invoiceNumber'], 'internalNumber': d['internalNumber'],
       'invoiceBarcode': d['invoiceBarcode'], 'createdAt': now, 'actorId': actor,
@@ -7828,7 +7834,7 @@ Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantit
     if(debtReduction>0){tx.update(supplierRef,{'balance':supplierAfter,'updatedAt':now});tx.set(db.collection('accountMovements').doc(),{'accountType':'suppliers','accountId':supplierId,'accountName':d['supplierName'],'kind':'purchase_return','amount':debtReduction/100,'balanceBefore':supplierBefore,'balanceAfter':supplierAfter,'referenceId':returnRef.id,'createdAt':now,'actorId':actor});}
     final cashBefore=(cashSnap.data()?['balance'] as num?)?.toDouble()??0,cashAfter=((cashBefore*100).round()+cashRefund)/100;
     if(cashRefund>0){tx.set(cashRef,{'balance':cashAfter,'updatedAt':now},SetOptions(merge:true));tx.set(db.collection('accountMovements').doc(),{'accountType':'cash','kind':'purchase_return','amount':cashRefund/100,'delta':cashRefund/100,'balanceBefore':cashBefore,'balanceAfter':cashAfter,'accountId':supplierId,'accountName':d['supplierName'],'referenceId':returnRef.id,'reason':'استرداد نقدية مرتجع صنف مشتريات','actorId':actor,'createdAt':now});}
-    tx.set(returnRef,{'sourceInvoiceId':id,'returnType':'partial','sourceItemIndex':sourceItemIndex,'sourceLineKey':'$sourceItemIndex','sourceQuantity':quantity,'items':[{'sourceItemIndex':sourceItemIndex,'productId':productId,'productName':item['productName'],'quantity':quantity,'unitCost':item['unitCost']??0,'lineTotal':amount/100}],'total':amount/100,'cashRefund':cashRefund/100,'debtReduction':debtReduction/100,'supplierId':supplierId,'supplierName':d['supplierName'],'invoiceNumber':d['invoiceNumber'],'internalNumber':d['internalNumber'],'invoiceBarcode':d['invoiceBarcode'],'createdAt':now,'actorId':actor});
+    tx.set(returnRef,{'sourceInvoiceId':id,'returnType':'partial','sourceItemIndex':sourceItemIndex,'sourceLineKey':'$sourceItemIndex','sourceQuantity':quantity,'items':[{'sourceItemIndex':sourceItemIndex,'productId':productId,'productName':item['productName'],'quantity':quantity,'unitCost':item['unitCost']??0,'lineTotal':amount/100}],'total':amount/100,'cashRefund':cashRefund/100,'debtReduction':debtReduction/100,'balanceBefore':supplierBefore,'balanceAfter':supplierAfter,'supplierId':supplierId,'supplierName':d['supplierName'],'invoiceNumber':d['invoiceNumber'],'internalNumber':d['internalNumber'],'invoiceBarcode':d['invoiceBarcode'],'createdAt':now,'actorId':actor});
     final quantities=Map<String,dynamic>.from(rawReturned is Map?rawReturned:{});quantities['$sourceItemIndex']=already+quantity;
     final allReturned=items.asMap().entries.every((entry) {
       final original=(entry.value['quantity'] as num?)?.toInt()??0;
@@ -8084,8 +8090,13 @@ Future<void> returnInvoice(String type, String id,
         });
       }
 
+      final balanceAtReturn = (customerSnap?.data()?['balance'] as num?)?.toDouble();
       tx.set(ret, {...d, 'sourceInvoiceId': id,
         'returnType': cancellingSale ? 'cancellation' : 'full',
+        'cashRefund': paid, 'debtReduction': due,
+        if (balanceAtReturn != null) 'balanceBefore': balanceAtReturn,
+        if (balanceAtReturn != null) 'balanceAfter':
+          (((balanceAtReturn * 100).round() - (due * 100).round()) / 100),
         if (cancellingSale) 'cancellationReason': cancellationReason,
         if (cancellingSale) 'cancelledReceiptIds': cancelledReceiptIds,
         'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
@@ -8143,7 +8154,10 @@ Future<void> returnInvoice(String type, String id,
         tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'purchase_return', 'amount': refund, 'delta': refund, 'balanceBefore': cashBefore, 'balanceAfter': cashAfter, 'accountId': d['supplierId'], 'accountName': d['supplierName'], 'referenceId': ret.id, 'reason': 'استرداد نقدية مرتجع مشتريات', 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
       }
       tx.update(supplierRef, {'balance': supplierAfter, 'updatedAt': now});
-      tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+      tx.set(ret, {...d, 'sourceInvoiceId': id, 'returnType': 'full',
+        'cashRefund': refund, 'debtReduction': due,
+        'balanceBefore': oldBalance, 'balanceAfter': supplierAfter,
+        'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
       tx.set(db.collection('accountMovements').doc(), {
         'accountType': 'suppliers',
         'accountId': d['supplierId'],
