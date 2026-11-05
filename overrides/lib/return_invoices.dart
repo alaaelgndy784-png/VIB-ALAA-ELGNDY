@@ -49,8 +49,21 @@ List<Map<String, dynamic>> _vibReturnItems(Map<String, dynamic> data) {
 }
 
 Future<Uint8List> createVibReturnInvoicePdf(
-    VibReturnInvoiceEntry entry, String paper, {double? currentBalance}) async {
+    VibReturnInvoiceEntry entry, String paper, {double? currentBalance,
+    Map<String, dynamic> branding = const {}}) async {
   final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+  Uint8List brandLogo;
+  try {
+    brandLogo = base64Decode((branding['logoBase64'] ?? '').toString());
+    if (brandLogo.isEmpty) throw const FormatException('No custom brand logo');
+  } catch (_) {
+    brandLogo = (await rootBundle.load('assets/vip-logo.png')).buffer.asUint8List();
+  }
+  String setting(String key) => (branding[key] ?? '').toString().trim();
+  final companyName = setting('companyName').isEmpty
+      ? 'VIB ALAA ELGNDY' : setting('companyName').replaceAll('VIP', 'VIB');
+  final phones = ['phone','phone2','whatsapp'].map(setting)
+      .where((v) => v.isNotEmpty).toSet().join(' - ');
   final doc = pw.Document();
   final thermal = paper == '80';
   final data = entry.data;
@@ -79,7 +92,16 @@ Future<Uint8List> createVibReturnInvoicePdf(
     textAlign: pw.TextAlign.center, style: pw.TextStyle(font: font,
         fontSize: size ?? (thermal ? 11 : 15), fontWeight: pw.FontWeight.bold)));
   final parts = <pw.Widget>[
-    title('VIB ALAA ELGNDY', size: thermal ? 12 : 19),
+    pw.Center(child: pw.Image(pw.MemoryImage(brandLogo),
+        width: thermal ? 45 : 88, height: thermal ? 40 : 66)),
+    title(companyName, size: thermal ? 12 : 19),
+    if (setting('address').isNotEmpty)
+      title(setting('address'), size: thermal ? 7 : 9),
+    if (phones.isNotEmpty) title(phones, size: thermal ? 7 : 9),
+    if (setting('taxNumber').isNotEmpty)
+      title('الرقم الضريبي: ' + setting('taxNumber'), size: thermal ? 7 : 9),
+    if (setting('commercialRegister').isNotEmpty)
+      title('السجل التجاري: ' + setting('commercialRegister'), size: thermal ? 7 : 9),
     pw.SizedBox(height: 4),
     title(entry.sales ? 'فاتورة مرتجع مبيعات' : 'فاتورة مرتجع مشتريات'),
     pw.SizedBox(height: 6),
@@ -145,7 +167,7 @@ Future<Uint8List> createVibReturnInvoicePdf(
       final name = (item['productName'] ?? '').toString();
       return n + 17 + (name.length / 24).ceil() * 5;
     });
-    final heightMm = 122 + itemHeight + (currentBalance == null ? 0 : 14);
+    final heightMm = 170 + itemHeight + (currentBalance == null ? 0 : 14);
     doc.addPage(pw.Page(
       pageFormat: PdfPageFormat(80 * PdfPageFormat.mm, heightMm * PdfPageFormat.mm),
       margin: const pw.EdgeInsets.all(3 * PdfPageFormat.mm),
@@ -206,7 +228,15 @@ class _ReturnInvoicesPageState extends State<ReturnInvoicesPage> {
   Future<void> _print(VibReturnInvoiceEntry entry, String paper, {bool share = false}) async {
     try {
       final current = await _balance(entry);
-      final pdf = await createVibReturnInvoicePdf(entry, paper, currentBalance: current);
+      Map<String, dynamic> brand = {};
+      try {
+        brand = (await db.collection('settings').doc('invoiceBranding')
+            .get(const GetOptions(source: Source.cache))).data() ?? {};
+        if (brand.isEmpty) brand = (await db.collection('settings').doc('main')
+            .get(const GetOptions(source: Source.cache))).data() ?? {};
+      } catch (_) { /* Print with bundled brand if settings cannot be read. */ }
+      final pdf = await createVibReturnInvoicePdf(entry, paper,
+          currentBalance: current, branding: brand);
       final fileName = 'VIB-RETURN-' + entry.number + '.pdf';
       if (share) {
         final folder = await getTemporaryDirectory();
