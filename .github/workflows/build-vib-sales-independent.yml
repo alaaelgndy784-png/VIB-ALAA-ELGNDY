@@ -170,10 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 6203/; s/versionName = .*/versionName = "0.2.63"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 6203' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.63"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=6203 --build-name=0.2.63
+          sed -i -E 's/versionCode = .*/versionCode = 6204/; s/versionName = .*/versionName = "0.2.64"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 6204' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.64"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=6204 --build-name=0.2.64
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -280,7 +280,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p previous
-          gh release download vib-manager-0.2.62-legacy-purchases-20261105 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          gh release download vib-manager-0.2.63-login-recovery-20261105 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
           NEW=manager/VIB-SALES-MANAGER.apk
           OLD=previous/VIB-SALES-MANAGER.apk
           test -s "$NEW"
@@ -292,12 +292,12 @@ jobs:
           BADGING="$("$AAPT" dump badging "$NEW" | head -n 3)"
           echo "$BADGING"
           grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-          grep -F "versionCode='8203'" <<< "$BADGING"
-          grep -F "versionName='0.2.63'" <<< "$BADGING"
+          grep -F "versionCode='8204'" <<< "$BADGING"
+          grep -F "versionName='0.2.64'" <<< "$BADGING"
           "$SIGNER" verify --print-certs "$NEW" | tee /tmp/new-cert.txt
           "$SIGNER" verify --print-certs "$OLD" | tee /tmp/old-cert.txt
-          NEW_SHA="$(grep -m1 'Signer #1 certificate SHA-256 digest:' /tmp/new-cert.txt | cut -d: -f2 | tr -d '[:space:]')"
-          OLD_SHA="$(grep -m1 'Signer #1 certificate SHA-256 digest:' /tmp/old-cert.txt | cut -d: -f2 | tr -d '[:space:]')"
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-cert.txt | head -1 | tr -d '[:space:]')"
           test -n "$NEW_SHA"
           test "$NEW_SHA" = "$OLD_SHA"
           echo "Update package, code and signing certificate match previous release"
@@ -306,12 +306,12 @@ jobs:
       - name: Publish standalone direct APK update
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: vib-manager-0.2.63-login-recovery-20261105
-          name: VIB Manager 0.2.63 — Login resilience hotfix
+          tag_name: vib-manager-0.2.64-stable-dashboard-20261105
+          name: VIB Manager 0.2.64 — Stable dashboard on launch
           target_commitish: ${{ github.sha }}
           body: |
-            APK مباشر لتحديث مدير VIB فوق 0.2.62 دون حذف بيانات الجهاز.
-            معالجة انتظار تسجيل الدخول، رسائل مهلة الاتصال، وتجنب تكرار تهيئة ترقيم الفواتير.
+            APK مباشر لتحديث مدير VIB فوق 0.2.63 دون حذف بيانات الجهاز.
+            تثبيت شريط المزامنة في مكان واحد، ومنع وميض أرقام الملخص والاشتراكات المتكررة وقت الفتح، مع الاحتفاظ بإصلاحات الدخول السابقة.
             لا يمكن لهذا الإصدار تجاوز توقف مشروع Firebase عند نفاد الحصة؛ يلزم إصلاح Billing/Quota بصورة مستقلة.
           files: |
             manager/VIB-SALES-MANAGER.apk
