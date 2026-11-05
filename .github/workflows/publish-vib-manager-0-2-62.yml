@@ -35,7 +35,7 @@ jobs:
           BADGING="$("$AAPT" dump badging "$APK" | head -n 3)"
           echo "$BADGING"
           grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-          grep -F "versionCode='6202'" <<< "$BADGING"
+          grep -F "versionCode='8202'" <<< "$BADGING"
           grep -F "versionName='0.2.62'" <<< "$BADGING"
           "$SIGNER" verify --print-certs "$APK"
           sha256sum "$APK" > manager/SHA256SUMS.txt
