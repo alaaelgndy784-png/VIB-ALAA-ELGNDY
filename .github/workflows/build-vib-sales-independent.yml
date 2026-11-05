@@ -133,7 +133,19 @@ jobs:
           text = gradle.read_text()
           text = re.sub(r'applicationId = "[^"]+"', f'applicationId = "{app_id}"', text, count=1)
           pubspec = Path('pubspec.yaml').read_text()
-          version = re.search(r'^version:\s*(\d+\.\d+\.\d+)\+(\d+)\s*
+          version = re.search(r'^version:\s*([0-9.]+)\+([0-9]+)', pubspec, re.MULTILINE)
+          if version is None:
+              raise SystemExit('pubspec version missing')
+          version_name, version_code = version.group(1), version.group(2)
+          for name, value in (
+              ('versionCode', version_code),
+              ('versionName', '"' + version_name + '"'),
+          ):
+              pattern = r'\b' + name + r'\s*=\s*[^\r\n]+'
+              text, count = re.subn(pattern, name + ' = ' + value, text, count=1)
+              if count != 1:
+                  raise SystemExit(name + ' declaration missing from Android build script')
+          gradle.write_text(text)
           activity = Path(f'android/app/src/main/kotlin/com/alaa/vibsales/{app}/MainActivity.kt')
           text = activity.read_text().replace('FlutterActivity', 'FlutterFragmentActivity')
           activity.write_text(text)
