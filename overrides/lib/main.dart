@@ -44,6 +44,7 @@ part 'chat_alerts.dart';
 part 'approval_alerts.dart';
 
 part 'invoice_editor.dart';
+part 'sale_cost_reconciliation.dart';
 part 'pending_sales.dart';
 part 'pending_receipts.dart';
 part 'product_import.dart';
@@ -3071,6 +3072,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 number:i+1,name:'${productDoc(lines[i].productId!).data()['name'] ?? ''}',
                 price:lines[i].price,quantity:lines[i].quantity,
                 onEdit:saving ? null : ()=>editSelected(lines[i]),
+                onDelete:saving ? null : () => update(() { final removed=lines.removeAt(i); removed.dispose(); }),
               ),
               if(!owner) StreamBuilder<int?>(
                 stream:invoiceMainStock(lines[i].productId!),
@@ -4809,6 +4811,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
           for(var i=0;i<lines.length;i++) InvoiceCompactTableLine(
             key:ObjectKey(lines[i]),number:i+1,name:'${productDocs.firstWhere((d)=>d.id==lines[i].productId).data()?['name'] ?? ''}',
             price:lines[i].cost,quantity:lines[i].quantity,onEdit:saving ? null : ()=>editSelected(lines[i]),
+            onDelete:saving ? null : () => setLocal(() { final removed=lines.removeAt(i); removed.dispose(); }),
           ),
         ]),
         actions: [
@@ -9054,6 +9057,7 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
   final preflight = (await ref.get()).data();
   if (preflight == null) throw Exception('رقم الفاتورة غير موجود');
   await assertSaleEditable({...preflight, 'id': id});
+  final verifiedHistoricalCosts = await verifiedCostsForEditedSale(preflight);
   await db.runTransaction((tx) async {
     final profile = (await tx.get(db.collection('users').doc(actor))).data();
     if (profile?['role'] != 'owner' || profile?['active'] != true) throw Exception('تعديل الفاتورة متاح للمدير فقط');
@@ -9110,7 +9114,8 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
       if (!unchangedPrice && price < cents((product['purchasePrice'] as num?) ?? 0)) throw Exception('سعر البيع أقل من التكلفة');
       newQuantities[p] = q; total += q * price;
       items.add({'productId': p, 'productName': product['name'], 'quantity': q, 'unitPrice': price / 100,
-        'lineTotal': q * price / 100, 'purchasePriceAtSale': prior.isEmpty ? product['purchasePrice'] ?? 0 : prior.first['purchasePriceAtSale'] ?? 0});
+        'lineTotal': q * price / 100, 'purchasePriceAtSale': prior.isEmpty ? product['purchasePrice'] ?? 0 :
+          (verifiedHistoricalCosts[p] ?? prior.first['purchasePriceAtSale'] ?? 0)});
     }
     final paid = cents(payment), due = total - paid;
     if (items.isEmpty || items.length > 50 || total > 1000000000000 || !payment.isFinite || paid < 0 || due < 0) throw Exception('راجع المدفوع وبنود الفاتورة');
@@ -9162,6 +9167,11 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
       'customerIdBefore':oldCustomerId,'customerIdAfter':customerId,
       'customerNameBefore':old['customerName'] ?? '', 'customerNameAfter':customer?['name'] ?? '',
       'totalBefore': old['total'], 'totalAfter': total / 100, 'paidBefore': old['paid'], 'paidAfter': paid / 100,
+      'costVerifiedByPurchaseHistory': verifiedHistoricalCosts.isNotEmpty,
+      'costChanges': [for (final item in items) if (original.any((x)=>x['productId']==item['productId'] &&
+          x['purchasePriceAtSale'] is num && (x['purchasePriceAtSale'] as num).toDouble() != (item['purchasePriceAtSale'] as num).toDouble()))
+        {'productId':item['productId'],'oldCost':original.firstWhere((x)=>x['productId']==item['productId'])['purchasePriceAtSale'],
+         'newCost':item['purchasePriceAtSale']}],
       'revision': revision + 1, 'requestKey': key, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
   });
 }
