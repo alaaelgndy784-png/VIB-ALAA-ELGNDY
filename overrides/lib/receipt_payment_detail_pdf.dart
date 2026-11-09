@@ -38,7 +38,7 @@ Future<Uint8List> createVibCustomerPaymentDetailPdf(
   String issued(Map<String, dynamic> row) =>
       receiptReportStamp(row, to ?? from);
   final displayCount = report.receiptCount.toString() +
-      (suppliers ? ' سند صرف' : ' سند قبض');
+      (suppliers ? ' سند صرف' : ' عملية سداد');
   final total = receiptReportMoney(report.totalCents);
 
   if (thermal) {
@@ -72,7 +72,7 @@ Future<Uint8List> createVibCustomerPaymentDetailPdf(
           for (var i = 0; i < entries.length; i++) ...[
             line((i + 1).toString() + ' - ' + issued(entries[i]) +
               '     ' + amount(entries[i]), strong: true),
-            line('رقم السند: ' + receiptDisplayNumber(entries[i])),
+            line((entries[i]['paymentSource'] == 'invoice' ? 'رقم الفاتورة: ' : 'رقم السند: ') + receiptDisplayNumber(entries[i])),
             if (single == null) line((suppliers ? 'المورد: ' : 'العميل: ') +
                 (entries[i]['customerName'] ?? 'غير مسجل').toString()),
             line('البيان: ' + details(entries[i])),
@@ -160,7 +160,7 @@ Future<Uint8List> createVibCustomerPaymentDetailPdf(
               cell('المبلغ', head: true),
               cell('بيان الدفعة', head: true),
               cell(suppliers ? 'المورد' : 'العميل', head: true),
-              cell('رقم السند', head: true),
+              cell(suppliers ? 'رقم سند الصرف' : 'رقم الفاتورة / السند', head: true),
               cell('التاريخ والوقت', head: true),
               cell('م', head: true),
             ],
