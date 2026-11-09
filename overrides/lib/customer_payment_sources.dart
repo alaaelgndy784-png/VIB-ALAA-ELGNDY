@@ -1,5 +1,12 @@
 part of 'main.dart';
 
+class VibSalesPaymentSnapshot {
+  final List<Map<String,dynamic>> rows;
+  final bool fromCache, hasPendingWrites;
+  const VibSalesPaymentSnapshot(this.rows,{this.fromCache=false,this.hasPendingWrites=false});
+}
+
+
 // Invoice payments are genuine customer collections, but they are not
 // receipt vouchers. Keep both document types in one read-only timeline.
 // Never use accountMovements cash/customerCollection here: those
@@ -39,7 +46,7 @@ List<Map<String,dynamic>> vibCustomerPaymentReportRows({
       'amount':paid,
       'receiptDate':created,
       'createdAt':created,
-      'receiptNumber':'فاتورة $displayNumber',
+      'receiptNumber':displayNumber,
       'paymentSource':'invoice',
       'paymentSourceLabel':'مدفوع في فاتورة مبيعات',
       'paymentMethod':'سداد وقت فاتورة البيع',
