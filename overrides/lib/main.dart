@@ -1572,7 +1572,7 @@ class DashboardGrossProfitMetric extends StatefulWidget {
 }
 
 class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric> {
-  late Stream<QuerySnapshot<Map<String,dynamic>>> _salesStream, _returnsStream;
+  late Stream<QuerySnapshot<Map<String,dynamic>>> _salesStream, _returnsStream, _purchasesStream;
   @override void initState() { super.initState(); _subscribe(); }
   @override void didUpdateWidget(covariant DashboardGrossProfitMetric oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -1589,27 +1589,33 @@ class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric>
     _returnsStream = db.collection('salesReturns')
       .where('createdAt',isGreaterThanOrEqualTo:startStamp)
       .where('createdAt',isLessThan:endStamp).snapshots();
+    _purchasesStream = db.collection('purchases').snapshots();
   }
   @override Widget build(BuildContext context) {
     return Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _purchasesStream,
+      builder: (context, purchasesSnap) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
       stream: _salesStream,
       builder: (context, salesSnap) => StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: _returnsStream,
         builder: (context, returnsSnap) {
           String value = '—';
           var hasMissingCost = false;
-          if (salesSnap.hasData && returnsSnap.hasData) {
+          if (salesSnap.hasData && returnsSnap.hasData && purchasesSnap.hasData) {
+            final purchaseRecords = purchasesSnap.data!.docs.map((d)=>d.data()).toList();
             double revenue = 0;
             double cost = 0;
             void includeInvoice(Map<String, dynamic> data, double sign) {
               if (!visibleAfterReset(data)) return;
               revenue += sign * ((data['total'] as num?)?.toDouble() ?? 0);
+              final verified = sign > 0 ? verifiedCostsForSaleData(data,purchaseRecords) : <String,double>{};
               final rawItems = data['items'];
               if (rawItems is List && rawItems.isNotEmpty) {
                 for (final raw in rawItems) {
                   if (raw is! Map) continue;
                   final quantity = (raw['quantity'] as num?)?.toDouble() ?? 0;
-                  final atSaleCost = (raw['purchasePriceAtSale'] as num?)?.toDouble();
+                  final atSaleCost = verified['${raw['productId'] ?? ''}'] ??
+                    (raw['purchasePriceAtSale'] as num?)?.toDouble();
                   if (atSaleCost == null || !atSaleCost.isFinite || atSaleCost < 0) {
                     hasMissingCost = true;
                   } else {
@@ -1618,7 +1624,8 @@ class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric>
                 }
               } else {
                 final quantity = (data['quantity'] as num?)?.toDouble() ?? 0;
-                final atSaleCost = (data['purchasePriceAtSale'] as num?)?.toDouble();
+                final atSaleCost = verified['${data['productId'] ?? ''}'] ??
+                  (data['purchasePriceAtSale'] as num?)?.toDouble();
                 if (atSaleCost == null || !atSaleCost.isFinite || atSaleCost < 0) {
                   hasMissingCost = true;
                 } else {
@@ -1645,13 +1652,13 @@ class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric>
                   style: const TextStyle(color: Color(0xFFFFC857),
                     fontSize: 17, fontWeight: FontWeight.w800))),
               ),
-              if (salesSnap.hasError || returnsSnap.hasError)
+              if (salesSnap.hasError || returnsSnap.hasError || purchasesSnap.hasError)
                 const Icon(Icons.info_outline, color: Colors.orangeAccent, size: 12),
             ]),
           );
         },
       ),
-    ));
+    )));
   }
 }
 
@@ -4034,11 +4041,11 @@ class _ProfitReportState extends State<ProfitReport> {
       Text(validRange ? 'الفترة: ${profitDateTime(start)} إلى ${profitDateTime(end)}' : 'وقت النهاية لازم يكون بعد وقت البداية',
         textAlign:TextAlign.center,style:TextStyle(color:validRange ? vibBlue : Colors.redAccent)),
       if(!validRange) const Expanded(child:SizedBox.shrink()) else Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: db.collection('products').snapshots(),
+        stream: db.collection('purchases').snapshots(),
         builder: (context, productsSnap) {
-          if (productsSnap.hasError) return const Center(child: Text('تعذر تحميل تكلفة الأصناف'));
+          if (productsSnap.hasError) return const Center(child: Text('تعذر تحميل فواتير المشتريات لمراجعة التكلفة'));
           if (!productsSnap.hasData) return const Center(child: CircularProgressIndicator());
-          final products = {for (final p in productsSnap.data!.docs) p.id: p.data()};
+          final purchaseRecords = productsSnap.data!.docs.map((d)=>d.data()).toList();
           return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: db.collection('sales')
               .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
@@ -4058,13 +4065,15 @@ class _ProfitReportState extends State<ProfitReport> {
               for (final event in [...sales.map((d) => (data: d.data(), sign: 1)), ...returns.map((d) => (data: d.data(), sign: -1))]) {
                 final sale = event.data;
                 revenue += event.sign * ((sale['total'] as num?)?.toDouble() ?? 0);
+                final verified = event.sign > 0 ? verifiedCostsForSaleData(sale,purchaseRecords) : <String,double>{};
                 final rawItems = (sale['items'] as List?) ?? const [];
                 if (rawItems.isNotEmpty) {
                   for (final raw in rawItems) {
                     if (raw is! Map) continue;
                     final qty = (raw['quantity'] as num?)?.toDouble() ?? 0;
-                    final cost = (raw['purchasePriceAtSale'] as num?)?.toDouble();
-                    // Never reprice a historical sale using today's product cost.
+                    final cost = verified['${raw['productId'] ?? ''}'] ??
+                      (raw['purchasePriceAtSale'] as num?)?.toDouble();
+                    // Use only a matching purchase before the sale, never today's product cost.
                     if (cost != null && cost.isFinite && cost >= 0) {
                       knownCost += event.sign * qty * cost;
                     } else {
@@ -4073,7 +4082,8 @@ class _ProfitReportState extends State<ProfitReport> {
                   }
                 } else {
                   final qty = (sale['quantity'] as num?)?.toDouble() ?? 0;
-                  final cost = (sale['purchasePriceAtSale'] as num?)?.toDouble();
+                  final cost = verified['${sale['productId'] ?? ''}'] ??
+                    (sale['purchasePriceAtSale'] as num?)?.toDouble();
                   if (cost != null && cost.isFinite && cost >= 0) {
                     knownCost += event.sign * qty * cost;
                   } else {
@@ -4100,7 +4110,7 @@ class _ProfitReportState extends State<ProfitReport> {
                     style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
                 if (missingCost > 0) Text('تحذير: تكلفة الشراء وقت البيع غير محفوظة في $missingCost بند/سجل. لا يمكن حساب ربح دقيق؛ لن نستبدلها بسعر الشراء الحالي لأن ده يغيّر أرباح الماضي.'),
                 const SizedBox(height: 16),
-                const Text('يُحسب الربح من تكلفة الصنف المحفوظة وقت البيع، بعد طرح المصروفات المسجلة. صحة التكلفة الأصلية تحتاج مراجعة فواتير الشراء.'),
+                const Text('يُحسب الربح بتكلفة آخر فاتورة شراء مطابقة لكود واسم الصنف قبل البيع، وإن لم توجد فاتورة مؤكدة نستخدم تكلفة البيع المسجلة. لا تتغير أرصدة المخزون أو العملاء بسبب عرض التقرير.'),
               ]);
               });
               });
