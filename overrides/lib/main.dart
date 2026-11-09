@@ -45,6 +45,7 @@ part 'approval_alerts.dart';
 
 part 'invoice_editor.dart';
 part 'sale_cost_reconciliation.dart';
+part 'customer_payment_sources.dart';
 part 'pending_sales.dart';
 part 'pending_receipts.dart';
 part 'product_import.dart';
@@ -1510,6 +1511,8 @@ class _DashboardCustomerPaymentsMetricState extends State<DashboardCustomerPayme
     db.collection('voucherCancellations').where('type',isEqualTo:'receipt').snapshots(includeMetadataChanges:true);
   late final Stream<QuerySnapshot<Map<String,dynamic>>> _receiptStream =
     db.collection('receipts').snapshots(includeMetadataChanges:true);
+  late final Stream<QuerySnapshot<Map<String,dynamic>>> _saleStream =
+    db.collection('sales').snapshots(includeMetadataChanges:true);
 
   @override Widget build(BuildContext context) => Expanded(
     child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
@@ -1517,27 +1520,35 @@ class _DashboardCustomerPaymentsMetricState extends State<DashboardCustomerPayme
       builder: (context, cancellations) =>
         StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
           stream: _receiptStream,
-          builder: (context, receipts) {
+          builder: (context, receipts) => StreamBuilder<QuerySnapshot<Map<String,dynamic>>>(
+            stream: _saleStream,
+            builder: (context, sales) {
             String amount = '—';
             String? warning;
-            if(cancellations.hasData && receipts.hasData) {
+            if(cancellations.hasData && receipts.hasData && sales.hasData) {
               try {
                 final cancelledIds = cancellations.data!.docs
                   .map((d) => '${d.data()['originalId'] ?? ''}').toSet();
-                final rows = receipts.data!.docs.map((d) =>
+                final receiptRows = receipts.data!.docs.map((d) =>
                   <String, dynamic>{...d.data(), 'id': d.id}).toList();
-                final report = summarizeActiveCustomerReceipts(rows, cancelledIds, widget.from, widget.to);
+                final saleRows = sales.data!.docs.map((d) =>
+                  <String, dynamic>{...d.data(), 'id': d.id}).toList();
+                final rows = vibCustomerPaymentReportRows(
+                  receipts:receiptRows,sales:saleRows,cancelledReceiptIds:cancelledIds);
+                final report = summarizeActiveCustomerReceipts(rows, {}, widget.from, widget.to);
                 amount = (report.totalCents / 100).toStringAsFixed(2);
                 if(cancellations.data!.metadata.isFromCache ||
                    receipts.data!.metadata.isFromCache ||
+                   sales.data!.metadata.isFromCache ||
                    cancellations.data!.metadata.hasPendingWrites ||
-                   receipts.data!.metadata.hasPendingWrites) {
+                   receipts.data!.metadata.hasPendingWrites ||
+                   sales.data!.metadata.hasPendingWrites) {
                   warning = 'بيانات السداد من الذاكرة أو تنتظر المزامنة';
                 }
               } catch (e) {
                 warning = 'تعذر مراجعة بيانات السداد: $e';
               }
-            } else if(cancellations.hasError || receipts.hasError) {
+            } else if(cancellations.hasError || receipts.hasError || sales.hasError) {
               warning = 'تعذر تحميل السداد أو الإلغاءات';
             }
             return Padding(padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 9),
@@ -1558,6 +1569,7 @@ class _DashboardCustomerPaymentsMetricState extends State<DashboardCustomerPayme
                     child: const Icon(Icons.info_outline, size: 12, color: Colors.orangeAccent))),
               ]));
           },
+        ),
         ),
     ),
   );
@@ -5411,6 +5423,7 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
   late DateTime day, endDay, draftDay, draftEndDay;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> receipts;
   late final Stream<QuerySnapshot<Map<String, dynamic>>> cancellations;
+  late final Stream<VibSalesPaymentSnapshot> invoicePayments;
 
   @override
   void initState() {
@@ -5425,6 +5438,12 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
     cancellations = widget.owner
         ? db.collection('voucherCancellations').snapshots(includeMetadataChanges: true)
         : const Stream<QuerySnapshot<Map<String, dynamic>>>.empty();
+    invoicePayments = widget.owner && !widget.suppliers
+        ? db.collection('sales').snapshots(includeMetadataChanges:true).map((q) =>
+          VibSalesPaymentSnapshot(
+            [for (final d in q.docs) <String,dynamic>{...d.data(),'id':d.id}],
+            fromCache:q.metadata.isFromCache,hasPendingWrites:q.metadata.hasPendingWrites))
+        : Stream<VibSalesPaymentSnapshot>.value(const VibSalesPaymentSnapshot([]));
   }
 
   Future<void> _choosePaymentParty(ReceiptDayReport allReceipts) async {
@@ -5616,18 +5635,27 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
             builder: (context, snapshot) {
               if (snapshot.hasError) return const Center(child: Text('تعذر تحميل تقرير السداد؛ راجع الاتصال والصلاحيات'));
               if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-              final rows = snapshot.data!.docs.where((d) => visibleAfterReset(d.data()) &&
+              return StreamBuilder<VibSalesPaymentSnapshot>(
+                stream:invoicePayments,
+                builder:(context, invoiceSnapshot) {
+                if (invoiceSnapshot.hasError) return const Center(child:Text('تعذر تحميل المدفوع من فواتير المبيعات'));
+                if (!invoiceSnapshot.hasData) return const Center(child:CircularProgressIndicator());
+              final receiptRows = snapshot.data!.docs.where((d) => visibleAfterReset(d.data()) &&
                   !cancelledIds.contains(d.id) && (!widget.suppliers || d.data()['kind']=='payment'))
                 .map((d) {
                   final source=d.data();
                   if(!widget.suppliers)return <String,dynamic>{...source,'id':d.id};
                   return supplierPaymentReportRow(d.id,source);
                 }).toList();
+              final rows = widget.suppliers ? receiptRows : vibCustomerPaymentReportRows(
+                receipts:receiptRows,sales:invoiceSnapshot.data!.rows,cancelledReceiptIds:cancelledIds);
               final allReceipts = summarizeReceiptPeriod(rows, day, endDay);
               final report = vibSelectReceiptParty(
                 allReceipts, customerSearch.text, selectedPaymentPartyKey);
-              final pending = snapshot.data!.metadata.hasPendingWrites || (widget.owner && cancelSnapshot.data!.metadata.hasPendingWrites);
-              final cached = snapshot.data!.metadata.isFromCache || (widget.owner && cancelSnapshot.data!.metadata.isFromCache);
+              final pending = snapshot.data!.metadata.hasPendingWrites || invoiceSnapshot.data!.hasPendingWrites ||
+                (widget.owner && cancelSnapshot.data!.metadata.hasPendingWrites);
+              final cached = snapshot.data!.metadata.isFromCache || invoiceSnapshot.data!.fromCache ||
+                (widget.owner && cancelSnapshot.data!.metadata.isFromCache);
               return Column(children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(8, 2, 8, 4),
@@ -5649,7 +5677,7 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                           maxLines: 1, overflow: TextOverflow.ellipsis,
                           style: const TextStyle(color: vibNeon, fontSize: 17, fontWeight: FontWeight.bold))),
                       ]),
-                      Text('${report.customers.length} ${widget.suppliers ? 'مورد' : 'عميل'} • ${report.receiptCount} ${widget.suppliers ? 'سند صرف' : 'سند قبض'}',
+                      Text('${report.customers.length} ${widget.suppliers ? 'مورد' : 'عميل'} • ${report.receiptCount} ${widget.suppliers ? 'سند صرف' : 'عملية سداد'}',
                         style: const TextStyle(fontSize: 12)),
                       if (cached || pending)
                         const Text('انتظر تأكيد مزامنة البيانات قبل الطباعة', style: TextStyle(fontSize: 11)),
@@ -5700,11 +5728,13 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                         trailing: Text(receiptReportMoney(((row['amount'] as num) * 100).round()),
                           style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold, fontSize: 13)),
-                        subtitle: Text('رقم السند: ${receiptDisplayNumber(row)} • المسؤول: ${row['actorName'] ?? ''}\n${row['note'] ?? ''}',
+                        subtitle: Text('${row['paymentSource'] == 'invoice' ? 'رقم الفاتورة' : 'رقم السند'}: ${receiptDisplayNumber(row)} • ${row['paymentSourceLabel'] ?? 'سند قبض'} • المسؤول: ${row['actorName'] ?? ''}\n${row['note'] ?? ''}',
                           style: const TextStyle(fontSize: 11, height: 1.15)),
                       ),
                     ))).toList())),
               ]);
+                },
+              );
             },
           );
         },
@@ -5741,11 +5771,21 @@ Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, Rece
       if(cancelled.metadata.isFromCache || cancelled.metadata.hasPendingWrites) throw StateError('انتظر تأكيد حالات الإلغاء من السيرفر');
       cancelledIds = cancelled.docs.map((d)=>'${d.data()['originalId'] ?? ''}').toSet();
     }
-    final rows=snapshot.docs.where((d)=>visibleAfterReset(d.data())&&!cancelledIds.contains(d.id)&&(!suppliers||d.data()['kind']=='payment')).map((d){
+    final receiptRows=snapshot.docs.where((d)=>visibleAfterReset(d.data())&&!cancelledIds.contains(d.id)&&(!suppliers||d.data()['kind']=='payment')).map((d){
       final source=d.data();
       if(!suppliers)return <String,dynamic>{...source,'id':d.id};
       return supplierPaymentReportRow(d.id,source);
     }).toList();
+    final invoiceRows=<Map<String,dynamic>>[];
+    if(owner && !suppliers) {
+      final saleSnap=await db.collection('sales').get(const GetOptions(source:Source.server));
+      if(saleSnap.metadata.isFromCache || saleSnap.metadata.hasPendingWrites) throw StateError('انتظر تأكيد فواتير البيع من السيرفر');
+      for(final sale in saleSnap.docs) {
+        invoiceRows.add(<String,dynamic>{...sale.data(),'id':sale.id});
+      }
+    }
+    final rows=suppliers ? receiptRows : vibCustomerPaymentReportRows(
+      receipts:receiptRows,sales:invoiceRows,cancelledReceiptIds:cancelledIds);
     final allConfirmed=to==null ? summarizeReceiptDay(rows,day) : summarizeReceiptPeriod(rows,day,to);
     final confirmed=vibSelectReceiptParty(allConfirmed,customerQuery,selectedPartyKey);
     if(vibReceiptReportFingerprint(confirmed)!=vibReceiptReportFingerprint(report)) {
