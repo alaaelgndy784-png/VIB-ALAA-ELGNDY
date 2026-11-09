@@ -304,6 +304,7 @@ class InvoiceCompactTableHeader extends StatelessWidget {
       Expanded(flex: 3, child: Text('السعر', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold))),
       Expanded(flex: 2, child: Text('العدد', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold))),
       Expanded(flex: 3, child: Text('الإجمالي', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold))),
+      SizedBox(width: 36, child: Text('مسح', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold))),
     ]));
 }
 
@@ -311,12 +312,12 @@ class InvoiceCompactTableLine extends StatelessWidget {
   final int number;
   final String name;
   final TextEditingController price, quantity;
-  final VoidCallback? onEdit;
-  const InvoiceCompactTableLine({super.key,required this.number,required this.name,required this.price,required this.quantity,this.onEdit});
+  final VoidCallback? onEdit, onDelete;
+  const InvoiceCompactTableLine({super.key,required this.number,required this.name,required this.price,required this.quantity,this.onEdit,this.onDelete});
   @override Widget build(BuildContext context) {
     final p=double.tryParse(price.text.trim().replaceAll(',', '.')) ?? 0;
     final q=int.tryParse(quantity.text.trim()) ?? 0;
-    return InvoiceCompactReadOnlyLine(number:number,name:name,price:p,quantity:q,onTap:onEdit);
+    return InvoiceCompactReadOnlyLine(number:number,name:name,price:p,quantity:q,onTap:onEdit,onDelete:onDelete);
   }
 }
 
@@ -324,9 +325,9 @@ class InvoiceCompactReadOnlyLine extends StatelessWidget {
   final int number, quantity;
   final String name;
   final double price;
-  final VoidCallback? onTap;
+  final VoidCallback? onTap, onDelete;
   const InvoiceCompactReadOnlyLine({super.key,required this.number,required this.name,
-    required this.price,required this.quantity,this.onTap});
+    required this.price,required this.quantity,this.onTap,this.onDelete});
   @override Widget build(BuildContext context) {
     Widget value(String text,{Color? background})=>Container(margin:const EdgeInsets.all(2),padding:const EdgeInsets.symmetric(vertical:7,horizontal:2),
       decoration:BoxDecoration(color:background,border:Border.all(color:const Color(0xFFD4D4D4))),
@@ -340,6 +341,11 @@ class InvoiceCompactReadOnlyLine extends StatelessWidget {
           Expanded(flex:3,child:value(price.toStringAsFixed(2),background:const Color(0xFFB9F6CA))),
           Expanded(flex:2,child:value('$quantity',background:const Color(0xFFFFF59D))),
           Expanded(flex:3,child:value((price*quantity).toStringAsFixed(2),background:const Color(0xFF90CAF9))),
+          SizedBox(width:36,child:onDelete == null ? const SizedBox.shrink() : IconButton(
+            key:ValueKey('remove-draft-invoice-line-$number'),
+            tooltip:'مسح البند قبل حفظ الفاتورة',
+            padding:EdgeInsets.zero,visualDensity:VisualDensity.compact,iconSize:21,
+            icon:const Icon(Icons.delete_outline,color:Colors.red),onPressed:onDelete)),
         ]))));
   }
 }
