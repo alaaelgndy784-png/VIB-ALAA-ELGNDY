@@ -87,3 +87,23 @@ Future<Map<String,double>> verifiedCostsForEditedSale(
     return {};
   }
 }
+
+
+/// Read-only verified pricing for report/dashboard display.
+/// Old saved invoice costs are preserved if no exact purchase can be proved.
+Map<String,double> verifiedCostsForSaleData(
+  Map<String,dynamic> sale,
+  Iterable<Map<String,dynamic>> purchases,
+) {
+  final stamp=sale['createdAt'];
+  if (stamp is! Timestamp) return {};
+  final names=<String,String>{};
+  for (final row in saleItems(sale)) {
+    final id=(row['productId'] ?? '').toString();
+    final name=(row['productName'] ?? '').toString();
+    if (id.isNotEmpty && name.isNotEmpty) names[id]=name;
+  }
+  return verifiedPurchaseCostsAtSale(
+    saleDate:stamp.toDate(),productNames:names,purchases:purchases,
+  );
+}
