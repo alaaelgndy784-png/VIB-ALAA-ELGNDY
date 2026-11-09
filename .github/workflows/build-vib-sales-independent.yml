@@ -153,7 +153,7 @@ jobs:
       - name: Verify invoice PDF rendering
         if: matrix.app == 'manager'
         working-directory: VIB-SALES-INDEPENDENT
-        run: flutter test test/customer_payment_sources_test.dart test/sale_cost_reconciliation_test.dart test/store_movement_test.dart test/receipt_voucher_test.dart test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart test/chat_alerts_test.dart test/approval_alerts_test.dart test/archived_purchase_view_test.dart test/return_quota_message_test.dart test/dashboard_metric_icons_test.dart test/product_import_test.dart test/inventory_tools_test.dart test/inventory_rows_test.dart test/invoice_serial_core_test.dart test/invoice_parties_test.dart test/reports_test.dart test/pending_sale_data_test.dart test/pending_sale_review_test.dart test/customer_sales_report_test.dart test/sales_invoice_cancellations_test.dart test/product_invoice_movement_test.dart test/product_movement_layout_test.dart test/payment_receipt_scope_test.dart test/legacy_purchase_groups_test.dart test/return_invoice_test.dart
+        run: flutter test test/sales_invoice_exit_guard_test.dart test/customer_payment_sources_test.dart test/sale_cost_reconciliation_test.dart test/store_movement_test.dart test/receipt_voucher_test.dart test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart test/chat_alerts_test.dart test/approval_alerts_test.dart test/archived_purchase_view_test.dart test/return_quota_message_test.dart test/dashboard_metric_icons_test.dart test/product_import_test.dart test/inventory_tools_test.dart test/inventory_rows_test.dart test/invoice_serial_core_test.dart test/invoice_parties_test.dart test/reports_test.dart test/pending_sale_data_test.dart test/pending_sale_review_test.dart test/customer_sales_report_test.dart test/sales_invoice_cancellations_test.dart test/product_invoice_movement_test.dart test/product_movement_layout_test.dart test/payment_receipt_scope_test.dart test/legacy_purchase_groups_test.dart test/return_invoice_test.dart
 
       - name: Upload invoice PDF previews
         if: matrix.app == 'manager'
@@ -170,10 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 8206/; s/versionName = .*/versionName = "0.2.66"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 8206' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.66"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=8206 --build-name=0.2.66
+          sed -i -E 's/versionCode = .*/versionCode = 8207/; s/versionName = .*/versionName = "0.2.67"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 8207' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.67"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=8207 --build-name=0.2.67
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -385,7 +385,7 @@ jobs:
           name: VIB-SALES-MANAGER-APK
           path: manager
 
-      - name: Verify 0.2.66 is a signed install-over update to 0.2.65
+      - name: Verify 0.2.67 is a signed install-over update to 0.2.65
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -404,7 +404,7 @@ jobs:
           grep -F "name='com.alaa.vibsales.managerscan'" <<< "$NEW_PACKAGE"
           grep -F "name='com.alaa.vibsales.managerscan'" <<< "$OLD_PACKAGE"
           grep -F "versionCode='10206'" <<< "$NEW_PACKAGE"
-          grep -F "versionName='0.2.66'" <<< "$NEW_PACKAGE"
+          grep -F "versionName='0.2.67'" <<< "$NEW_PACKAGE"
           grep -F "versionName='0.2.65'" <<< "$OLD_PACKAGE"
           "$SIGNER" verify --print-certs "$NEW" > /tmp/new_cert.txt
           "$SIGNER" verify --print-certs "$OLD" > /tmp/old_cert.txt
@@ -413,13 +413,13 @@ jobs:
           test -n "$NEW_SHA"
           test "$NEW_SHA" = "$OLD_SHA"
           sha256sum "$NEW" > manager/SHA256SUMS.txt
-          echo "In-place VIB Sales Manager 0.2.66 update validated."
+          echo "In-place VIB Sales Manager 0.2.67 update validated."
 
       - name: Publish direct update installer
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: vib-manager-0.2.66-complete-customer-payments-20261109
-          name: VIB Manager 0.2.66 — Invoice payments and customer receipts
+          tag_name: vib-manager-0.2.67-complete-customer-payments-20261109
+          name: VIB Manager 0.2.67 — Invoice payments and customer receipts
           target_commitish: ${{ github.sha }}
           body: |
             تحديث مباشر فوق 0.2.65 بنفس التوقيع واسم التطبيق، دون مسح بيانات المستخدم.

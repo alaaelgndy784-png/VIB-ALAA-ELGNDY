@@ -38,6 +38,7 @@ import 'package:timezone/data/latest.dart' as tzdata;
 import 'product_import_data.dart';
 import 'inventory_price_data.dart';
 import 'inventory_rows.dart';
+import 'sales_invoice_exit_guard.dart';
 
 part 'cheques.dart';
 part 'chat_alerts.dart';
@@ -3014,7 +3015,9 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         final product=productDoc(id).data();
         await editSelected(SaleLine(productId:id,unitPrice:(product['price'] as num?)?.toDouble() ?? 0),adding:true);
       }
-      return InvoiceEditorFrame(
+      return SalesInvoiceExitGuard(
+        saving:saving,
+        child:InvoiceEditorFrame(
         title: checkout ? 'حفظ فاتورة المبيعات' : 'فاتورة مبيعات',checkout:checkout,total:previewTotal,
         tableMode:true,invoiceNumber:draftNumber,itemCount:lines.length,
         quantityCount:lines.fold<int>(0,(sum,row)=>sum+(int.tryParse(row.quantity.text) ?? 0)),
@@ -3109,7 +3112,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         actions: [
           if(owner && MediaQuery.viewInsetsOf(c).bottom==0) TextButton.icon(icon:const Icon(Icons.edit_note),label:const Text('تعديل فاتورة مبيعات'),
             onPressed:saving ? null : () => editSaleByNumber(c)),
-          TextButton(onPressed:saving ? null : () {if(checkout) {update(()=>checkout=false);} else {Navigator.pop(c);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
+          TextButton(onPressed:saving ? null : () {if(checkout) {update(()=>checkout=false);} else {requestSalesInvoiceExit(c, saving:saving);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
             FocusScope.of(c).unfocus();
             if (lines.isEmpty) {
@@ -3228,6 +3231,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
             }
           }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? (!owner && lines.length > 4 ? 'إرسال للمدير' : 'تأكيد الحفظ') : (!owner && lines.length > 4 ? 'مراجعة وإرسال' : 'حفظ الفاتورة'))),
         ],
+        ),
       );
     }),
   );
