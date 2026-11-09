@@ -5488,7 +5488,7 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                         title: Text(customer.name, textAlign: TextAlign.right,
                           maxLines: 2),
                         subtitle: Text(customer.receipts.length.toString() +
-                          ' سند • ' + receiptReportMoney(customer.amountCents),
+                          (widget.suppliers ? ' سند صرف • ' : ' عملية سداد • ') + receiptReportMoney(customer.amountCents),
                           textAlign: TextAlign.right),
                         onTap: () => Navigator.pop(dialog,
                           vibReceiptPartySelectionKey(customer)),
@@ -5728,7 +5728,7 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                         trailing: Text(receiptReportMoney(((row['amount'] as num) * 100).round()),
                           style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold, fontSize: 13)),
-                        subtitle: Text('${row['paymentSource'] == 'invoice' ? 'رقم الفاتورة' : 'رقم السند'}: ${receiptDisplayNumber(row)} • ${row['paymentSourceLabel'] ?? 'سند قبض'} • المسؤول: ${row['actorName'] ?? ''}\n${row['note'] ?? ''}',
+                        subtitle: Text('${row['paymentSource'] == 'invoice' ? 'رقم الفاتورة' : 'رقم السند'}: ${receiptDisplayNumber(row)} • ${row['paymentSourceLabel'] ?? (widget.suppliers ? 'سند صرف' : 'سند قبض')} • المسؤول: ${row['actorName'] ?? ''}\n${row['note'] ?? ''}',
                           style: const TextStyle(fontSize: 11, height: 1.15)),
                       ),
                     ))).toList())),
