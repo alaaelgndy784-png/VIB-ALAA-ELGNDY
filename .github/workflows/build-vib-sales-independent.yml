@@ -372,3 +372,63 @@ jobs:
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
           make_latest: false
+
+
+  publish-manager-all-customer-payments:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/fix/vib-manager-0-2-66-all-customer-payments-20261109'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download verified manager APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+
+      - name: Verify 0.2.66 is a signed install-over update to 0.2.65
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.65-profit-cost-delete-20261109 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          NEW_PACKAGE="$("$AAPT" dump badging "$NEW" | grep '^package:')"
+          OLD_PACKAGE="$("$AAPT" dump badging "$OLD" | grep '^package:')"
+          echo "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$OLD_PACKAGE"
+          grep -F "versionCode='10206'" <<< "$NEW_PACKAGE"
+          grep -F "versionName='0.2.66'" <<< "$NEW_PACKAGE"
+          grep -F "versionName='0.2.65'" <<< "$OLD_PACKAGE"
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/new_cert.txt
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/old_cert.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new_cert.txt | head -n1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old_cert.txt | head -n1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+          echo "In-place VIB Sales Manager 0.2.66 update validated."
+
+      - name: Publish direct update installer
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.66-complete-customer-payments-20261109
+          name: VIB Manager 0.2.66 — Invoice payments and customer receipts
+          target_commitish: ${{ github.sha }}
+          body: |
+            تحديث مباشر فوق 0.2.65 بنفس التوقيع واسم التطبيق، دون مسح بيانات المستخدم.
+            تقارير حركة سداد العملاء وشاشة ملخص المدير تعرض المدفوع في فواتير المبيعات المكتملة بجانب سندات القبض النشطة.
+            تمييز واضح بين رقم فاتورة البيع ورقم سند القبض، في الشاشة وPDF A4 و80 مم.
+            استبعاد المبالغ التي أُلغي سدادها بالفواتير المعدلة أو سندات القبض الملغاة، وعدم احتساب حركة الصندوق المكررة.
+            طباعة التقرير تتأكد من مطابقة البيانات المعروضة مع قاعدة البيانات الحية قبل الطباعة.
+            لا يغير أرصدة العملاء أو المخزون، ولا يحل تجاوز Firebase للاستخدام المجاني.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
