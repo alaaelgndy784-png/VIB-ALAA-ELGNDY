@@ -208,47 +208,118 @@ class ChequeAgenda extends StatefulWidget {
   const ChequeAgenda({super.key,required this.uid});
   @override State<ChequeAgenda> createState() => _ChequeAgendaState();
 }
+
 class _ChequeAgendaState extends State<ChequeAgenda> with WidgetsBindingObserver {
-  bool completed=false;
+  String section='open';
   @override void initState() { super.initState(); WidgetsBinding.instance.addObserver(this); }
   @override void dispose() { WidgetsBinding.instance.removeObserver(this); super.dispose(); }
-  @override void didChangeAppLifecycleState(AppLifecycleState state) { if(state == AppLifecycleState.resumed) { ChequeReminders.instance.synchronize(); if(mounted) setState(() {}); } }
+  @override void didChangeAppLifecycleState(AppLifecycleState state) {
+    if(state == AppLifecycleState.resumed) {
+      ChequeReminders.instance.synchronize();
+      if(mounted) setState(() {});
+    }
+  }
   Future<void> notificationAction(bool test) async {
     try { if(test) await ChequeReminders.instance.test(); else await ChequeReminders.instance.requestPermissions(); }
     catch(e) { if(mounted) await showInvoiceSaveProblem(context,'تعذر تفعيل التنبيهات: $e',title:'تذكيرات الشيكات',button:'تمام'); }
   }
+
   @override Widget build(BuildContext context) => Column(children:[
     Padding(padding:const EdgeInsets.all(12),child:Column(children:[
       FilledButton.icon(onPressed:() => editChequeDialog(context,widget.uid),icon:const Icon(Icons.add),label:const Text('تسجيل شيك جديد')),
-      Wrap(spacing:8,children:[OutlinedButton.icon(onPressed:() => notificationAction(false),icon:const Icon(Icons.notifications_active),label:const Text('تفعيل التنبيهات')),TextButton(onPressed:() => notificationAction(true),child:const Text('اختبار إشعار'))]),
-      const Text('المواعيد بتوقيت القاهرة. تسجيل الشيك لتنظيم المواعيد؛ السداد الفعلي بسند صرف أو قبض.',style:TextStyle(fontSize:12),textAlign:TextAlign.center),
-      ValueListenableBuilder<String?>(valueListenable:ChequeReminders.instance.warning,builder:(_,message,__) => message == null ? const SizedBox.shrink() : Padding(padding:const EdgeInsets.only(top:8),child:Text(message,style:const TextStyle(color:Colors.orangeAccent)))),
-      Wrap(spacing:8,children:[ChoiceChip(label:const Text('القادمة والمتأخرة'),selected:!completed,onSelected:(_) => setState(() => completed=false)),ChoiceChip(label:const Text('تم التنفيذ'),selected:completed,onSelected:(_) => setState(() => completed=true))]),
+      Wrap(spacing:8,children:[
+        OutlinedButton.icon(onPressed:() => notificationAction(false),icon:const Icon(Icons.notifications_active),label:const Text('تفعيل التنبيهات')),
+        TextButton(onPressed:() => notificationAction(true),child:const Text('اختبار إشعار')),
+      ]),
+      const Text('متابعة الشيكات لا تغيّر الصندوق أو أرصدة الموردين. السداد الفعلي يُسجل بسند منفصل.',style:TextStyle(fontSize:12),textAlign:TextAlign.center),
+      ValueListenableBuilder<String?>(valueListenable:ChequeReminders.instance.warning,builder:(_,message,__) =>
+        message == null ? const SizedBox.shrink() : Padding(padding:const EdgeInsets.only(top:8),child:Text(message,style:const TextStyle(color:Colors.orangeAccent)))),
+      Wrap(spacing:6,runSpacing:4,children:[
+        ChoiceChip(label:const Text('القادمة والمتأخرة'),selected:section=='open',onSelected:(_) => setState(() => section='open')),
+        ChoiceChip(label:const Text('مدفوعة والأصل عند التاجر'),selected:section=='waitingOriginal',onSelected:(_) => setState(() => section='waitingOriginal')),
+        ChoiceChip(label:const Text('تم التنفيذ / استلام الأصل'),selected:section=='done',onSelected:(_) => setState(() => section='done')),
+      ]),
     ])),
-    Expanded(child:StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(stream:db.collection('settings').doc('cheques_${widget.uid}').snapshots(includeMetadataChanges:true),builder:(context,snapshot) {
-      if(snapshot.hasError) return Center(child:Text('تعذر تحميل الشيكات: ${snapshot.error}'));
-      if(!snapshot.hasData) return const Center(child:CircularProgressIndicator());
-      final rows=((snapshot.data!.data()?['records'] as List?) ?? []).map((r) => Map<String,dynamic>.from(r as Map)).where((r) => (r['status'] == 'done') == completed).toList()..sort((a,b) => '${a['dueDate']}'.compareTo('${b['dueDate']}'));
-      if(rows.isEmpty) return Center(child:Text(completed ? 'لا توجد شيكات منفذة' : 'سجل أول شيك وحدد ميعاد تذكيره'));
-      final today=chequeDate(tz.TZDateTime.now(chequeZone));
-      final nearestReminderId=completed ? null : nearestRemindedChequeId(rows,tz.TZDateTime.now(chequeZone));
-      return ListView.builder(itemCount:rows.length,itemBuilder:(context,i) {
-        final row=rows[i],due='${row['dueDate']}',late=!completed && due.compareTo(today)<0;
-        final highlighted=!completed && '${row['id'] ?? ''}'==nearestReminderId;
-        final status=completed ? 'تم التنفيذ' : late ? 'متأخر' : due == today ? 'مستحق اليوم' : 'قادم';
-        return Card(color:highlighted ? const Color(0xFF123B2D) : null,
-          shape:highlighted ? RoundedRectangleBorder(borderRadius:BorderRadius.circular(12),side:const BorderSide(color:Colors.greenAccent,width:2)) : null,
-          child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-          Text('${row['party']} • شيك ${row['type'] == 'received' ? 'وارد' : 'صادر'}',style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
-          Text('رقم الشيك: ${row['number']} • البنك: ${row['bank']}'),
-          Text('${(row['amount'] as num).toDouble().toStringAsFixed(2)} ج.م • الاستحقاق: $due'),
-          Text(highlighted ? '$status • أقرب شيك بتذكير نشط' : status,style:TextStyle(color:highlighted ? Colors.greenAccent : late ? Colors.redAccent : gold,fontWeight:highlighted ? FontWeight.bold : FontWeight.normal)),
-          if(row['reminderEnabled'] == true && row['reminderAt'] is Timestamp && !completed) Text('التذكير: ${chequeTimeLabel(row['reminderAt'])}'),
-          if('${row['note'] ?? ''}'.isNotEmpty) Text('${row['note']}'),
-          Wrap(spacing:6,children:[TextButton.icon(onPressed:() => editChequeDialog(context,widget.uid,existing:row),icon:const Icon(Icons.edit),label:const Text('تعديل')),TextButton.icon(onPressed:() => changeChequeStatus(context,widget.uid,row,!completed),icon:Icon(completed ? Icons.restore : Icons.check_circle),label:Text(completed ? 'إعادة فتح' : 'تم التنفيذ')),IconButton(tooltip:'حذف الشيك',onPressed:() => deleteCheque(context,widget.uid,row),icon:const Icon(Icons.delete_outline,color:Colors.redAccent))]),
-        ])));
-      });
-    })),
+    Expanded(child:StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
+      stream:db.collection('settings').doc('cheques_${widget.uid}').snapshots(includeMetadataChanges:true),
+      builder:(context,snapshot) {
+        if(snapshot.hasError) return Center(child:Text('تعذر تحميل الشيكات: ${snapshot.error}'));
+        if(!snapshot.hasData) return const Center(child:CircularProgressIndicator());
+        final all=((snapshot.data!.data()?['records'] as List?) ?? [])
+          .map((r) => Map<String,dynamic>.from(r as Map)).toList();
+        final awaitingCount=all.where(chequeAwaitingOriginal).length;
+        final rows=all.where((r) => chequeInSection(r,section)).toList()
+          ..sort((a,b) => '${a[section == 'waitingOriginal' ? 'transferPaidDate' : 'dueDate'] ?? ''}'
+            .compareTo('${b[section == 'waitingOriginal' ? 'transferPaidDate' : 'dueDate'] ?? ''}'));
+        final today=chequeDate(tz.TZDateTime.now(chequeZone));
+        final nearestId=section=='open' ? nearestRemindedChequeId(rows,tz.TZDateTime.now(chequeZone)) : null;
+        return Column(children:[
+          if(awaitingCount>0) Padding(padding:const EdgeInsets.symmetric(horizontal:12,vertical:5),child:
+            Text('تنبيه: عندك $awaitingCount شيك مسدد بتحويل وأصله لسه عند التاجر.',
+              style:const TextStyle(color:Colors.orangeAccent,fontWeight:FontWeight.bold),textAlign:TextAlign.center)),
+          Expanded(child: rows.isEmpty
+            ? Center(child:Text(section=='waitingOriginal' ? 'مفيش أصول شيكات معلقة عند التجار'
+              : section=='done' ? 'لا توجد شيكات منفذة' : 'سجل أول شيك وحدد موعده'))
+            : ListView.builder(itemCount:rows.length,itemBuilder:(context,i) {
+              final row=rows[i],due='${row['dueDate'] ?? ''}';
+              final awaiting=chequeAwaitingOriginal(row);
+              final paidByTransfer=row['settlementMethod']=='bank_transfer';
+              final originalReceived=paidByTransfer && row['originalReceived']==true;
+              final late=section=='open' && due.compareTo(today)<0;
+              final highlighted=section=='open' && '${row['id'] ?? ''}'==nearestId;
+              final status=awaiting ? 'مسدد بتحويل • أصل الشيك عند التاجر'
+                : section=='done' ? (originalReceived ? 'تم استلام أصل الشيك' : 'تم التنفيذ')
+                : late ? 'متأخر' : due==today ? 'مستحق اليوم' : 'قادم';
+              return Card(
+                color:awaiting ? const Color(0xFF3B2B16) : highlighted ? const Color(0xFF123B2D) : null,
+                shape:awaiting || highlighted
+                  ? RoundedRectangleBorder(borderRadius:BorderRadius.circular(12),
+                      side:BorderSide(color:awaiting ? Colors.orangeAccent : Colors.greenAccent,width:2))
+                  : null,
+                child:Padding(padding:const EdgeInsets.all(12),child:Column(
+                  crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+                  Text('${row['party']} • شيك ${row['type'] == 'received' ? 'وارد' : 'صادر'}',
+                    style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
+                  Text('رقم الشيك: ${row['number']} • البنك: ${row['bank']}'),
+                  Text('${vibVoucherMoney(row['amount'])} ج.م • الاستحقاق: $due'),
+                  Text(highlighted ? '$status • أقرب شيك بتذكير نشط' : status,
+                    style:TextStyle(color:awaiting ? Colors.orangeAccent :
+                      highlighted ? Colors.greenAccent : late ? Colors.redAccent : gold,
+                      fontWeight:FontWeight.bold)),
+                  if(paidByTransfer) Text('تم السداد بتحويل بتاريخ: ${row['transferPaidDate'] ?? 'غير مسجل'}'
+                    '${('${row['transferReference'] ?? ''}').trim().isEmpty ? '' : ' • مرجع: ${row['transferReference']}'}'),
+                  if(originalReceived) Text('استلمت أصل الشيك بتاريخ: ${row['originalReceivedDate'] ?? 'غير مسجل'}',
+                    style:const TextStyle(color:Colors.greenAccent)),
+                  if(awaiting && row['originalReminderAt'] is Timestamp)
+                    Text('تذكير باستلام الأصل: ${chequeTimeLabel(row['originalReminderAt'])}'),
+                  if(row['reminderEnabled'] == true && row['reminderAt'] is Timestamp && section=='open')
+                    Text('تذكير الاستحقاق: ${chequeTimeLabel(row['reminderAt'])}'),
+                  if('${row['note'] ?? ''}'.isNotEmpty) Text('${row['note']}'),
+                  Wrap(spacing:6,runSpacing:2,children:[
+                    if(awaiting) FilledButton.icon(
+                      onPressed:() => markChequeOriginalReceived(context,widget.uid,row),
+                      icon:const Icon(Icons.assignment_turned_in_outlined),
+                      label:const Text('استلمت أصل الشيك')),
+                    if(section=='open' && row['type']=='issued' && !paidByTransfer ||
+                       section=='done' && row['type']=='issued' && !paidByTransfer)
+                      TextButton.icon(onPressed:() => markChequeTransferPaid(context,widget.uid,row),
+                        icon:const Icon(Icons.account_balance_outlined),label:const Text('سددته بتحويل')),
+                    if(originalReceived && section=='done')
+                      TextButton.icon(onPressed:() => undoChequeOriginalReceived(context,widget.uid,row),
+                        icon:const Icon(Icons.undo),label:const Text('تصحيح استلام الأصل')),
+                    TextButton.icon(onPressed:() => editChequeDialog(context,widget.uid,existing:row),
+                      icon:const Icon(Icons.edit),label:const Text('تعديل')),
+                    TextButton.icon(onPressed:() => changeChequeStatus(context,widget.uid,row,section=='open'),
+                      icon:Icon(section=='open' ? Icons.check_circle : Icons.restore),
+                      label:Text(section=='open' ? 'تم التنفيذ' : 'إعادة فتح')),
+                    IconButton(tooltip:'حذف الشيك',onPressed:() => deleteCheque(context,widget.uid,row),
+                      icon:const Icon(Icons.delete_outline,color:Colors.redAccent)),
+                  ]),
+                ])));
+            })),
+        ]);
+      },
+    )),
   ]);
 }
 
