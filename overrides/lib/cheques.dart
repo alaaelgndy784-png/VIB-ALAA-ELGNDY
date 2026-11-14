@@ -7,6 +7,53 @@ DateTime chequeReminderBefore(DateTime due, int days, int hour, int minute) =>
     tz.TZDateTime(chequeZone, due.year, due.month, due.day - days, hour, minute);
 String chequeTimeLabel(Timestamp stamp) => DateFormat('yyyy/MM/dd • HH:mm').format(tz.TZDateTime.from(stamp.toDate(), chequeZone));
 
+bool chequeAwaitingOriginal(Map<String,dynamic> row) =>
+    row['type'] == 'issued' && row['status'] == 'done' &&
+    row['settlementMethod'] == 'bank_transfer' && row['originalReceived'] != true;
+
+bool chequeInSection(Map<String,dynamic> row, String section) {
+  if (section == 'open') return row['status'] != 'done';
+  if (section == 'waitingOriginal') return chequeAwaitingOriginal(row);
+  if (section == 'done') return row['status'] == 'done' && !chequeAwaitingOriginal(row);
+  throw ArgumentError.value(section, 'section');
+}
+
+// These updates describe the physical cheque only. They do NOT post a payment,
+// alter the supplier ledger, or move money in the cash box.
+Map<String,dynamic> chequeTransferPaidUpdate(Map<String,dynamic> cheque,
+    DateTime paidDate, String transferReference, {Timestamp? originalReminderAt}) {
+  if (cheque['id'] == null || cheque['type'] != 'issued' ||
+      cheque['settlementMethod'] == 'bank_transfer') {
+    throw StateError('سداد التحويل متاح للشيكات الصادرة غير المسجلة كتحويل');
+  }
+  final today = tz.TZDateTime.now(chequeZone);
+  if (DateTime(paidDate.year,paidDate.month,paidDate.day)
+      .isAfter(DateTime(today.year,today.month,today.day))) {
+    throw StateError('تاريخ التحويل لا يمكن أن يكون في المستقبل');
+  }
+  return {
+    'id':cheque['id'], 'status':'done', 'settlementMethod':'bank_transfer',
+    'transferPaidDate':chequeDate(paidDate), 'transferReference':transferReference.trim(),
+    'originalReceived':false, 'originalReceivedDate':null,
+    'originalReminderAt':originalReminderAt,
+  };
+}
+
+Map<String,dynamic> chequeOriginalReceivedUpdate(Map<String,dynamic> cheque, DateTime receivedDate) {
+  if (!chequeAwaitingOriginal(cheque)) throw StateError('أصل الشيك ليس معلّقًا لدى التاجر');
+  return {
+    'id':cheque['id'], 'originalReceived':true,
+    'originalReceivedDate':chequeDate(receivedDate), 'originalReminderAt':null,
+  };
+}
+
+Map<String,dynamic> chequeReopenUpdate(Map<String,dynamic> cheque) => {
+  'id':cheque['id'], 'status':'open', 'settlementMethod':null,
+  'transferPaidDate':null, 'transferReference':null,
+  'originalReceived':false, 'originalReceivedDate':null, 'originalReminderAt':null,
+};
+
+
 String? nearestRemindedChequeId(List<Map<String,dynamic>> rows,DateTime now) {
   final open=rows.where((row)=>row['status']!='done' && row['reminderEnabled']==true && row['dueDate'] is String).toList();
   if(open.isEmpty)return null;
@@ -29,15 +76,21 @@ class ChequeReminderJob {
 List<ChequeReminderJob> planChequeReminders(List<Map<String,dynamic>> rows, DateTime now) {
   final jobs = <ChequeReminderJob>[], used = <int>{};
   for (final row in rows) {
-    if (row['status'] == 'done' || row['reminderEnabled'] != true) continue;
-    final stamp = row['reminderAt'];
+    final originalOutstanding = chequeAwaitingOriginal(row);
+    if (!originalOutstanding && (row['status'] == 'done' || row['reminderEnabled'] != true)) continue;
+    final stamp = originalOutstanding ? row['originalReminderAt'] : row['reminderAt'];
     if (stamp is! Timestamp || !stamp.toDate().isAfter(now)) continue;
     final id = row['notificationId'];
     if (id is! int || id < 1 || id >= 2147483646 || !used.add(id)) throw StateError('راجع أرقام تنبيهات الشيكات');
-    final amount = (row['amount'] as num).toDouble().toStringAsFixed(2);
-    final body = 'شيك ${row['type'] == 'received' ? 'وارد' : 'صادر'} رقم ${row['number']} • ${row['party']} • $amount ج.م • يستحق ${row['dueDate']}';
-    jobs.add(ChequeReminderJob(id, 'تذكير بموعد شيك', body,
-      'cheque:${row['id']}:${stamp.millisecondsSinceEpoch}:${jsonEncode([row['number'],row['party'],row['amount'],row['dueDate'],row['type']])}',stamp.toDate()));
+    final amount = vibVoucherMoney(row['amount']);
+    final title = originalOutstanding ? 'تذكير باستلام أصل شيك' : 'تذكير بموعد شيك';
+    final body = originalOutstanding
+      ? 'شيك رقم ${row['number']} سددته بتحويل • أصله ما زال عند ${row['party']} • $amount ج.م'
+      : 'شيك ${row['type'] == 'received' ? 'وارد' : 'صادر'} رقم ${row['number']} • ${row['party']} • $amount ج.م • يستحق ${row['dueDate']}';
+    final content = [row['number'],row['party'],row['amount'],row['dueDate'],row['type'],
+      if (originalOutstanding) 'awaiting-original'];
+    jobs.add(ChequeReminderJob(id, title, body,
+      'cheque:${row['id']}:${stamp.millisecondsSinceEpoch}:${jsonEncode(content)}',stamp.toDate()));
   }
   jobs.sort((a,b) => a.when.compareTo(b.when));
   if (jobs.length > 300) throw StateError('الحد الأقصى 300 تذكير قادم؛ أغلق الشيكات المنتهية أولًا');
@@ -157,47 +210,119 @@ class ChequeAgenda extends StatefulWidget {
   const ChequeAgenda({super.key,required this.uid});
   @override State<ChequeAgenda> createState() => _ChequeAgendaState();
 }
+
 class _ChequeAgendaState extends State<ChequeAgenda> with WidgetsBindingObserver {
-  bool completed=false;
+  String section='open';
   @override void initState() { super.initState(); WidgetsBinding.instance.addObserver(this); }
   @override void dispose() { WidgetsBinding.instance.removeObserver(this); super.dispose(); }
-  @override void didChangeAppLifecycleState(AppLifecycleState state) { if(state == AppLifecycleState.resumed) { ChequeReminders.instance.synchronize(); if(mounted) setState(() {}); } }
+  @override void didChangeAppLifecycleState(AppLifecycleState state) {
+    if(state == AppLifecycleState.resumed) {
+      ChequeReminders.instance.synchronize();
+      if(mounted) setState(() {});
+    }
+  }
   Future<void> notificationAction(bool test) async {
     try { if(test) await ChequeReminders.instance.test(); else await ChequeReminders.instance.requestPermissions(); }
     catch(e) { if(mounted) await showInvoiceSaveProblem(context,'تعذر تفعيل التنبيهات: $e',title:'تذكيرات الشيكات',button:'تمام'); }
   }
+
   @override Widget build(BuildContext context) => Column(children:[
     Padding(padding:const EdgeInsets.all(12),child:Column(children:[
       FilledButton.icon(onPressed:() => editChequeDialog(context,widget.uid),icon:const Icon(Icons.add),label:const Text('تسجيل شيك جديد')),
-      Wrap(spacing:8,children:[OutlinedButton.icon(onPressed:() => notificationAction(false),icon:const Icon(Icons.notifications_active),label:const Text('تفعيل التنبيهات')),TextButton(onPressed:() => notificationAction(true),child:const Text('اختبار إشعار'))]),
-      const Text('المواعيد بتوقيت القاهرة. تسجيل الشيك لتنظيم المواعيد؛ السداد الفعلي بسند صرف أو قبض.',style:TextStyle(fontSize:12),textAlign:TextAlign.center),
-      ValueListenableBuilder<String?>(valueListenable:ChequeReminders.instance.warning,builder:(_,message,__) => message == null ? const SizedBox.shrink() : Padding(padding:const EdgeInsets.only(top:8),child:Text(message,style:const TextStyle(color:Colors.orangeAccent)))),
-      Wrap(spacing:8,children:[ChoiceChip(label:const Text('القادمة والمتأخرة'),selected:!completed,onSelected:(_) => setState(() => completed=false)),ChoiceChip(label:const Text('تم التنفيذ'),selected:completed,onSelected:(_) => setState(() => completed=true))]),
+      Wrap(spacing:8,children:[
+        OutlinedButton.icon(onPressed:() => notificationAction(false),icon:const Icon(Icons.notifications_active),label:const Text('تفعيل التنبيهات')),
+        TextButton(onPressed:() => notificationAction(true),child:const Text('اختبار إشعار')),
+      ]),
+      const Text('متابعة الشيكات لا تغيّر الصندوق أو أرصدة الموردين. السداد الفعلي يُسجل بسند منفصل.',style:TextStyle(fontSize:12),textAlign:TextAlign.center),
+      ValueListenableBuilder<String?>(valueListenable:ChequeReminders.instance.warning,builder:(_,message,__) =>
+        message == null ? const SizedBox.shrink() : Padding(padding:const EdgeInsets.only(top:8),child:Text(message,style:const TextStyle(color:Colors.orangeAccent)))),
+      Wrap(spacing:6,runSpacing:4,children:[
+        ChoiceChip(label:const Text('القادمة والمتأخرة'),selected:section=='open',onSelected:(_) => setState(() => section='open')),
+        ChoiceChip(label:const Text('مدفوعة والأصل عند التاجر'),selected:section=='waitingOriginal',onSelected:(_) => setState(() => section='waitingOriginal')),
+        ChoiceChip(label:const Text('تم التنفيذ / استلام الأصل'),selected:section=='done',onSelected:(_) => setState(() => section='done')),
+      ]),
     ])),
-    Expanded(child:StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(stream:db.collection('settings').doc('cheques_${widget.uid}').snapshots(includeMetadataChanges:true),builder:(context,snapshot) {
-      if(snapshot.hasError) return Center(child:Text('تعذر تحميل الشيكات: ${snapshot.error}'));
-      if(!snapshot.hasData) return const Center(child:CircularProgressIndicator());
-      final rows=((snapshot.data!.data()?['records'] as List?) ?? []).map((r) => Map<String,dynamic>.from(r as Map)).where((r) => (r['status'] == 'done') == completed).toList()..sort((a,b) => '${a['dueDate']}'.compareTo('${b['dueDate']}'));
-      if(rows.isEmpty) return Center(child:Text(completed ? 'لا توجد شيكات منفذة' : 'سجل أول شيك وحدد ميعاد تذكيره'));
-      final today=chequeDate(tz.TZDateTime.now(chequeZone));
-      final nearestReminderId=completed ? null : nearestRemindedChequeId(rows,tz.TZDateTime.now(chequeZone));
-      return ListView.builder(itemCount:rows.length,itemBuilder:(context,i) {
-        final row=rows[i],due='${row['dueDate']}',late=!completed && due.compareTo(today)<0;
-        final highlighted=!completed && '${row['id'] ?? ''}'==nearestReminderId;
-        final status=completed ? 'تم التنفيذ' : late ? 'متأخر' : due == today ? 'مستحق اليوم' : 'قادم';
-        return Card(color:highlighted ? const Color(0xFF123B2D) : null,
-          shape:highlighted ? RoundedRectangleBorder(borderRadius:BorderRadius.circular(12),side:const BorderSide(color:Colors.greenAccent,width:2)) : null,
-          child:Padding(padding:const EdgeInsets.all(12),child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-          Text('${row['party']} • شيك ${row['type'] == 'received' ? 'وارد' : 'صادر'}',style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
-          Text('رقم الشيك: ${row['number']} • البنك: ${row['bank']}'),
-          Text('${(row['amount'] as num).toDouble().toStringAsFixed(2)} ج.م • الاستحقاق: $due'),
-          Text(highlighted ? '$status • أقرب شيك بتذكير نشط' : status,style:TextStyle(color:highlighted ? Colors.greenAccent : late ? Colors.redAccent : gold,fontWeight:highlighted ? FontWeight.bold : FontWeight.normal)),
-          if(row['reminderEnabled'] == true && row['reminderAt'] is Timestamp && !completed) Text('التذكير: ${chequeTimeLabel(row['reminderAt'])}'),
-          if('${row['note'] ?? ''}'.isNotEmpty) Text('${row['note']}'),
-          Wrap(spacing:6,children:[TextButton.icon(onPressed:() => editChequeDialog(context,widget.uid,existing:row),icon:const Icon(Icons.edit),label:const Text('تعديل')),TextButton.icon(onPressed:() => changeChequeStatus(context,widget.uid,row,!completed),icon:Icon(completed ? Icons.restore : Icons.check_circle),label:Text(completed ? 'إعادة فتح' : 'تم التنفيذ')),IconButton(tooltip:'حذف الشيك',onPressed:() => deleteCheque(context,widget.uid,row),icon:const Icon(Icons.delete_outline,color:Colors.redAccent))]),
-        ])));
-      });
-    })),
+    Expanded(child:StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
+      stream:db.collection('settings').doc('cheques_${widget.uid}').snapshots(includeMetadataChanges:true),
+      builder:(context,snapshot) {
+        if(snapshot.hasError) return Center(child:Text('تعذر تحميل الشيكات: ${snapshot.error}'));
+        if(!snapshot.hasData) return const Center(child:CircularProgressIndicator());
+        final all=((snapshot.data!.data()?['records'] as List?) ?? [])
+          .map((r) => Map<String,dynamic>.from(r as Map)).toList();
+        final awaitingCount=all.where(chequeAwaitingOriginal).length;
+        final rows=all.where((r) => chequeInSection(r,section)).toList()
+          ..sort((a,b) => '${a[section == 'waitingOriginal' ? 'transferPaidDate' : 'dueDate'] ?? ''}'
+            .compareTo('${b[section == 'waitingOriginal' ? 'transferPaidDate' : 'dueDate'] ?? ''}'));
+        final today=chequeDate(tz.TZDateTime.now(chequeZone));
+        final nearestId=section=='open' ? nearestRemindedChequeId(rows,tz.TZDateTime.now(chequeZone)) : null;
+        return Column(children:[
+          if(awaitingCount>0) Padding(padding:const EdgeInsets.symmetric(horizontal:12,vertical:5),child:
+            Text('تنبيه: عندك $awaitingCount شيك مسدد بتحويل وأصله لسه عند التاجر.',
+              style:const TextStyle(color:Colors.orangeAccent,fontWeight:FontWeight.bold),textAlign:TextAlign.center)),
+          Expanded(child: rows.isEmpty
+            ? Center(child:Text(section=='waitingOriginal' ? 'مفيش أصول شيكات معلقة عند التجار'
+              : section=='done' ? 'لا توجد شيكات منفذة' : 'سجل أول شيك وحدد موعده'))
+            : ListView.builder(itemCount:rows.length,itemBuilder:(context,i) {
+              final row=rows[i],due='${row['dueDate'] ?? ''}';
+              final awaiting=chequeAwaitingOriginal(row);
+              final paidByTransfer=row['settlementMethod']=='bank_transfer';
+              final originalReceived=paidByTransfer && row['originalReceived']==true;
+              final late=section=='open' && due.compareTo(today)<0;
+              final highlighted=section=='open' && '${row['id'] ?? ''}'==nearestId;
+              final status=awaiting ? 'مسدد بتحويل • أصل الشيك عند التاجر'
+                : section=='done' ? (originalReceived ? 'تم استلام أصل الشيك' : 'تم التنفيذ')
+                : late ? 'متأخر' : due==today ? 'مستحق اليوم' : 'قادم';
+              return Card(
+                color:awaiting ? const Color(0xFF3B2B16) : highlighted ? const Color(0xFF123B2D) : null,
+                shape:awaiting || highlighted
+                  ? RoundedRectangleBorder(borderRadius:BorderRadius.circular(12),
+                      side:BorderSide(color:awaiting ? Colors.orangeAccent : Colors.greenAccent,width:2))
+                  : null,
+                child:Padding(padding:const EdgeInsets.all(12),child:Column(
+                  crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+                  Text('${row['party']} • شيك ${row['type'] == 'received' ? 'وارد' : 'صادر'}',
+                    style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
+                  Text('رقم الشيك: ${row['number']} • البنك: ${row['bank']}'),
+                  Text('${vibVoucherMoney(row['amount'])} ج.م • الاستحقاق: $due'),
+                  Text(highlighted ? '$status • أقرب شيك بتذكير نشط' : status,
+                    style:TextStyle(color:awaiting ? Colors.orangeAccent :
+                      highlighted ? Colors.greenAccent : late ? Colors.redAccent : gold,
+                      fontWeight:FontWeight.bold)),
+                  if(paidByTransfer) Text('تم السداد بتحويل بتاريخ: ${row['transferPaidDate'] ?? 'غير مسجل'}'),
+                  if(paidByTransfer && '${row['transferReference'] ?? ''}'.trim().isNotEmpty)
+                    Text('مرجع التحويل: ${row['transferReference']}'),
+                  if(originalReceived) Text('استلمت أصل الشيك بتاريخ: ${row['originalReceivedDate'] ?? 'غير مسجل'}',
+                    style:const TextStyle(color:Colors.greenAccent)),
+                  if(awaiting && row['originalReminderAt'] is Timestamp)
+                    Text('تذكير باستلام الأصل: ${chequeTimeLabel(row['originalReminderAt'])}'),
+                  if(row['reminderEnabled'] == true && row['reminderAt'] is Timestamp && section=='open')
+                    Text('تذكير الاستحقاق: ${chequeTimeLabel(row['reminderAt'])}'),
+                  if('${row['note'] ?? ''}'.isNotEmpty) Text('${row['note']}'),
+                  Wrap(spacing:6,runSpacing:2,children:[
+                    if(awaiting) FilledButton.icon(
+                      onPressed:() => markChequeOriginalReceived(context,widget.uid,row),
+                      icon:const Icon(Icons.assignment_turned_in_outlined),
+                      label:const Text('استلمت أصل الشيك')),
+                    if(section=='open' && row['type']=='issued' && !paidByTransfer ||
+                       section=='done' && row['type']=='issued' && !paidByTransfer)
+                      TextButton.icon(onPressed:() => markChequeTransferPaid(context,widget.uid,row),
+                        icon:const Icon(Icons.account_balance_outlined),label:const Text('سددته بتحويل')),
+                    if(originalReceived && section=='done')
+                      TextButton.icon(onPressed:() => undoChequeOriginalReceived(context,widget.uid,row),
+                        icon:const Icon(Icons.undo),label:const Text('تصحيح استلام الأصل')),
+                    TextButton.icon(onPressed:() => editChequeDialog(context,widget.uid,existing:row),
+                      icon:const Icon(Icons.edit),label:const Text('تعديل')),
+                    TextButton.icon(onPressed:() => changeChequeStatus(context,widget.uid,row,section=='open'),
+                      icon:Icon(section=='open' ? Icons.check_circle : Icons.restore),
+                      label:Text(section=='open' ? 'تم التنفيذ' : 'إعادة فتح')),
+                    IconButton(tooltip:'حذف الشيك',onPressed:() => deleteCheque(context,widget.uid,row),
+                      icon:const Icon(Icons.delete_outline,color:Colors.redAccent)),
+                  ]),
+                ])));
+            })),
+        ]);
+      },
+    )),
   ]);
 }
 
@@ -231,7 +356,7 @@ Future<void> editChequeDialog(BuildContext context,String uid,{Map<String,dynami
   await showDialog<void>(context:context,barrierDismissible:false,builder:(dialog) => StatefulBuilder(builder:(dialog,update) => AlertDialog(
     title:Text(existing == null ? 'تسجيل موعد شيك' : 'تعديل موعد الشيك'),
     content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-      DropdownButtonFormField<String>(initialValue:type,isExpanded:true,decoration:const InputDecoration(labelText:'نوع الشيك'),items:const [DropdownMenuItem(value:'issued',child:Text('صادر — عليّ')),DropdownMenuItem(value:'received',child:Text('وارد — ليا'))],onChanged:saving ? null : (v) => update(() => type=v!)),
+      DropdownButtonFormField<String>(initialValue:type,isExpanded:true,decoration:const InputDecoration(labelText:'نوع الشيك'),items:const [DropdownMenuItem(value:'issued',child:Text('صادر — عليّ')),DropdownMenuItem(value:'received',child:Text('وارد — ليا'))],onChanged:saving || existing?['settlementMethod']=='bank_transfer' ? null : (v) => update(() => type=v!)),
       TextField(controller:number,enabled:!saving,maxLength:60,decoration:const InputDecoration(labelText:'رقم الشيك *')),
       TextField(controller:party,enabled:!saving,maxLength:120,decoration:const InputDecoration(labelText:'اسم المستفيد / صاحب الشيك *')),
       TextField(controller:bank,enabled:!saving,maxLength:120,decoration:const InputDecoration(labelText:'البنك (اختياري)')),
@@ -247,6 +372,9 @@ Future<void> editChequeDialog(BuildContext context,String uid,{Map<String,dynami
     ])),
     actions:[TextButton(onPressed:saving ? null : () => Navigator.pop(dialog),child:const Text('إلغاء')),FilledButton(onPressed:saving ? null : () async {
       final value=double.tryParse(_ocrNumber(amount.text.trim().replaceAll(',', '.')));
+      if(existing?['settlementMethod']=='bank_transfer' && type!='issued') {
+        await showInvoiceSaveProblem(dialog,'الشيك المسدد بتحويل لازم يفضل شيك صادر. صحح حالة السداد أولًا لو سجلتها بالغلط.',title:'متابعة الشيك',button:'رجوع');return;
+      }
       if(number.text.trim().isEmpty || party.text.trim().isEmpty || value == null || !value.isFinite || value <= 0 || (value*100).round() <= 0 || value>1000000000000) { await showInvoiceSaveProblem(dialog,'اكتب رقم الشيك والاسم وقيمة صحيحة أكبر من صفر.',title:'موعد الشيك',button:'رجوع');return; }
       if(enabled && existing?['status'] != 'done' && (!remind.isAfter(DateTime.now()) || !remind.isBefore(tz.TZDateTime(chequeZone,due.year,due.month,due.day+1)))) { await showInvoiceSaveProblem(dialog,'اختر تذكيرًا في المستقبل ويكون قبل نهاية يوم استحقاق الشيك.',title:'وقت التذكير',button:'رجوع');return; }
       update(() => saving=true);
@@ -263,11 +391,157 @@ Future<void> editChequeDialog(BuildContext context,String uid,{Map<String,dynami
   for(final c in [number,party,bank,amount,note]) {c.dispose();}
 }
 
-Future<void> changeChequeStatus(BuildContext context,String uid,Map<String,dynamic> row,bool done) async {
+
+Future<void> markChequeTransferPaid(BuildContext context,String uid,Map<String,dynamic> row) async {
+  final reference=TextEditingController();
+  final today=tz.TZDateTime.now(chequeZone);
+  DateTime paidDate=DateTime(today.year,today.month,today.day);
+  DateTime remind=chequeReminderBefore(
+      DateTime(today.year,today.month,today.day+7),0,9,0);
+  bool remindEnabled=true,saving=false;
   try {
-    await saveChequeRecord(uid,{'id':row['id'],'status':done ? 'done' : 'open'},expectedRevision:(row['revision'] as int?) ?? 0);
-    if(context.mounted) await showInvoiceSaveProblem(context,done ? 'تم تسجيل تنفيذ الشيك وإلغاء تذكيره. سجّل السداد بسند صرف أو قبض عند الحاجة.' : 'تم إعادة فتح الشيك. راجع تاريخ التذكير لو فات موعده.',title:'مواعيد الشيكات',button:'تمام',success:true);
-  } catch(e) {if(context.mounted) await showInvoiceSaveProblem(context,'تعذر تحديث الشيك: $e',title:'مواعيد الشيكات',button:'تمام');}
+    await showDialog<void>(context:context,barrierDismissible:false,
+      builder:(dialog) => StatefulBuilder(builder:(dialog,update) => AlertDialog(
+        title:const Text('سداد الشيك بتحويل — أصل الشيك عند التاجر'),
+        content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,
+          crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+          Text('شيك رقم ${row['number']} • التاجر: ${row['party']}'),
+          Text('القيمة: ${vibVoucherMoney(row['amount'])} ج.م'),
+          const SizedBox(height:8),
+          const Text('التسجيل ده للمتابعة فقط؛ مش بيعمل سند صرف جديد ولا بيغيّر حساب المورد أو الصندوق.',
+            style:TextStyle(color:Colors.orangeAccent)),
+          OutlinedButton.icon(
+            onPressed:saving ? null : () async {
+              final picked=await showDatePicker(context:dialog,initialDate:paidDate,
+                firstDate:DateTime(2000),lastDate:DateTime(today.year,today.month,today.day));
+              if(picked != null && dialog.mounted)update(() => paidDate=picked);
+            },
+            icon:const Icon(Icons.event_available),label:Text('تاريخ التحويل: ${chequeDate(paidDate)}')),
+          TextField(controller:reference,enabled:!saving,maxLength:120,
+            decoration:const InputDecoration(labelText:'رقم التحويل / مرجع العملية (اختياري)')),
+          SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('ذكرني باستلام أصل الشيك'),
+            value:remindEnabled,onChanged:saving ? null : (v) => update(() => remindEnabled=v)),
+          if(remindEnabled) OutlinedButton.icon(
+            onPressed:saving ? null : () async {
+              final date=await showDatePicker(context:dialog,
+                initialDate:DateTime(remind.year,remind.month,remind.day),
+                firstDate:DateTime(today.year,today.month,today.day),
+                lastDate:DateTime(2100));
+              if(date==null || !dialog.mounted)return;
+              final time=await showTimePicker(context:dialog,
+                initialTime:TimeOfDay(hour:remind.hour,minute:remind.minute));
+              if(time!=null && dialog.mounted)update(() => remind=tz.TZDateTime(
+                chequeZone,date.year,date.month,date.day,time.hour,time.minute));
+            },
+            icon:const Icon(Icons.alarm),label:Text('تذكير استلام الأصل: ${DateFormat('dd/MM/yyyy HH:mm').format(remind)}')),
+        ])),
+        actions:[
+          TextButton(onPressed:saving ? null : () => Navigator.pop(dialog),child:const Text('إلغاء')),
+          FilledButton(onPressed:saving ? null : () async {
+            if(remindEnabled && !remind.isAfter(DateTime.now())) {
+              await showInvoiceSaveProblem(dialog,'حدد تذكيرًا في المستقبل.',title:'تذكير استلام الشيك',button:'رجوع');
+              return;
+            }
+            update(() => saving=true);
+            try {
+              final change=chequeTransferPaidUpdate(row,paidDate,reference.text,
+                originalReminderAt:remindEnabled ? Timestamp.fromDate(remind) : null);
+              await saveChequeRecord(uid,change,expectedRevision:(row['revision'] as int?) ?? 0);
+              if(remindEnabled) {
+                try {await ChequeReminders.instance.requestPermissions();}
+                catch(e) {ChequeReminders.instance.warning.value='تم الحفظ لكن تعذر تفعيل تذكير الاستلام: $e';}
+              }
+              if(dialog.mounted)Navigator.pop(dialog);
+              if(context.mounted)await showInvoiceSaveProblem(context,
+                'اتسجل إن الشيك مسدد بتحويل، لكن أصل الشيك لسه عند التاجر. هتلاقيه في «مدفوعة والأصل عند التاجر». السداد المحاسبي لازم يكون بسند منفصل.',
+                title:'متابعة أصل الشيك',button:'تمام',success:true);
+            } catch(e) {
+              if(dialog.mounted){update(() => saving=false);
+                await showInvoiceSaveProblem(dialog,'تعذر تسجيل التحويل: $e',
+                  title:'متابعة أصل الشيك',button:'رجوع');}
+            }
+          },child:Text(saving?'جارٍ الحفظ…':'تأكيد السداد والمتابعة')),
+        ],
+      )));
+  } finally { reference.dispose(); }
+}
+
+Future<void> markChequeOriginalReceived(BuildContext context,String uid,Map<String,dynamic> row) async {
+  final now=tz.TZDateTime.now(chequeZone);
+  DateTime receivedDate=DateTime(now.year,now.month,now.day);
+  final yes=await showDialog<bool>(context:context,
+    builder:(dialog)=>StatefulBuilder(builder:(dialog,update)=>AlertDialog(
+      title:const Text('تأكيد استلام أصل الشيك'),
+      content:Column(mainAxisSize:MainAxisSize.min,children:[
+        Text('هل استلمت فعلاً أصل الشيك رقم ${row['number']} من ${row['party']}؟'),
+        OutlinedButton.icon(onPressed:() async {
+          final picked=await showDatePicker(context:dialog,initialDate:receivedDate,
+            firstDate:DateTime(2000),lastDate:DateTime(now.year,now.month,now.day));
+          if(picked!=null && dialog.mounted) update(() => receivedDate=picked);
+        },icon:const Icon(Icons.calendar_today),label:Text('تاريخ استلام الأصل: ${chequeDate(receivedDate)}')),
+      ]),
+      actions:[
+        TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('لسه ما استلمتوش')),
+        FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('أيوه، استلمت الأصل')),
+      ],
+    )))??false;
+  if(!yes)return;
+  try{
+    await saveChequeRecord(uid,chequeOriginalReceivedUpdate(row,receivedDate),
+      expectedRevision:(row['revision'] as int?) ?? 0);
+    if(context.mounted)await showInvoiceSaveProblem(context,
+      'اتسجل استلام أصل الشيك بتاريخ ${chequeDate(receivedDate)}، واتشال من قائمة الأصول عند التجار، واتلغى تذكير الاستلام.',
+      title:'استلام أصل الشيك',button:'تمام',success:true);
+  }catch(e){
+    if(context.mounted)await showInvoiceSaveProblem(context,'تعذر تأكيد الاستلام: $e',
+      title:'استلام أصل الشيك',button:'تمام');
+  }
+}
+
+Future<void> undoChequeOriginalReceived(BuildContext context,String uid,Map<String,dynamic> row) async {
+  if(row['settlementMethod']!='bank_transfer' || row['originalReceived']!=true) return;
+  final yes=await showDialog<bool>(context:context,builder:(dialog)=>AlertDialog(
+    title:const Text('تصحيح حالة أصل الشيك'),
+    content:Text('هل تريد إلغاء تأكيد استلام أصل الشيك رقم ${row['number']}؟ هيظهر مرة تانية في شيكات عند التاجر، من غير تغيير أي سداد مالي.'),
+    actions:[
+      TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('رجوع')),
+      FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('إلغاء تأكيد الاستلام')),
+    ]))??false;
+  if(!yes)return;
+  try{
+    await saveChequeRecord(uid,{
+      'id':row['id'],'originalReceived':false,'originalReceivedDate':null,'originalReminderAt':null,
+    },expectedRevision:(row['revision'] as int?) ?? 0);
+    if(context.mounted)await showInvoiceSaveProblem(context,'الشيك رجع لقائمة الأصول عند التجار. لم يتغير حساب المورد أو الصندوق.',
+      title:'تصحيح حالة الأصل',button:'تمام',success:true);
+  }catch(e){
+    if(context.mounted)await showInvoiceSaveProblem(context,'تعذر التصحيح: $e',
+      title:'تصحيح حالة الأصل',button:'تمام');
+  }
+}
+
+Future<void> changeChequeStatus(BuildContext context,String uid,Map<String,dynamic> row,bool done) async {
+  if(!done && row['settlementMethod']=='bank_transfer') {
+    final yes=await showDialog<bool>(context:context,builder:(dialog)=>AlertDialog(
+      title:const Text('إعادة فتح شيك مسدد بتحويل'),
+      content:const Text('ده تصحيح للمتابعة بس: هيتشال تسجيل التحويل وحالة أصل الشيك من قسم الشيكات، لكن مش هيتلغى أي سند صرف أو تحويل بنكي. متأكد؟'),
+      actions:[
+        TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('رجوع')),
+        FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('تأكيد إعادة الفتح')),
+      ]))??false;
+    if(!yes)return;
+  }
+  try {
+    await saveChequeRecord(uid,done ? {'id':row['id'],'status':'done'} : chequeReopenUpdate(row),
+      expectedRevision:(row['revision'] as int?) ?? 0);
+    if(context.mounted)await showInvoiceSaveProblem(context,done
+      ? 'تم تسجيل تنفيذ الشيك وإلغاء تذكير الاستحقاق. سجّل السداد بسند صرف أو قبض عند الحاجة.'
+      : 'تم إعادة فتح الشيك. راجع تاريخ التذكير لو فات موعده. لم تتغير القيود المحاسبية.',
+      title:'مواعيد الشيكات',button:'تمام',success:true);
+  } catch(e) {
+    if(context.mounted)await showInvoiceSaveProblem(context,'تعذر تحديث الشيك: $e',
+      title:'مواعيد الشيكات',button:'تمام');
+  }
 }
 Future<void> deleteCheque(BuildContext context,String uid,Map<String,dynamic> row) async {
   final yes=await showDialog<bool>(context:context,builder:(dialog) => AlertDialog(title:const Text('حذف الشيك'),content:Text('حذف الشيك رقم ${row['number']} وإلغاء تذكيره؟'),actions:[TextButton(onPressed:() => Navigator.pop(dialog,false),child:const Text('إلغاء')),FilledButton(onPressed:() => Navigator.pop(dialog,true),child:const Text('حذف'))])) ?? false;
