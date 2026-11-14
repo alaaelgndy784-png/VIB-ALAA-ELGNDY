@@ -43,6 +43,46 @@ double profitExpensesForPeriod(
 double netProfitAfterExpenses(double revenue, double cost, double expenses) =>
   revenue - cost - expenses;
 
+class ExpensePeriodSummary {
+  final List<Map<String, dynamic>> rows;
+  final int totalCents;
+  const ExpensePeriodSummary(this.rows, this.totalCents);
+  double get total => totalCents / 100;
+}
+
+// Expenses appear by their recording date. Both selected days are included in
+// Africa/Cairo time; the separate cashbox mirror is never an extra expense.
+ExpensePeriodSummary summarizeExpensePeriod(
+    Iterable<Map<String, dynamic>> movements, DateTime from, DateTime to) {
+  final start = movementReportBoundary(from);
+  final until = movementReportBoundary(to, next: true);
+  if (!until.isAfter(start)) {
+    throw StateError('تاريخ نهاية المصروفات لازم يكون بعد أو يساوي تاريخ البداية');
+  }
+  final filtered = <Map<String, dynamic>>[];
+  var totalCents = 0;
+  for (final row in movements) {
+    if (row['accountType'] != 'expenses' || !visibleAfterReset(row)) continue;
+    final stamp = row['createdAt'];
+    final at = stamp is Timestamp ? stamp.toDate()
+      : stamp is DateTime ? stamp : null;
+    if (at == null || at.isBefore(start) || !at.isBefore(until)) continue;
+    filtered.add(row);
+    final rawAmount = row['amount'];
+    if (rawAmount is num && rawAmount.isFinite && rawAmount > 0) {
+      totalCents += (rawAmount.toDouble() * 100).round();
+    }
+  }
+  filtered.sort((a, b) {
+    DateTime? recorded(Map<String, dynamic> item) {
+      final raw = item['createdAt'];
+      return raw is Timestamp ? raw.toDate() : raw is DateTime ? raw : null;
+    }
+    return recorded(b)!.compareTo(recorded(a)!);
+  });
+  return ExpensePeriodSummary(List.unmodifiable(filtered), totalCents);
+}
+
 
 class InvoiceMovementReportRow {
   final String id, number, customer;
