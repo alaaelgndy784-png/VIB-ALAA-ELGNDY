@@ -17,6 +17,7 @@ import android.os.Bundle
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.embedding.android.FlutterFragmentActivity
 import io.flutter.plugin.common.MethodChannel
@@ -25,6 +26,7 @@ class MainActivity: FlutterFragmentActivity() {
     private val requestCodeRingtone = 8041
     private var pendingRingtoneChoice: MethodChannel.Result? = null
     private var notificationTone: android.media.Ringtone? = null
+    private var lastLoginToneAtMs: Long = -10000L
     private val toneHandler = Handler(Looper.getMainLooper())
     private val stopNotificationTone = Runnable {
         notificationTone?.stop()
@@ -61,6 +63,13 @@ class MainActivity: FlutterFragmentActivity() {
                 }
                 "play" -> {
                     try {
+                        // A successful biometric unlock should produce only one short message
+                        // sound, even if multiple UI listeners request playback together.
+                        val elapsed = SystemClock.elapsedRealtime()
+                        if (elapsed - lastLoginToneAtMs < 3000L) {
+                            result.success(true)
+                            return@setMethodCallHandler
+                        }
                         val saved = getPreferences(MODE_PRIVATE)
                             .getString("vib_login_notification_uri", null)
                         val uri = if (saved.isNullOrBlank())
@@ -77,7 +86,8 @@ class MainActivity: FlutterFragmentActivity() {
                                 tone.isLooping = false
                             }
                             tone.play()
-                            toneHandler.postDelayed(stopNotificationTone, 2000L)
+                            lastLoginToneAtMs = elapsed
+                            toneHandler.postDelayed(stopNotificationTone, 1500L)
                             result.success(true)
                         }
                     } catch (error: Exception) {
