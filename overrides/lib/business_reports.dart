@@ -17,6 +17,73 @@ DateTime profitQueryEnd(DateTime selectedEnd) =>
     selectedEnd.second == 0 && selectedEnd.millisecond == 0 && selectedEnd.microsecond == 0
         ? selectedEnd.add(const Duration(minutes: 1)) : selectedEnd;
 
+// Preset ranges cover the whole selected day, including expenses saved later.
+DateTime profitPeriodQueryEnd(DateTime selectedEnd, {bool custom = false}) =>
+    custom ? profitQueryEnd(selectedEnd)
+      : DateTime(selectedEnd.year, selectedEnd.month, selectedEnd.day + 1);
+
+class ProfitPeriodSummary {
+  final double revenue, knownCost, expenses;
+  final int missingCost;
+  const ProfitPeriodSummary({required this.revenue, required this.knownCost,
+    required this.expenses, required this.missingCost});
+  double get gross => revenue - knownCost;
+  double? get net => missingCost == 0 ? gross - expenses : null;
+}
+
+// Calculate the dashboard and report from the same saved sales and expenses.
+// Never double-count the cashbox mirror of an expense.
+ProfitPeriodSummary summarizeProfitPeriod({
+  required Iterable<Map<String, dynamic>> sales,
+  required Iterable<Map<String, dynamic>> returns,
+  required Iterable<Map<String, dynamic>> expenseRows,
+  required DateTime from,
+  required DateTime until,
+}) {
+  double revenue = 0, knownCost = 0, expenses = 0;
+  int missingCost = 0;
+  for (final event in [
+    ...sales.map((data) => (data: data, sign: 1)),
+    ...returns.map((data) => (data: data, sign: -1)),
+  ]) {
+    final sale = event.data;
+    revenue += event.sign * ((sale['total'] as num?)?.toDouble() ?? 0);
+    final rawItems = (sale['items'] as List?) ?? const [];
+    if (rawItems.isNotEmpty) {
+      for (final raw in rawItems) {
+        if (raw is! Map) continue;
+        final qty = (raw['quantity'] as num?)?.toDouble() ?? 0;
+        final cost = (raw['purchasePriceAtSale'] as num?)?.toDouble();
+        if (cost != null && cost.isFinite && cost >= 0) {
+          knownCost += event.sign * qty * cost;
+        } else {
+          missingCost++;
+        }
+      }
+    } else {
+      final qty = (sale['quantity'] as num?)?.toDouble() ?? 0;
+      final cost = (sale['purchasePriceAtSale'] as num?)?.toDouble();
+      if (cost != null && cost.isFinite && cost >= 0) {
+        knownCost += event.sign * qty * cost;
+      } else {
+        missingCost++;
+      }
+    }
+  }
+  for (final row in expenseRows) {
+    if (row['accountType'] != 'expenses' || !visibleAfterReset(row)) continue;
+    final rawDate = row['createdAt'];
+    final recorded = rawDate is Timestamp ? rawDate.toDate()
+      : rawDate is DateTime ? rawDate : null;
+    if (recorded == null || recorded.isBefore(from) || !recorded.isBefore(until)) continue;
+    final amount = (row['amount'] as num?)?.toDouble() ?? 0;
+    if (amount.isFinite && amount > 0) expenses += amount;
+  }
+  return ProfitPeriodSummary(revenue: revenue, knownCost: knownCost,
+    expenses: expenses, missingCost: missingCost);
+}
+
+
 class InvoiceMovementReportRow {
   final String id, number, customer;
   final DateTime date;
