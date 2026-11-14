@@ -84,6 +84,76 @@ ExpensePeriodSummary summarizeExpensePeriod(
 }
 
 
+ 
+// Independent PDF export of the selected expense period. It reads the
+// already-normalized report rows; cashbox mirror movements are not included.
+Future<Uint8List> createExpensePeriodReportPdf(
+    ExpensePeriodSummary report, DateTime from, DateTime to, pw.Font font) async {
+  final document = pw.Document();
+  const navy = PdfColor.fromInt(0xFF14263D);
+  const goldAccent = PdfColor.fromInt(0xFFB58A38);
+  pw.Widget cell(String value, {bool header = false}) => pw.Padding(
+    padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 5),
+    child: pw.Text(value, textAlign: pw.TextAlign.right, style: pw.TextStyle(
+      fontSize: 9, color: header ? PdfColors.white : PdfColors.black)));
+  document.addPage(pw.MultiPage(
+    pageFormat: PdfPageFormat.a4, maxPages: 1000,
+    theme: pw.ThemeData.withFont(base: font, bold: font),
+    textDirection: pw.TextDirection.rtl,
+    footer: (context) => pw.Center(child: pw.Text(
+      '${context.pageNumber} / ${context.pagesCount}', style: const pw.TextStyle(fontSize: 9))),
+    build: (_) => [
+      pw.Center(child: pw.Text('VIB للتجارة والتوزيع',
+        style: pw.TextStyle(color: navy, fontSize: 20, fontWeight: pw.FontWeight.bold))),
+      pw.SizedBox(height: 7),
+      pw.Center(child: pw.Text('تقرير المصروفات من تاريخ إلى تاريخ',
+        style: pw.TextStyle(color: navy, fontSize: 15, fontWeight: pw.FontWeight.bold))),
+      pw.SizedBox(height: 9),
+      pw.Text('من ${DateFormat('dd/MM/yyyy').format(from)} إلى ${DateFormat('dd/MM/yyyy').format(to)} - بتوقيت القاهرة'),
+      pw.Text('عدد الحركات: ${report.rows.length}'),
+      pw.SizedBox(height: 7),
+      pw.Text('إجمالي مصروفات الفترة: ${movementReportMoney(report.totalCents)}',
+        style: pw.TextStyle(fontSize: 12, fontWeight: pw.FontWeight.bold, color: navy)),
+      pw.SizedBox(height: 12),
+      pw.Table(border: pw.TableBorder.all(color: goldAccent, width: .5),
+        columnWidths: {
+          0: const pw.FlexColumnWidth(.5),
+          1: const pw.FlexColumnWidth(1.4),
+          2: const pw.FlexColumnWidth(1.3),
+          3: const pw.FlexColumnWidth(2.5),
+          4: const pw.FlexColumnWidth(1.2),
+        },
+        children: [
+          pw.TableRow(repeat: true, decoration: const pw.BoxDecoration(color: navy),
+            children: ['م', 'التاريخ', 'الفئة', 'البيان', 'المبلغ']
+              .map((heading) => cell(heading, header: true)).toList()),
+          for (var i = 0; i < report.rows.length; i++)
+            pw.TableRow(children: [
+              cell('${i + 1}'),
+              cell(movementReportDate(
+                report.rows[i]['createdAt'] is Timestamp
+                    ? (report.rows[i]['createdAt'] as Timestamp).toDate()
+                    : report.rows[i]['createdAt'] as DateTime)),
+              cell('${report.rows[i]['category'] ?? 'عام'}'),
+              cell('${report.rows[i]['reason'] ?? ''}'),
+              cell(report.rows[i]['amount'] is num &&
+                      (report.rows[i]['amount'] as num).isFinite
+                  ? movementReportMoney(
+                      ((report.rows[i]['amount'] as num).toDouble() * 100).round())
+                  : 'مبلغ غير صالح'),
+            ]),
+        ]),
+      pw.SizedBox(height: 11),
+      pw.Text('إجمالي المصروفات: ${movementReportMoney(report.totalCents)}',
+        style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: navy)),
+      pw.Text('المصروفات المسجلة فقط؛ لا تتكرر حركة الصندوق المقابلة.',
+        style: const pw.TextStyle(fontSize: 9)),
+    ],
+  ));
+  return document.save();
+}
+
+
 class InvoiceMovementReportRow {
   final String id, number, customer;
   final DateTime date;
