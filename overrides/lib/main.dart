@@ -15,7 +15,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle, MethodChannel;
 import 'package:geolocator/geolocator.dart';
-import 'package:intl/intl.dart' show DateFormat;
+import 'package:intl/intl.dart' show DateFormat, NumberFormat;
 import 'package:local_auth/local_auth.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -93,6 +93,16 @@ const _staffFirebaseAppId = '1:200962643703:android:fd5ac8ff4a1fae7c2c65f2';
 bool staffApp = false;
 // Set only after a local biometric success, consumed by OwnerSecurity once.
 bool _managerBiometricVerifiedForSignIn = false;
+
+/** Format money at piastre precision without changing stored balances. */
+String vibVoucherMoney(Object? value, {String missing = '0.00'}) {
+  if (value == null) return missing;
+  final raw = value is num ? value.toDouble() : double.tryParse('$value');
+  if (raw == null || !raw.isFinite) return missing;
+  final piastres = (raw * 100).round();
+  return NumberFormat('#,##0.00', 'en_US').format(piastres / 100);
+}
+
 final saleCostVisible = ValueNotifier<bool>(false);
 final salePriceEditable = ValueNotifier<bool>(false);
 // Avoid duplicate server work every time the user stream emits an update.
@@ -1005,8 +1015,8 @@ class _LoginPageState extends State<LoginPage> {
                     dense: true,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 3),
                     leading: const Icon(Icons.library_music_outlined, color: gold, size: 21),
-                    title: const Text('اختيار رنة من رنات الموبايل', style: TextStyle(color: Color(0xFFE1E9F4), fontSize: 13)),
-                    subtitle: const Text('اختار الرنة وجربها. هتشتغل بعد فتح المدير.'),
+                    title: const Text('اختيار نغمة من نغمات الرسائل', style: TextStyle(color: Color(0xFFE1E9F4), fontSize: 13)),
+                    subtitle: const Text('اختار نغمة رسالة قصيرة؛ تشتغل مرة واحدة بعد فتح المدير.'),
                     onTap: () => vibChooseManagerRingtone(context),
                   ),
                   const Divider(color: Color(0x332B4967), height: 15),
@@ -5232,7 +5242,7 @@ class ReceiptVouchers extends StatelessWidget {
                     Expanded(child: Text('${data['customerName'] ?? 'عميل غير مسجل'}', maxLines: 1,
                       overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.lightBlueAccent,
                         fontWeight: FontWeight.bold, fontSize: 15))),
-                    const SizedBox(width: 8), Text('${data['amount'] ?? 0} ج.م',
+                    const SizedBox(width: 8), Text('${vibVoucherMoney(data['amount'])} ج.م',
                       style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
                   ]),
                   Padding(padding: const EdgeInsetsDirectional.only(start: 29, top: 4),
@@ -5242,7 +5252,7 @@ class ReceiptVouchers extends StatelessWidget {
                     child: Text('الموظف: ${data['actorName'] ?? 'المدير'}', maxLines: 1,
                       overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.white70))),
                   Padding(padding: const EdgeInsetsDirectional.only(start: 29, top: 2),
-                    child: Text('الرصيد بعد القبض: ${data['balanceAfter'] ?? 0} ج.م',
+                    child: Text('الرصيد بعد القبض: ${vibVoucherMoney(data['balanceAfter'])} ج.م',
                       style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 13))),
                   Wrap(alignment: WrapAlignment.start, spacing: 2, runSpacing: 0, children: [
                     IconButton(visualDensity: VisualDensity.compact, tooltip: 'إرسال سند القبض PDF للعميل',
@@ -5832,7 +5842,7 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
           }),
         if (customerId != null) StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
           stream: db.collection('customers').doc(customerId).snapshots(),
-          builder: (context, snap) => Text(snap.hasError ? 'تعذر تحميل رصيد العميل' : !snap.hasData ? 'جارٍ تحميل الرصيد' : '${snap.data?.data()?['name'] ?? ''} — الرصيد الحالي: ${snap.data?.data()?['balance'] ?? 0} ج.م'),
+          builder: (context, snap) => Text(snap.hasError ? 'تعذر تحميل رصيد العميل' : !snap.hasData ? 'جارٍ تحميل الرصيد' : '${snap.data?.data()?['name'] ?? ''} — الرصيد الحالي: ${vibVoucherMoney(snap.data?.data()?['balance'])} ج.م'),
         ),
         TextField(controller: amount, enabled: !saving,
           keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -6012,9 +6022,9 @@ Future<Uint8List> createReceiptVoucherPdf(String id,Map<String,dynamic> data,pw.
         pw.Text('استلمنا من العميل /',style:pw.TextStyle(fontSize:14,fontWeight:pw.FontWeight.bold)),
         detail('اسم العميل','${data['customerName']??''}'),
         detail('رقم التليفون','${data['customerPhone']??'غير مسجل'}'),
-        detail('المبلغ المستحق قبل السداد','${before.toStringAsFixed(2)} ج.م'),
-        detail('المبلغ المدفوع','${paid.toStringAsFixed(2)} ج.م',strong:true),
-        detail('الرصيد المتبقي بعد الدفع','${after.toStringAsFixed(2)} ج.م',strong:true),
+        detail('المبلغ المستحق قبل السداد','${vibVoucherMoney(before)} ج.م'),
+        detail('المبلغ المدفوع','${vibVoucherMoney(paid)} ج.م',strong:true),
+        detail('الرصيد المتبقي بعد الدفع','${vibVoucherMoney(after)} ج.م',strong:true),
         detail('طريقة الدفع','${data['paymentMethod']??'نقدي'}'),
         if('${data['note']??''}'.trim().isNotEmpty)detail('البيان','${data['note']}'),
         pw.SizedBox(height:20),
@@ -6206,8 +6216,8 @@ class SupplierPaymentVouchers extends StatelessWidget {
         final row = rows[i], data = row.data();
         final confirmed = !row.metadata.hasPendingWrites && !snapshot.data!.metadata.isFromCache;
         return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          Text('${data['accountName'] ?? ''} • ${data['amount']} ج.م', style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold)),
-          Text('رقم السند: ${row.id}\n${formatDate(data['createdAt'])}\nالباقي للمورد: ${data['balanceAfter']} ج.م'),
+          Text('${data['accountName'] ?? ''} • ${vibVoucherMoney(data['amount'])} ج.م', style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold)),
+          Text('رقم السند: ${row.id}\n${formatDate(data['createdAt'])}\nالباقي للمورد: ${vibVoucherMoney(data['balanceAfter'])} ج.م'),
           if (!confirmed) const Text('بانتظار تأكيد البيانات من الخادم'),
           Wrap(spacing: 8, children: [for (final thermal in [false,true]) OutlinedButton.icon(onPressed: confirmed ? () => printSupplierPaymentVoucher(context, row.id, data, thermal: thermal) : null, icon: const Icon(Icons.print), label: Text(thermal ? 'طباعة 80 مللي' : 'طباعة A4')),
             StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(stream:db.collection('voucherCancellations').doc('payment_${row.id}').snapshots(),builder:(context,cancelSnap)=>cancelSnap.data?.exists==true
@@ -6233,7 +6243,7 @@ Future<void> createSupplierPaymentVoucher(BuildContext context, {String? initial
         final rows = snap.data!.docs.where((d) => d.data()['active'] != false).toList()..sort((a,b) => '${a.data()['name']}'.compareTo('${b.data()['name']}'));
         return DropdownButtonFormField<String>(initialValue: rows.any((d) => d.id == supplierId) ? supplierId : null, isExpanded: true, decoration: const InputDecoration(labelText: 'اختيار المورد'), items: rows.map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}'))).toList(), onChanged: saving ? null : (id) => update(() => supplierId = id));
       }),
-      if (supplierId != null) StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(stream: db.collection('suppliers').doc(supplierId).snapshots(), builder: (_,snap) => Text('مديونية المورد الحالية: ${snap.data?.data()?['balance'] ?? '…'} ج.م')),
+      if (supplierId != null) StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(stream: db.collection('suppliers').doc(supplierId).snapshots(), builder: (_,snap) => Text('مديونية المورد الحالية: ${vibVoucherMoney(snap.data?.data()?['balance'], missing: '…')} ج.م')),
       TextField(controller: amount, enabled: !saving, keyboardType: const TextInputType.numberWithOptions(decimal: true), decoration: const InputDecoration(labelText: 'المبلغ المصروف للمورد')),
       TextField(controller: note, enabled: !saving, maxLength: 2000, decoration: const InputDecoration(labelText: 'البيان / ملاحظات')),
       const Text('حفظ السند يخصم المبلغ من الصندوق ومن مديونية المورد معًا.'),
@@ -6273,7 +6283,7 @@ Future<void> createSupplierPaymentVoucher(BuildContext context, {String? initial
 
 Future<Uint8List> createSupplierPaymentVoucherPdf(String id, Map<String,dynamic> data, pw.Font font, {bool thermal = false}) async {
   final pdf = pw.Document();
-  final lines = ['رقم السند: $id', 'التاريخ: ${formatDate(receiptEffectiveTimestamp(data))}', 'صرفنا إلى المورد: ${data['accountName'] ?? ''}', 'الهاتف: ${data['supplierPhone'] ?? ''}', 'المبلغ المصروف: ${data['amount']} ج.م', 'رصيد المورد قبل السداد: ${data['balanceBefore']} ج.م', 'الباقي عليك للمورد بعد السداد: ${data['balanceAfter']} ج.م', 'الصندوق قبل الصرف: ${data['cashBefore'] ?? 'غير مسجل'} ج.م', 'الصندوق بعد الصرف: ${data['cashAfter'] ?? 'غير مسجل'} ج.م', 'المسؤول: ${data['actorName'] ?? data['actorId'] ?? ''}', 'البيان: ${data['note'] ?? ''}'];
+  final lines = ['رقم السند: $id', 'التاريخ: ${formatDate(receiptEffectiveTimestamp(data))}', 'صرفنا إلى المورد: ${data['accountName'] ?? ''}', 'الهاتف: ${data['supplierPhone'] ?? ''}', 'المبلغ المصروف: ${vibVoucherMoney(data['amount'])} ج.م', 'رصيد المورد قبل السداد: ${vibVoucherMoney(data['balanceBefore'])} ج.م', 'الباقي عليك للمورد بعد السداد: ${vibVoucherMoney(data['balanceAfter'])} ج.م', 'الصندوق قبل الصرف: ${vibVoucherMoney(data['cashBefore'], missing: 'غير مسجل')} ج.م', 'الصندوق بعد الصرف: ${vibVoucherMoney(data['cashAfter'], missing: 'غير مسجل')} ج.م', 'المسؤول: ${data['actorName'] ?? data['actorId'] ?? ''}', 'البيان: ${data['note'] ?? ''}'];
   final widgets = <pw.Widget>[
     pw.Text('VIB للتجارة والتوزيع',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:thermal ? 14 : 22)),
     pw.SizedBox(height:12),pw.Text('سند صرف لمورد',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:thermal ? 16 : 20,fontWeight:pw.FontWeight.bold)),
@@ -6306,7 +6316,7 @@ class CashBox extends StatelessWidget {
       stream: db.collection('settings').doc('cash').snapshots(),
       builder: (context, snap) => Padding(
         padding: const EdgeInsets.all(16),
-        child: Text('رصيد الصندوق: ${snap.data?.data()?['balance'] ?? 0} ج.م',
+        child: Text('رصيد الصندوق: ${vibVoucherMoney(snap.data?.data()?['balance'])} ج.م',
           style: const TextStyle(fontSize: 22, color: gold)),
       ),
     ),
@@ -6336,7 +6346,7 @@ class CashBox extends StatelessWidget {
           return ListTile(title: Text('${m['reason'] ?? ''}',
               style: TextStyle(color: movementColor, fontWeight: FontWeight.w600)),
             subtitle: Text('$date • بواسطة ${m['actorId'] ?? ''}'),
-            trailing: Text('$delta ج.م',
+            trailing: Text('${vibVoucherMoney(delta)} ج.م',
               style: TextStyle(color: movementColor, fontWeight: FontWeight.bold)));
         });
       },
@@ -6459,8 +6469,8 @@ class _AppSettingsState extends State<AppSettings> {
       ),
       ListTile(
         leading: const Icon(Icons.library_music_outlined, color: gold),
-        title: const Text('اختيار رنة من رنات الموبايل'),
-        subtitle: const Text('الرنة المختارة تشتغل بعد نجاح فتح مانيجر.'),
+        title: const Text('اختيار نغمة من نغمات الرسائل'),
+        subtitle: const Text('نغمة الإشعار المختارة تشتغل مرة واحدة بعد فتح مانيجر (حد أقصى ثانية ونص).'),
         enabled: openingChimeEnabled,
         onTap: openingChimeEnabled ? () => vibChooseManagerRingtone(context) : null,
       ),
