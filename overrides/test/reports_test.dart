@@ -42,6 +42,46 @@ void main() {
     expect(profitQueryEnd(now),now);
   });
 
+  test('preset profit date includes expenses added after the report opened', () {
+    final selected = DateTime(2026, 11, 14, 9, 30, 27);
+    expect(profitPeriodQueryEnd(selected), DateTime(2026, 11, 15));
+    expect(profitPeriodQueryEnd(selected, custom: true), selected);
+    expect(profitPeriodQueryEnd(DateTime(2026, 11, 14, 9, 30, 0), custom: true),
+      DateTime(2026, 11, 14, 9, 31));
+  });
+
+  test('expense-only day shows negative net profit without sales invoices', () {
+    final day = DateTime(2026, 11, 14);
+    final summary = summarizeProfitPeriod(
+      sales: const [], returns: const [],
+      expenseRows: [
+        {'accountType': 'expenses', 'amount': 500.0, 'createdAt': Timestamp.fromDate(day.add(const Duration(hours: 20)))},
+        {'accountType': 'cash', 'kind': 'expense', 'amount': 500.0, 'createdAt': Timestamp.fromDate(day.add(const Duration(hours: 20)))},
+        {'accountType': 'expenses', 'amount': 80.0, 'createdAt': Timestamp.fromDate(day.subtract(const Duration(days: 1)))},
+      ],
+      from: day, until: day.add(const Duration(days: 1)),
+    );
+    expect(summary.revenue, 0);
+    expect(summary.expenses, 500);
+    expect(summary.net, -500);
+  });
+
+  test('net profit subtracts expenses only once and rejects unknown historic costs', () {
+    final day = DateTime(2026, 11, 14);
+    final expense = {'accountType': 'expenses', 'amount': 500,
+      'createdAt': Timestamp.fromDate(day)};
+    final sale = {'total': 1000, 'items': [{'quantity': 1, 'purchasePriceAtSale': 650}]};
+    final summary = summarizeProfitPeriod(sales: [sale], returns: const [],
+      expenseRows: [expense], from: day, until: day.add(const Duration(days: 1)));
+    expect(summary.gross, 350);
+    expect(summary.net, -150);
+    final missing = summarizeProfitPeriod(
+      sales: [{'total': 1000, 'items': [{'quantity': 1}]}],
+      returns: const [], expenseRows: [expense],
+      from: day, until: day.add(const Duration(days: 1)));
+    expect(missing.net, isNull);
+  });
+
   final day=DateTime(2026,10,4);
   testWidgets('typed sales report dates are applied when the period button is pressed', (tester) async {
     DateTime? appliedFrom, appliedTo;
