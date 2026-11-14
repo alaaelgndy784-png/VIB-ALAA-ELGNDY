@@ -64,6 +64,30 @@ void main() {
     expect(netProfitAfterExpenses(1000,650,expenseTotal),-150);
   });
 
+  test('expense date range includes both Cairo dates, filters cash mirrors and totals cents', () {
+    final from = DateTime(2026, 11, 12);
+    final to = DateTime(2026, 11, 14);
+    final start = movementReportBoundary(from);
+    final until = movementReportBoundary(to, next: true);
+    Map<String, dynamic> movement(String type, num amount, DateTime when) =>
+      {'accountType': type, 'amount': amount, 'createdAt': Timestamp.fromDate(when)};
+    final report = summarizeExpensePeriod([
+      movement('expenses', 999, start.subtract(const Duration(milliseconds: 1))),
+      movement('expenses', 0.10, start),
+      movement('expenses', 0.20, movementReportBoundary(DateTime(2026, 11, 13))),
+      movement('cash', 100, until.subtract(const Duration(milliseconds: 1))),
+      movement('expenses', 100, until.subtract(const Duration(milliseconds: 1))),
+      movement('expenses', 999, until),
+      {'accountType': 'expenses', 'amount': 77},
+    ], from, to);
+    expect(report.rows.length, 3);
+    expect(report.totalCents, 10030);
+    expect(report.total, 100.30);
+    expect((report.rows.first['amount'] as num).toDouble(), 100);
+    expect(() => summarizeExpensePeriod([], to, from), throwsStateError);
+    expect(summarizeExpensePeriod([], from, to).totalCents, 0);
+  });
+
   final day=DateTime(2026,10,4);
   testWidgets('typed sales report dates are applied when the period button is pressed', (tester) async {
     DateTime? appliedFrom, appliedTo;
