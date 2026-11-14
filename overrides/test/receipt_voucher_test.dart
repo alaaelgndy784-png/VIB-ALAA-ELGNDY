@@ -10,6 +10,22 @@ void main() {
   setUpAll(() async {
     font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
   });
+  group('vibVoucherMoney', () {
+    test('formats old floating-point balances to exactly two piastres', () {
+      expect(vibVoucherMoney(27244.889999999992), '27,244.89');
+      expect(vibVoucherMoney(69638.70000000001), '69,638.70');
+      expect(vibVoucherMoney(10713.27999999999), '10,713.28');
+      expect(vibVoucherMoney(4000), '4,000.00');
+      expect(vibVoucherMoney(0.1 + 0.2), '0.30');
+    });
+    test('handles missing, invalid and string values without corrupting data', () {
+      expect(vibVoucherMoney(null), '0.00');
+      expect(vibVoucherMoney(null, missing: 'غير مسجل'), 'غير مسجل');
+      expect(vibVoucherMoney('1250.5'), '1,250.50');
+      expect(vibVoucherMoney(double.nan, missing: '…'), '…');
+    });
+  });
+
   group('parseReceiptAmount', () {
     test('parses Arabic digits and Arabic decimal separator', () {
       expect(parseReceiptAmount('١٢٣٫٥٠'), 123.5);

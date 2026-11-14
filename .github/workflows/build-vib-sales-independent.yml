@@ -170,10 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 10208/; s/versionName = .*/versionName = "0.2.68"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 10208' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.68"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=10208 --build-name=0.2.68
+          sed -i -E 's/versionCode = .*/versionCode = 10209/; s/versionName = .*/versionName = "0.2.69"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 10209' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.69"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=10209 --build-name=0.2.69
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -484,6 +484,64 @@ jobs:
             تحديث المدير 0.2.68: تنبيه تأكيد الخروج من فاتورة المشتريات عند رجوع الهاتف أو زر إلغاء مع حماية المسودة أثناء الحفظ.
             إضافة أيقونة المصروفات للشاشة الرئيسية دون تغيير وظائف المحاسبة أو بيانات المستخدم.
             تم التحقق من نجاح الاختبارات وبناء APK ومطابقة توقيعه مع الإصدار السابق.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
+
+  publish-manager-voucher-cheque-fixes:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/fix/vib-manager-0-2-69-vouchers-cheques-chime-20261114'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download newly tested VIB Manager 0.2.69 APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+
+      - name: Verify install-over package, version, and signing against 0.2.68
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.68-purchases-expenses-20261114 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          NEW_PACKAGE="$("$AAPT" dump badging "$NEW" | grep '^package:')"
+          OLD_PACKAGE="$("$AAPT" dump badging "$OLD" | grep '^package:')"
+          echo "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$OLD_PACKAGE"
+          grep -F "versionCode='12209'" <<< "$NEW_PACKAGE"
+          grep -F "versionName='0.2.69'" <<< "$NEW_PACKAGE"
+          grep -F "versionCode='12208'" <<< "$OLD_PACKAGE"
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/new-cert.txt
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/old-cert.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-cert.txt | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+          echo 'Verified VIB Manager 0.2.69 is compatible with signed 0.2.68.'
+
+      - name: Publish signed 0.2.69 APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.69-vouchers-cheques-chime-20261114
+          name: VIB Manager 0.2.69 — Vouchers, cheque originals and biometric chime
+          target_commitish: ${{ github.sha }}
+          body: |
+            تحديث مباشر فوق 0.2.68 بنفس اسم الحزمة وتوقيع التثبيت.
+            إصلاح الكسور في سندات القبض والصرف وPDF، متابعة أصول الشيكات المسددة بتحويل والموجودة عند التجار، ونغمة رسالة قصيرة بعد البصمة.
+            متابعة الشيكات لا تغيّر الذمم أو الصندوق تلقائيًا؛ يظل السداد بسند مستقل.
+            أُجريت اختبارات المشروع والتحقق من شهادة التوقيع وتوافق الإصدار.
           files: |
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt

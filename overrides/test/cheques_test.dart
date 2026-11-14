@@ -27,7 +27,7 @@ void main() {
     final now=DateTime.utc(2026,10,1);
     final rows=[cheque(when:now.add(const Duration(days:5))),cheque(id:'two',notificationId:2,when:now.add(const Duration(days:2))),cheque(id:'paid',notificationId:3,status:'done'),cheque(id:'disabled',notificationId:4,enabled:false),cheque(id:'past',notificationId:5,when:now.subtract(const Duration(minutes:1)))];
     final jobs=planChequeReminders(rows,now);
-    expect(jobs.map((j) => j.id),[2,1]);expect(jobs.first.body,contains('1000.50'));
+    expect(jobs.map((j) => j.id),[2,1]);expect(jobs.first.body,contains('1,000.50'));
     expect(() => planChequeReminders([cheque(),cheque(id:'collision')],now),throwsStateError);
     expect(() => planChequeReminders(List.generate(301,(i) => cheque(id:'$i',notificationId:i+1)),now),throwsStateError);
   });
@@ -55,6 +55,67 @@ void main() {
     final done=editChequeLedger(edited.records,{'id':'one','status':'done'},2,expectedRevision:1);
     expect(done.records.single['revision'],2);
     expect(editChequeLedger(done.records,{'id':'one'},2,expectedRevision:2,remove:true).records,isEmpty);
+  });
+
+
+  group('issued cheque paid by transfer, original still at merchant',() {
+    test('new and existing completed cheques are grouped without losing legacy data',() {
+      final pending=cheque();
+      final oldDone=cheque(id:'old',status:'done');
+      final paid=chequeTransferPaidUpdate(pending,DateTime(2026,11,12),'IB-1738');
+      final outstanding={...pending,...paid};
+      expect(chequeAwaitingOriginal(outstanding),isTrue);
+      expect(chequeInSection(outstanding,'waitingOriginal'),isTrue);
+      expect(chequeInSection(outstanding,'done'),isFalse);
+      expect(chequeInSection(outstanding,'open'),isFalse);
+      expect(chequeInSection(oldDone,'done'),isTrue);
+      expect(paid['status'],'done');
+      expect(paid['transferReference'],'IB-1738');
+      expect(paid['originalReceived'],isFalse);
+      expect(paid.containsKey('cashBalance'),isFalse);
+      expect(paid.containsKey('accountMovements'),isFalse);
+    });
+
+    test('physically returning the original closes custody but never touches money',() {
+      final issued=cheque();
+      final paid=chequeTransferPaidUpdate(issued,DateTime(2026,11,12),'transfer');
+      final outstanding={...issued,...paid};
+      final received=chequeOriginalReceivedUpdate(outstanding,DateTime(2026,11,14));
+      final updated={...outstanding,...received};
+      expect(chequeAwaitingOriginal(updated),isFalse);
+      expect(chequeInSection(updated,'done'),isTrue);
+      expect(received['originalReceivedDate'],'2026-11-14');
+      expect(received['originalReminderAt'],isNull);
+      expect(() => chequeOriginalReceivedUpdate(updated,DateTime(2026,11,14)),throwsStateError);
+      expect(chequeReopenUpdate(updated)['settlementMethod'],isNull);
+      expect(chequeReopenUpdate(updated)['status'],'open');
+      expect(updated['amount'],1000.50);
+    });
+
+    test('an incoming cheque cannot be incorrectly marked paid by bank transfer',() {
+      final incoming={...cheque(),'type':'received'};
+      expect(() => chequeTransferPaidUpdate(incoming,DateTime(2026,11,12),''),throwsStateError);
+    });
+
+    test('bank-transfer pickup reminder replaces due reminder and stops once original is back',() {
+      final now=DateTime.now();
+      final original=cheque(when:now.add(const Duration(days:2)));
+      final newReminder=Timestamp.fromDate(now.add(const Duration(days:4)));
+      final fields=chequeTransferPaidUpdate(original,now.subtract(const Duration(days:1)),
+        'tx-1',originalReminderAt:newReminder);
+      final awaiting={...original,...fields};
+      final reminders=planChequeReminders([awaiting],now);
+      expect(reminders.length,1);
+      expect(reminders.single.id,1);
+      expect(reminders.single.title,'تذكير باستلام أصل شيك');
+      expect(reminders.single.body,contains('أصله ما زال عند'));
+      expect(reminders.single.payload,contains('awaiting-original'));
+      final received={...awaiting,...chequeOriginalReceivedUpdate(awaiting,now)};
+      expect(planChequeReminders([received],now),isEmpty);
+      final noReminder={...original,...chequeTransferPaidUpdate(original,
+        now.subtract(const Duration(days:1)),'',originalReminderAt:null)};
+      expect(planChequeReminders([noReminder],now),isEmpty);
+    });
   });
 
   group('native notification scheduling contract',() {

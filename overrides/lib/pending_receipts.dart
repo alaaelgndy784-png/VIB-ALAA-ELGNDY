@@ -173,7 +173,7 @@ Future<void> createPendingReceiptVoucher(BuildContext context,String branchId,{S
         if(customerId!=null)StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(
           stream:db.collection('customers').doc(customerId).snapshots(),
           builder:(context,snap)=>Text(snap.hasError?'تعذر تحميل رصيد العميل':!snap.hasData?'جارٍ تحميل الرصيد':
-            '${snap.data?.data()?['name']??''} — الرصيد الحالي: ${snap.data?.data()?['balance']??0} ج.م')),
+            '${snap.data?.data()?['name']??''} — الرصيد الحالي: ${vibVoucherMoney(snap.data?.data()?['balance'])} ج.م')),
         TextField(controller:amount,enabled:!saving,keyboardType:const TextInputType.numberWithOptions(decimal:true),
           decoration:const InputDecoration(labelText:'المبلغ المقبوض')),
         OutlinedButton.icon(icon:const Icon(Icons.calendar_month),
