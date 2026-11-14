@@ -39,6 +39,7 @@ import 'product_import_data.dart';
 import 'inventory_price_data.dart';
 import 'inventory_rows.dart';
 import 'sales_invoice_exit_guard.dart';
+import 'purchase_invoice_exit_guard.dart';
 
 part 'cheques.dart';
 part 'chat_alerts.dart';
@@ -2201,6 +2202,7 @@ class OwnerDashboard extends StatelessWidget {
           children: [
             tile('المبيعات', dashboardSalesIcon, () => openPage('المبيعات', Sales(owner: true, branchId: branchId)), accent: const Color(0xFF31E59A)),
             tile('المشتريات', dashboardPurchasesIcon, () => openPage('المشتريات', const Purchases()), accent: const Color(0xFFFF922E)),
+            tile('المصروفات', Icons.payments_outlined, () => openPage('المصروفات', const Expenses()), accent: const Color(0xFFFF6B6B)),
             tile('العملاء', Icons.groups, () => openPage('العملاء', const Accounts()), accent: const Color(0xFF38A9FF)),
             tile('الموردين', Icons.local_shipping, () => openPage('الموردين', const Accounts(startWithSuppliers: true)), accent: const Color(0xFFFFC857)),
             tile('المحادثة', Icons.forum, () => openStaffChat(context, owner: true), accent: const Color(0xFFB866FF)),
@@ -4773,7 +4775,9 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
         row.cost.text=((product.data()!['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
         await editSelected(row,adding:true);
       }
-      return InvoiceEditorFrame(
+      return PurchaseInvoiceExitGuard(
+        saving:saving,
+        child:InvoiceEditorFrame(
         title:checkout ? 'حفظ فاتورة المشتريات' : 'فاتورة مشتريات',checkout:checkout,total:previewTotal,
         tableMode:true,invoiceNumber:draftNumber,itemCount:lines.length,
         quantityCount:lines.fold<int>(0,(sum,row)=>sum+(int.tryParse(row.quantity.text) ?? 0)),
@@ -4841,7 +4845,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
           ),
         ]),
         actions: [
-          TextButton(onPressed:saving ? null : () {if(checkout) {setLocal(()=>checkout=false);} else {Navigator.pop(c);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
+          TextButton(onPressed:saving ? null : () {if(checkout) {setLocal(()=>checkout=false);} else {requestPurchaseInvoiceExit(c, saving:saving);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
             FocusScope.of(c).unfocus();
             if (lines.isEmpty) {
@@ -5020,7 +5024,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
             }
           }, child:saving ? const InvoiceSaveButtonLabel(saving:true) : Text(checkout ? 'تأكيد الحفظ' : 'حفظ الفاتورة')),
         ],
-      );
+      ));
     }),
   );
 
