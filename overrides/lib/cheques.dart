@@ -26,7 +26,9 @@ Map<String,dynamic> chequeTransferPaidUpdate(Map<String,dynamic> cheque,
       cheque['settlementMethod'] == 'bank_transfer') {
     throw StateError('سداد التحويل متاح للشيكات الصادرة غير المسجلة كتحويل');
   }
-  if (paidDate.isAfter(DateTime.now().add(const Duration(days:1)))) {
+  final today = tz.TZDateTime.now(chequeZone);
+  if (DateTime(paidDate.year,paidDate.month,paidDate.day)
+      .isAfter(DateTime(today.year,today.month,today.day))) {
     throw StateError('تاريخ التحويل لا يمكن أن يكون في المستقبل');
   }
   return {
@@ -286,8 +288,9 @@ class _ChequeAgendaState extends State<ChequeAgenda> with WidgetsBindingObserver
                     style:TextStyle(color:awaiting ? Colors.orangeAccent :
                       highlighted ? Colors.greenAccent : late ? Colors.redAccent : gold,
                       fontWeight:FontWeight.bold)),
-                  if(paidByTransfer) Text('تم السداد بتحويل بتاريخ: ${row['transferPaidDate'] ?? 'غير مسجل'}'
-                    '${('${row['transferReference'] ?? ''}').trim().isEmpty ? '' : ' • مرجع: ${row['transferReference']}'}'),
+                  if(paidByTransfer) Text('تم السداد بتحويل بتاريخ: ${row['transferPaidDate'] ?? 'غير مسجل'}'),
+                  if(paidByTransfer && '${row['transferReference'] ?? ''}'.trim().isNotEmpty)
+                    Text('مرجع التحويل: ${row['transferReference']}'),
                   if(originalReceived) Text('استلمت أصل الشيك بتاريخ: ${row['originalReceivedDate'] ?? 'غير مسجل'}',
                     style:const TextStyle(color:Colors.greenAccent)),
                   if(awaiting && row['originalReminderAt'] is Timestamp)
@@ -353,7 +356,7 @@ Future<void> editChequeDialog(BuildContext context,String uid,{Map<String,dynami
   await showDialog<void>(context:context,barrierDismissible:false,builder:(dialog) => StatefulBuilder(builder:(dialog,update) => AlertDialog(
     title:Text(existing == null ? 'تسجيل موعد شيك' : 'تعديل موعد الشيك'),
     content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.stretch,children:[
-      DropdownButtonFormField<String>(initialValue:type,isExpanded:true,decoration:const InputDecoration(labelText:'نوع الشيك'),items:const [DropdownMenuItem(value:'issued',child:Text('صادر — عليّ')),DropdownMenuItem(value:'received',child:Text('وارد — ليا'))],onChanged:saving ? null : (v) => update(() => type=v!)),
+      DropdownButtonFormField<String>(initialValue:type,isExpanded:true,decoration:const InputDecoration(labelText:'نوع الشيك'),items:const [DropdownMenuItem(value:'issued',child:Text('صادر — عليّ')),DropdownMenuItem(value:'received',child:Text('وارد — ليا'))],onChanged:saving || existing?['settlementMethod']=='bank_transfer' ? null : (v) => update(() => type=v!)),
       TextField(controller:number,enabled:!saving,maxLength:60,decoration:const InputDecoration(labelText:'رقم الشيك *')),
       TextField(controller:party,enabled:!saving,maxLength:120,decoration:const InputDecoration(labelText:'اسم المستفيد / صاحب الشيك *')),
       TextField(controller:bank,enabled:!saving,maxLength:120,decoration:const InputDecoration(labelText:'البنك (اختياري)')),
@@ -369,6 +372,9 @@ Future<void> editChequeDialog(BuildContext context,String uid,{Map<String,dynami
     ])),
     actions:[TextButton(onPressed:saving ? null : () => Navigator.pop(dialog),child:const Text('إلغاء')),FilledButton(onPressed:saving ? null : () async {
       final value=double.tryParse(_ocrNumber(amount.text.trim().replaceAll(',', '.')));
+      if(existing?['settlementMethod']=='bank_transfer' && type!='issued') {
+        await showInvoiceSaveProblem(dialog,'الشيك المسدد بتحويل لازم يفضل شيك صادر. صحح حالة السداد أولًا لو سجلتها بالغلط.',title:'متابعة الشيك',button:'رجوع');return;
+      }
       if(number.text.trim().isEmpty || party.text.trim().isEmpty || value == null || !value.isFinite || value <= 0 || (value*100).round() <= 0 || value>1000000000000) { await showInvoiceSaveProblem(dialog,'اكتب رقم الشيك والاسم وقيمة صحيحة أكبر من صفر.',title:'موعد الشيك',button:'رجوع');return; }
       if(enabled && existing?['status'] != 'done' && (!remind.isAfter(DateTime.now()) || !remind.isBefore(tz.TZDateTime(chequeZone,due.year,due.month,due.day+1)))) { await showInvoiceSaveProblem(dialog,'اختر تذكيرًا في المستقبل ويكون قبل نهاية يوم استحقاق الشيك.',title:'وقت التذكير',button:'رجوع');return; }
       update(() => saving=true);
