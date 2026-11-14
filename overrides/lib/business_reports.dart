@@ -17,6 +17,33 @@ DateTime profitQueryEnd(DateTime selectedEnd) =>
     selectedEnd.second == 0 && selectedEnd.millisecond == 0 && selectedEnd.microsecond == 0
         ? selectedEnd.add(const Duration(minutes: 1)) : selectedEnd;
 
+// Preset profit reports cover the full selected local day; custom times retain
+// minute-accurate end boundaries.
+DateTime profitPeriodQueryEnd(DateTime selectedEnd, {bool custom = false}) =>
+  custom ? profitQueryEnd(selectedEnd)
+    : DateTime(selectedEnd.year, selectedEnd.month, selectedEnd.day + 1);
+
+// Only the expense movement is charged to profit; a matching 'cash' movement
+// is a cashbox mirror and must not be subtracted for a second time.
+double profitExpensesForPeriod(
+    Iterable<Map<String, dynamic>> movements, DateTime from, DateTime toExclusive) {
+  double total = 0;
+  for (final item in movements) {
+    if (item['accountType'] != 'expenses' || !visibleAfterReset(item)) continue;
+    final rawDate = item['createdAt'];
+    final recorded = rawDate is Timestamp ? rawDate.toDate()
+      : rawDate is DateTime ? rawDate : null;
+    if (recorded == null || recorded.isBefore(from) || !recorded.isBefore(toExclusive)) continue;
+    final amount = (item['amount'] as num?)?.toDouble() ?? 0;
+    if (amount.isFinite && amount > 0) total += amount;
+  }
+  return total;
+}
+
+double netProfitAfterExpenses(double revenue, double cost, double expenses) =>
+  revenue - cost - expenses;
+
+
 class InvoiceMovementReportRow {
   final String id, number, customer;
   final DateTime date;
