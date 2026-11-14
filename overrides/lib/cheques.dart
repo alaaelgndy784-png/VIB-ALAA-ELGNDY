@@ -7,6 +7,51 @@ DateTime chequeReminderBefore(DateTime due, int days, int hour, int minute) =>
     tz.TZDateTime(chequeZone, due.year, due.month, due.day - days, hour, minute);
 String chequeTimeLabel(Timestamp stamp) => DateFormat('yyyy/MM/dd • HH:mm').format(tz.TZDateTime.from(stamp.toDate(), chequeZone));
 
+bool chequeAwaitingOriginal(Map<String,dynamic> row) =>
+    row['type'] == 'issued' && row['status'] == 'done' &&
+    row['settlementMethod'] == 'bank_transfer' && row['originalReceived'] != true;
+
+bool chequeInSection(Map<String,dynamic> row, String section) {
+  if (section == 'open') return row['status'] != 'done';
+  if (section == 'waitingOriginal') return chequeAwaitingOriginal(row);
+  if (section == 'done') return row['status'] == 'done' && !chequeAwaitingOriginal(row);
+  throw ArgumentError.value(section, 'section');
+}
+
+// These updates describe the physical cheque only. They do NOT post a payment,
+// alter the supplier ledger, or move money in the cash box.
+Map<String,dynamic> chequeTransferPaidUpdate(Map<String,dynamic> cheque,
+    DateTime paidDate, String transferReference, {Timestamp? originalReminderAt}) {
+  if (cheque['id'] == null || cheque['type'] != 'issued' ||
+      cheque['settlementMethod'] == 'bank_transfer') {
+    throw StateError('سداد التحويل متاح للشيكات الصادرة غير المسجلة كتحويل');
+  }
+  if (paidDate.isAfter(DateTime.now().add(const Duration(days:1)))) {
+    throw StateError('تاريخ التحويل لا يمكن أن يكون في المستقبل');
+  }
+  return {
+    'id':cheque['id'], 'status':'done', 'settlementMethod':'bank_transfer',
+    'transferPaidDate':chequeDate(paidDate), 'transferReference':transferReference.trim(),
+    'originalReceived':false, 'originalReceivedDate':null,
+    'originalReminderAt':originalReminderAt,
+  };
+}
+
+Map<String,dynamic> chequeOriginalReceivedUpdate(Map<String,dynamic> cheque, DateTime receivedDate) {
+  if (!chequeAwaitingOriginal(cheque)) throw StateError('أصل الشيك ليس معلّقًا لدى التاجر');
+  return {
+    'id':cheque['id'], 'originalReceived':true,
+    'originalReceivedDate':chequeDate(receivedDate), 'originalReminderAt':null,
+  };
+}
+
+Map<String,dynamic> chequeReopenUpdate(Map<String,dynamic> cheque) => {
+  'id':cheque['id'], 'status':'open', 'settlementMethod':null,
+  'transferPaidDate':null, 'transferReference':null,
+  'originalReceived':false, 'originalReceivedDate':null, 'originalReminderAt':null,
+};
+
+
 String? nearestRemindedChequeId(List<Map<String,dynamic>> rows,DateTime now) {
   final open=rows.where((row)=>row['status']!='done' && row['reminderEnabled']==true && row['dueDate'] is String).toList();
   if(open.isEmpty)return null;
@@ -29,15 +74,21 @@ class ChequeReminderJob {
 List<ChequeReminderJob> planChequeReminders(List<Map<String,dynamic>> rows, DateTime now) {
   final jobs = <ChequeReminderJob>[], used = <int>{};
   for (final row in rows) {
-    if (row['status'] == 'done' || row['reminderEnabled'] != true) continue;
-    final stamp = row['reminderAt'];
+    final originalOutstanding = chequeAwaitingOriginal(row);
+    if (!originalOutstanding && (row['status'] == 'done' || row['reminderEnabled'] != true)) continue;
+    final stamp = originalOutstanding ? row['originalReminderAt'] : row['reminderAt'];
     if (stamp is! Timestamp || !stamp.toDate().isAfter(now)) continue;
     final id = row['notificationId'];
     if (id is! int || id < 1 || id >= 2147483646 || !used.add(id)) throw StateError('راجع أرقام تنبيهات الشيكات');
-    final amount = (row['amount'] as num).toDouble().toStringAsFixed(2);
-    final body = 'شيك ${row['type'] == 'received' ? 'وارد' : 'صادر'} رقم ${row['number']} • ${row['party']} • $amount ج.م • يستحق ${row['dueDate']}';
-    jobs.add(ChequeReminderJob(id, 'تذكير بموعد شيك', body,
-      'cheque:${row['id']}:${stamp.millisecondsSinceEpoch}:${jsonEncode([row['number'],row['party'],row['amount'],row['dueDate'],row['type']])}',stamp.toDate()));
+    final amount = vibVoucherMoney(row['amount']);
+    final title = originalOutstanding ? 'تذكير باستلام أصل شيك' : 'تذكير بموعد شيك';
+    final body = originalOutstanding
+      ? 'شيك رقم ${row['number']} سددته بتحويل • أصله ما زال عند ${row['party']} • $amount ج.م'
+      : 'شيك ${row['type'] == 'received' ? 'وارد' : 'صادر'} رقم ${row['number']} • ${row['party']} • $amount ج.م • يستحق ${row['dueDate']}';
+    final content = [row['number'],row['party'],row['amount'],row['dueDate'],row['type'],
+      if (originalOutstanding) 'awaiting-original'];
+    jobs.add(ChequeReminderJob(id, title, body,
+      'cheque:${row['id']}:${stamp.millisecondsSinceEpoch}:${jsonEncode(content)}',stamp.toDate()));
   }
   jobs.sort((a,b) => a.when.compareTo(b.when));
   if (jobs.length > 300) throw StateError('الحد الأقصى 300 تذكير قادم؛ أغلق الشيكات المنتهية أولًا');
