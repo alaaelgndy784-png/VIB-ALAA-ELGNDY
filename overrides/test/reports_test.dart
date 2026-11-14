@@ -43,7 +43,7 @@ void main() {
   });
 
   test('preset profit date includes expenses added after the report opened', () {
-    final selected = DateTime(2026, 11, 14, 9, 30);
+    final selected = DateTime(2026, 11, 14, 9, 30, 27);
     expect(profitPeriodQueryEnd(selected), DateTime(2026, 11, 15));
     expect(profitPeriodQueryEnd(selected, custom: true), selected);
     expect(profitPeriodQueryEnd(DateTime(2026, 11, 14, 9, 30, 0), custom: true),
