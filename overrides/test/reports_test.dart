@@ -42,6 +42,28 @@ void main() {
     expect(profitQueryEnd(now),now);
   });
 
+  test('preset daily profit includes the full day including late expenses', () {
+    final reportOpenedAt = DateTime(2026, 11, 14, 9, 30, 27);
+    expect(profitPeriodQueryEnd(reportOpenedAt), DateTime(2026, 11, 15));
+    expect(profitPeriodQueryEnd(reportOpenedAt, custom: true), reportOpenedAt);
+    expect(profitPeriodQueryEnd(DateTime(2026, 11, 14, 9, 30), custom: true),
+      DateTime(2026, 11, 14, 9, 31));
+  });
+
+  test('day with no sales subtracts expenses and does not charge cash mirror twice', () {
+    final day = DateTime(2026, 11, 14);
+    final movementDate = Timestamp.fromDate(day.add(const Duration(hours: 18)));
+    final rows = [
+      {'accountType':'expenses','amount':500, 'createdAt':movementDate},
+      {'accountType':'cash','kind':'expense','amount':500, 'createdAt':movementDate},
+      {'accountType':'expenses','amount':80,'createdAt':Timestamp.fromDate(day.subtract(const Duration(days:1)))},
+    ];
+    final expenseTotal=profitExpensesForPeriod(rows,day,day.add(const Duration(days:1)));
+    expect(expenseTotal,500);
+    expect(netProfitAfterExpenses(0,0,expenseTotal),-500);
+    expect(netProfitAfterExpenses(1000,650,expenseTotal),-150);
+  });
+
   final day=DateTime(2026,10,4);
   testWidgets('typed sales report dates are applied when the period button is pressed', (tester) async {
     DateTime? appliedFrom, appliedTo;
