@@ -170,10 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 10209/; s/versionName = .*/versionName = "0.2.69"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 10209' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.69"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=10209 --build-name=0.2.69
+          sed -i -E 's/versionCode = .*/versionCode = 10210/; s/versionName = .*/versionName = "0.2.70"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 10210' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.70"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=10210 --build-name=0.2.70
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -542,6 +542,66 @@ jobs:
             إصلاح الكسور في سندات القبض والصرف وPDF، متابعة أصول الشيكات المسددة بتحويل والموجودة عند التجار، ونغمة رسالة قصيرة بعد البصمة.
             متابعة الشيكات لا تغيّر الذمم أو الصندوق تلقائيًا؛ يظل السداد بسند مستقل.
             أُجريت اختبارات المشروع والتحقق من شهادة التوقيع وتوافق الإصدار.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
+
+  # Dedicated upgrade path from the installed, verified 0.2.69 release.
+  publish-manager-negative-expenses-0-2-70:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/fix/vib-manager-0-2-70-negative-expenses-20261114'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download freshly tested manager APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+
+      - name: Verify package, increasing internal version and same Android signing key
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.69-vouchers-cheques-chime-20261114 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          NEW_PACKAGE="$("$AAPT" dump badging "$NEW" | grep '^package:')"
+          OLD_PACKAGE="$("$AAPT" dump badging "$OLD" | grep '^package:')"
+          echo "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$OLD_PACKAGE"
+          grep -F "versionCode='12210'" <<< "$NEW_PACKAGE"
+          grep -F "versionName='0.2.70'" <<< "$NEW_PACKAGE"
+          grep -F "versionCode='12209'" <<< "$OLD_PACKAGE"
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/new-cert.txt
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/old-cert.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-cert.txt | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+          echo 'Verified in-place 0.2.70 upgrade over 0.2.69.'
+
+      - name: Publish direct installable 0.2.70 manager APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.70-daily-net-expenses-20261114
+          name: VIB Manager 0.2.70 — Daily net expenses
+          target_commitish: ${{ github.sha }}
+          body: |
+            تحديث مباشر فوق نسخة المدير 0.2.69 بنفس الحزمة وتوقيع التثبيت.
+            في يوم دون مبيعات تظهر المصروفات بالسالب في صافي الربح اليومي.
+            عرض صافي الربح في ملخص الصفحة الرئيسية بعد خصم المصروفات، مع جمع مصروفات اليوم كاملة وتجنب الحساب المزدوج.
+            يحتفظ بجميع تعديلات السندات والشيكات ونغمة الدخول من إصدار 0.2.69.
+            اختبارات البرنامج وفحص تطابق شهادة التوقيع والإصدار إلزامية قبل النشر.
           files: |
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
