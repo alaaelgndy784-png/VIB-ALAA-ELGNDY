@@ -170,10 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 10210/; s/versionName = .*/versionName = "0.2.70"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 10210' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.70"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=10210 --build-name=0.2.70
+          sed -i -E 's/versionCode = .*/versionCode = 10211/; s/versionName = .*/versionName = "0.2.71"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 10211' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.71"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=10211 --build-name=0.2.71
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -602,6 +602,66 @@ jobs:
             عرض صافي الربح في ملخص الصفحة الرئيسية بعد خصم المصروفات، مع جمع مصروفات اليوم كاملة وتجنب الحساب المزدوج.
             يحتفظ بجميع تعديلات السندات والشيكات ونغمة الدخول من إصدار 0.2.69.
             اختبارات البرنامج وفحص تطابق شهادة التوقيع والإصدار إلزامية قبل النشر.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
+
+  publish-manager-expense-period-0-2-71:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/fix/vib-manager-0-2-71-expense-date-range-20261114'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tested manager APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+
+      - name: Check update is signed identically and newer than 0.2.70
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.70-daily-net-expenses-20261114 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          NEW_PACKAGE="$("$AAPT" dump badging "$NEW" | grep '^package:')"
+          OLD_PACKAGE="$("$AAPT" dump badging "$OLD" | grep '^package:')"
+          echo "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$OLD_PACKAGE"
+          grep -F "versionCode='12211'" <<< "$NEW_PACKAGE"
+          grep -F "versionName='0.2.71'" <<< "$NEW_PACKAGE"
+          grep -F "versionCode='12210'" <<< "$OLD_PACKAGE"
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/new-cert.txt
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/old-cert.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-cert.txt | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+          echo 'Verified in-place 0.2.71 upgrade over 0.2.70.'
+
+      - name: Publish Android 0.2.71 expenses period update
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.71-expense-date-range-20261114
+          name: VIB Manager 0.2.71 — Colored expenses by date range
+          target_commitish: ${{ github.sha }}
+          body: |
+            تحديث مباشر فوق VIB Manager 0.2.70 بنفس اسم حزمة Android وشهادة توقيع التثبيت.
+            شاشة المصروفات تعرض اختيار من تاريخ وإلى تاريخ بالتقويم، وإجمالي مصروفات الفترة وعدد الحركات.
+            تصميم ملون بالأزرق والنيون والأحمر الذهبي مع اختصارات اليوم والشهر.
+            اليومان المختاران مشمولان في التقرير بتوقيت القاهرة؛ لا يتم جمع حركة الصندوق المكررة.
+            يتضمن إصلاح صافي الأرباح بالسالب وتعديلات الشيكات والسندات السابقة بدون حذف البيانات.
+            يجب نجاح اختبارات المشروع واختبار شهادة توقيع APK قبل النشر.
           files: |
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
