@@ -385,11 +385,157 @@ Future<void> editChequeDialog(BuildContext context,String uid,{Map<String,dynami
   for(final c in [number,party,bank,amount,note]) {c.dispose();}
 }
 
-Future<void> changeChequeStatus(BuildContext context,String uid,Map<String,dynamic> row,bool done) async {
+
+Future<void> markChequeTransferPaid(BuildContext context,String uid,Map<String,dynamic> row) async {
+  final reference=TextEditingController();
+  final today=tz.TZDateTime.now(chequeZone);
+  DateTime paidDate=DateTime(today.year,today.month,today.day);
+  DateTime remind=chequeReminderBefore(
+      DateTime(today.year,today.month,today.day+7),0,9,0);
+  bool remindEnabled=true,saving=false;
   try {
-    await saveChequeRecord(uid,{'id':row['id'],'status':done ? 'done' : 'open'},expectedRevision:(row['revision'] as int?) ?? 0);
-    if(context.mounted) await showInvoiceSaveProblem(context,done ? 'تم تسجيل تنفيذ الشيك وإلغاء تذكيره. سجّل السداد بسند صرف أو قبض عند الحاجة.' : 'تم إعادة فتح الشيك. راجع تاريخ التذكير لو فات موعده.',title:'مواعيد الشيكات',button:'تمام',success:true);
-  } catch(e) {if(context.mounted) await showInvoiceSaveProblem(context,'تعذر تحديث الشيك: $e',title:'مواعيد الشيكات',button:'تمام');}
+    await showDialog<void>(context:context,barrierDismissible:false,
+      builder:(dialog) => StatefulBuilder(builder:(dialog,update) => AlertDialog(
+        title:const Text('سداد الشيك بتحويل — أصل الشيك عند التاجر'),
+        content:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,
+          crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+          Text('شيك رقم ${row['number']} • التاجر: ${row['party']}'),
+          Text('القيمة: ${vibVoucherMoney(row['amount'])} ج.م'),
+          const SizedBox(height:8),
+          const Text('التسجيل ده للمتابعة فقط؛ مش بيعمل سند صرف جديد ولا بيغيّر حساب المورد أو الصندوق.',
+            style:TextStyle(color:Colors.orangeAccent)),
+          OutlinedButton.icon(
+            onPressed:saving ? null : () async {
+              final picked=await showDatePicker(context:dialog,initialDate:paidDate,
+                firstDate:DateTime(2000),lastDate:DateTime(today.year,today.month,today.day));
+              if(picked != null && dialog.mounted)update(() => paidDate=picked);
+            },
+            icon:const Icon(Icons.event_available),label:Text('تاريخ التحويل: ${chequeDate(paidDate)}')),
+          TextField(controller:reference,enabled:!saving,maxLength:120,
+            decoration:const InputDecoration(labelText:'رقم التحويل / مرجع العملية (اختياري)')),
+          SwitchListTile(contentPadding:EdgeInsets.zero,title:const Text('ذكرني باستلام أصل الشيك'),
+            value:remindEnabled,onChanged:saving ? null : (v) => update(() => remindEnabled=v)),
+          if(remindEnabled) OutlinedButton.icon(
+            onPressed:saving ? null : () async {
+              final date=await showDatePicker(context:dialog,
+                initialDate:DateTime(remind.year,remind.month,remind.day),
+                firstDate:DateTime(today.year,today.month,today.day),
+                lastDate:DateTime(2100));
+              if(date==null || !dialog.mounted)return;
+              final time=await showTimePicker(context:dialog,
+                initialTime:TimeOfDay(hour:remind.hour,minute:remind.minute));
+              if(time!=null && dialog.mounted)update(() => remind=tz.TZDateTime(
+                chequeZone,date.year,date.month,date.day,time.hour,time.minute));
+            },
+            icon:const Icon(Icons.alarm),label:Text('تذكير استلام الأصل: ${DateFormat('dd/MM/yyyy HH:mm').format(remind)}')),
+        ])),
+        actions:[
+          TextButton(onPressed:saving ? null : () => Navigator.pop(dialog),child:const Text('إلغاء')),
+          FilledButton(onPressed:saving ? null : () async {
+            if(remindEnabled && !remind.isAfter(DateTime.now())) {
+              await showInvoiceSaveProblem(dialog,'حدد تذكيرًا في المستقبل.',title:'تذكير استلام الشيك',button:'رجوع');
+              return;
+            }
+            update(() => saving=true);
+            try {
+              final change=chequeTransferPaidUpdate(row,paidDate,reference.text,
+                originalReminderAt:remindEnabled ? Timestamp.fromDate(remind) : null);
+              await saveChequeRecord(uid,change,expectedRevision:(row['revision'] as int?) ?? 0);
+              if(remindEnabled) {
+                try {await ChequeReminders.instance.requestPermissions();}
+                catch(e) {ChequeReminders.instance.warning.value='تم الحفظ لكن تعذر تفعيل تذكير الاستلام: $e';}
+              }
+              if(dialog.mounted)Navigator.pop(dialog);
+              if(context.mounted)await showInvoiceSaveProblem(context,
+                'اتسجل إن الشيك مسدد بتحويل، لكن أصل الشيك لسه عند التاجر. هتلاقيه في «مدفوعة والأصل عند التاجر». السداد المحاسبي لازم يكون بسند منفصل.',
+                title:'متابعة أصل الشيك',button:'تمام',success:true);
+            } catch(e) {
+              if(dialog.mounted){update(() => saving=false);
+                await showInvoiceSaveProblem(dialog,'تعذر تسجيل التحويل: $e',
+                  title:'متابعة أصل الشيك',button:'رجوع');}
+            }
+          },child:Text(saving?'جارٍ الحفظ…':'تأكيد السداد والمتابعة')),
+        ],
+      )));
+  } finally { reference.dispose(); }
+}
+
+Future<void> markChequeOriginalReceived(BuildContext context,String uid,Map<String,dynamic> row) async {
+  final now=tz.TZDateTime.now(chequeZone);
+  DateTime receivedDate=DateTime(now.year,now.month,now.day);
+  final yes=await showDialog<bool>(context:context,
+    builder:(dialog)=>StatefulBuilder(builder:(dialog,update)=>AlertDialog(
+      title:const Text('تأكيد استلام أصل الشيك'),
+      content:Column(mainAxisSize:MainAxisSize.min,children:[
+        Text('هل استلمت فعلاً أصل الشيك رقم ${row['number']} من ${row['party']}؟'),
+        OutlinedButton.icon(onPressed:() async {
+          final picked=await showDatePicker(context:dialog,initialDate:receivedDate,
+            firstDate:DateTime(2000),lastDate:DateTime(now.year,now.month,now.day));
+          if(picked!=null && dialog.mounted) update(() => receivedDate=picked);
+        },icon:const Icon(Icons.calendar_today),label:Text('تاريخ استلام الأصل: ${chequeDate(receivedDate)}')),
+      ]),
+      actions:[
+        TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('لسه ما استلمتوش')),
+        FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('أيوه، استلمت الأصل')),
+      ],
+    )))??false;
+  if(!yes)return;
+  try{
+    await saveChequeRecord(uid,chequeOriginalReceivedUpdate(row,receivedDate),
+      expectedRevision:(row['revision'] as int?) ?? 0);
+    if(context.mounted)await showInvoiceSaveProblem(context,
+      'اتسجل استلام أصل الشيك بتاريخ ${chequeDate(receivedDate)}، واتشال من قائمة الأصول عند التجار، واتلغى تذكير الاستلام.',
+      title:'استلام أصل الشيك',button:'تمام',success:true);
+  }catch(e){
+    if(context.mounted)await showInvoiceSaveProblem(context,'تعذر تأكيد الاستلام: $e',
+      title:'استلام أصل الشيك',button:'تمام');
+  }
+}
+
+Future<void> undoChequeOriginalReceived(BuildContext context,String uid,Map<String,dynamic> row) async {
+  if(row['settlementMethod']!='bank_transfer' || row['originalReceived']!=true) return;
+  final yes=await showDialog<bool>(context:context,builder:(dialog)=>AlertDialog(
+    title:const Text('تصحيح حالة أصل الشيك'),
+    content:Text('هل تريد إلغاء تأكيد استلام أصل الشيك رقم ${row['number']}؟ هيظهر مرة تانية في شيكات عند التاجر، من غير تغيير أي سداد مالي.'),
+    actions:[
+      TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('رجوع')),
+      FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('إلغاء تأكيد الاستلام')),
+    ]))??false;
+  if(!yes)return;
+  try{
+    await saveChequeRecord(uid,{
+      'id':row['id'],'originalReceived':false,'originalReceivedDate':null,'originalReminderAt':null,
+    },expectedRevision:(row['revision'] as int?) ?? 0);
+    if(context.mounted)await showInvoiceSaveProblem(context,'الشيك رجع لقائمة الأصول عند التجار. لم يتغير حساب المورد أو الصندوق.',
+      title:'تصحيح حالة الأصل',button:'تمام',success:true);
+  }catch(e){
+    if(context.mounted)await showInvoiceSaveProblem(context,'تعذر التصحيح: $e',
+      title:'تصحيح حالة الأصل',button:'تمام');
+  }
+}
+
+Future<void> changeChequeStatus(BuildContext context,String uid,Map<String,dynamic> row,bool done) async {
+  if(!done && row['settlementMethod']=='bank_transfer') {
+    final yes=await showDialog<bool>(context:context,builder:(dialog)=>AlertDialog(
+      title:const Text('إعادة فتح شيك مسدد بتحويل'),
+      content:const Text('ده تصحيح للمتابعة بس: هيتشال تسجيل التحويل وحالة أصل الشيك من قسم الشيكات، لكن مش هيتلغى أي سند صرف أو تحويل بنكي. متأكد؟'),
+      actions:[
+        TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('رجوع')),
+        FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('تأكيد إعادة الفتح')),
+      ]))??false;
+    if(!yes)return;
+  }
+  try {
+    await saveChequeRecord(uid,done ? {'id':row['id'],'status':'done'} : chequeReopenUpdate(row),
+      expectedRevision:(row['revision'] as int?) ?? 0);
+    if(context.mounted)await showInvoiceSaveProblem(context,done
+      ? 'تم تسجيل تنفيذ الشيك وإلغاء تذكير الاستحقاق. سجّل السداد بسند صرف أو قبض عند الحاجة.'
+      : 'تم إعادة فتح الشيك. راجع تاريخ التذكير لو فات موعده. لم تتغير القيود المحاسبية.',
+      title:'مواعيد الشيكات',button:'تمام',success:true);
+  } catch(e) {
+    if(context.mounted)await showInvoiceSaveProblem(context,'تعذر تحديث الشيك: $e',
+      title:'مواعيد الشيكات',button:'تمام');
+  }
 }
 Future<void> deleteCheque(BuildContext context,String uid,Map<String,dynamic> row) async {
   final yes=await showDialog<bool>(context:context,builder:(dialog) => AlertDialog(title:const Text('حذف الشيك'),content:Text('حذف الشيك رقم ${row['number']} وإلغاء تذكيره؟'),actions:[TextButton(onPressed:() => Navigator.pop(dialog,false),child:const Text('إلغاء')),FilledButton(onPressed:() => Navigator.pop(dialog,true),child:const Text('حذف'))])) ?? false;
