@@ -3617,6 +3617,41 @@ class _ExpensesState extends State<Expenses> {
     ));
   }
 
+  bool exportingPdf = false;
+
+  Future<void> _exportPeriodPdf() async {
+    if (exportingPdf) return;
+    final selectedFrom = fromDate, selectedTo = toDate;
+    setState(() => exportingPdf = true);
+    try {
+      // Re-read confirmed expense entries before exporting, as with invoice
+      // reports. Never export unsynced or stale cached financial figures.
+      final snapshot = await db.collection('accountMovements')
+        .where('accountType', isEqualTo: 'expenses')
+        .get(const GetOptions(source: Source.server));
+      if (snapshot.metadata.isFromCache || snapshot.metadata.hasPendingWrites) {
+        throw StateError('انتظر اكتمال مزامنة المصروفات ثم أعد المحاولة');
+      }
+      final summary = summarizeExpensePeriod(
+        snapshot.docs.map((doc) => doc.data()), selectedFrom, selectedTo);
+      if (summary.rows.isEmpty) {
+        throw StateError('لا توجد مصروفات في الفترة المحددة');
+      }
+      final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+      final bytes = await createExpensePeriodReportPdf(
+        summary, selectedFrom, selectedTo, font);
+      await Printing.sharePdf(bytes: bytes,
+        filename: 'VIB-EXPENSES-${DateFormat('yyyyMMdd').format(selectedFrom)}-${DateFormat('yyyyMMdd').format(selectedTo)}.pdf');
+    } catch (error) {
+      if (mounted) {
+        await showInvoiceSaveProblem(context, '$error',
+          title: 'تعذر تصدير تقرير المصروفات', button: 'رجوع للمصروفات');
+      }
+    } finally {
+      if (mounted) setState(() => exportingPdf = false);
+    }
+  }
+
   @override Widget build(BuildContext context) {
     return Column(children: [
       Container(
@@ -3644,14 +3679,28 @@ class _ExpensesState extends State<Expenses> {
         ]),
       ),
       Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
-        child: SizedBox(width: double.infinity, child: FilledButton.icon(
-          onPressed: () => expenseDialog(context),
-          style: FilledButton.styleFrom(backgroundColor: vibNeon,
-            foregroundColor: const Color(0xFF081526),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
-          icon: const Icon(Icons.add_circle_outline),
-          label: const Text('تسجيل مصروف جديد',
-            style: TextStyle(fontWeight: FontWeight.bold)))),
+        child: Row(children: [
+          Expanded(child: FilledButton.icon(
+            onPressed: () => expenseDialog(context),
+            style: FilledButton.styleFrom(backgroundColor: vibNeon,
+              foregroundColor: const Color(0xFF081526),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+            icon: const Icon(Icons.add_circle_outline),
+            label: const FittedBox(fit: BoxFit.scaleDown,
+              child: Text('تسجيل مصروف جديد',
+                style: TextStyle(fontWeight: FontWeight.bold))))),
+          const SizedBox(width: 8),
+          OutlinedButton.icon(
+            key: const ValueKey('expenses-export-pdf'),
+            onPressed: exportingPdf ? null : _exportPeriodPdf,
+            style: OutlinedButton.styleFrom(foregroundColor: vibBlue,
+              side: const BorderSide(color: vibBlue)),
+            icon: exportingPdf
+              ? const SizedBox(width: 16, height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.picture_as_pdf_outlined, size: 18),
+            label: const Text('PDF')),
+        ]),
       ),
       Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: db.collection('accountMovements')
