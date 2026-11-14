@@ -1,0 +1,68 @@
+name: Publish verified VIB Manager 0.2.68
+
+on:
+  push:
+    branches: [fix/vib-manager-0-2-68-purchase-exit-expenses-20261114]
+    paths:
+      - .github/workflows/publish-vib-manager-0-2-68-verified.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  publish-verified-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download already tested 0.2.68 manager APK
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p manager previous
+          gh run download 43606833281 --repo "$GITHUB_REPOSITORY" --name VIB-SALES-MANAGER-APK --dir manager
+          gh release download vib-manager-0.2.66-complete-customer-payments-20261109 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+
+      - name: Validate build version and unchanged package signing identity
+        run: |
+          set -euo pipefail
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          NEW_PACKAGE="$("$AAPT" dump badging "$NEW" | grep '^package:')"
+          OLD_PACKAGE="$("$AAPT" dump badging "$OLD" | grep '^package:')"
+          echo "$NEW_PACKAGE"
+          echo "$OLD_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$OLD_PACKAGE"
+          grep -F "versionCode='12208'" <<< "$NEW_PACKAGE"
+          grep -F "versionName='0.2.68'" <<< "$NEW_PACKAGE"
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/new-cert.txt
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/old-cert.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-cert.txt | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+          echo "Verified in-place VIB Manager 0.2.68 update and signing certificate."
+
+      - name: Publish direct Android APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.68-purchases-expenses-20261114
+          name: VIB Manager 0.2.68 — Purchase exit protection and Expenses
+          target_commitish: ${{ github.sha }}
+          body: |
+            تحديث مدير VIB المباشر للإصدار 0.2.68.
+            شاشة المشتريات: تأكيد قبل الخروج بزر رجوع الهاتف أو زر إلغاء، وعدم ضياع البنود عن طريق الخطأ.
+            أيقونة المصروفات متاحة في الشاشة الرئيسية للمدير.
+            لم يتم تعديل بيانات العملاء أو المخزون، وقد اجتاز APK اختبار الشيفرة والبناء وفحص توافق التوقيع الرقمي.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
