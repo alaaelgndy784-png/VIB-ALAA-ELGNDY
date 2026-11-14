@@ -9,9 +9,12 @@ Future<void> vibPlayManagerRingtone(AudioPlayer fallback) async {
     final played = await _vibRingtoneChannel.invokeMethod<bool>('play');
     if (played == true) return;
   } catch (error) {
-    debugPrint('Unable to play phone ringtone: ' + error.toString());
+    debugPrint('Unable to play notification sound: ' + error.toString());
   }
   await fallback.play(AssetSource('login-chime.wav'), volume: .85);
+  // Also cap the built-in fallback chime if native notification audio is unavailable.
+  await Future<void>.delayed(const Duration(seconds: 2));
+  await fallback.stop();
 }
 
 Future<void> vibChooseManagerRingtone(BuildContext context) async {
@@ -19,7 +22,7 @@ Future<void> vibChooseManagerRingtone(BuildContext context) async {
     final selected = await _vibRingtoneChannel.invokeMethod<bool>('choose');
     if (context.mounted && selected == true) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content:Text('تم حفظ رنة الدخول من رنات الموبايل')));
+        content:Text('تم حفظ نغمة الدخول من نغمات الرسائل')));
     }
   } catch (error) {
     if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(
@@ -37,8 +40,8 @@ Future<void> vibPreviewManagerRingtone(BuildContext context) async {
         SnackBar(content: Text('تعذر تشغيل الرنة: $error')));
     }
   } finally {
-    // Keep the fallback audio player alive long enough to hear the chime.
-    await Future<void>.delayed(const Duration(seconds: 3));
+    // Native tones are stopped in Android; fallback audio stops after two seconds.
+    await Future<void>.delayed(const Duration(milliseconds: 200));
     await player.dispose();
   }
 }
