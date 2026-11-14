@@ -1388,6 +1388,75 @@ class DashboardCustomerPaymentsMetric extends StatelessWidget {
   );
 }
 
+class DashboardNetProfitMetric extends StatelessWidget {
+  final DateTime from, to;
+  const DashboardNetProfitMetric({super.key, required this.from, required this.to});
+
+  @override Widget build(BuildContext context) {
+    final start = _dashboardStartOfDay(from);
+    final until = DateTime(to.year, to.month, to.day + 1);
+    final lower = Timestamp.fromDate(start), upper = Timestamp.fromDate(until);
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: db.collection('sales')
+        .where('createdAt', isGreaterThanOrEqualTo: lower)
+        .where('createdAt', isLessThan: upper).snapshots(),
+      builder: (context, salesSnap) =>
+        StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: db.collection('salesReturns')
+            .where('createdAt', isGreaterThanOrEqualTo: lower)
+            .where('createdAt', isLessThan: upper).snapshots(),
+          builder: (context, returnsSnap) =>
+            StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: db.collection('accountMovements')
+                .where('accountType', isEqualTo: 'expenses').snapshots(),
+              builder: (context, expenseSnap) {
+                String amount = '...';
+                String? warning;
+                Color valueColor = const Color(0xFF45D483);
+                if (salesSnap.hasError || returnsSnap.hasError || expenseSnap.hasError) {
+                  amount = '—';
+                  warning = 'تعذر تحميل بعض بيانات صافي الربح';
+                } else if (salesSnap.hasData && returnsSnap.hasData && expenseSnap.hasData) {
+                  final summary = summarizeProfitPeriod(
+                    sales: salesSnap.data!.docs.where((d) => visibleAfterReset(d.data())).map((d) => d.data()),
+                    returns: returnsSnap.data!.docs.where((d) => visibleAfterReset(d.data())).map((d) => d.data()),
+                    expenseRows: expenseSnap.data!.docs.map((d) => d.data()),
+                    from: start, until: until,
+                  );
+                  if (summary.net == null) {
+                    amount = 'غير مكتمل';
+                    warning = 'بعض الفواتير لا تحتفظ بتكلفة الشراء وقت البيع';
+                  } else {
+                    amount = '${summary.net!.toStringAsFixed(2)} ج.م';
+                    if (summary.net! < 0) valueColor = Colors.redAccent;
+                  }
+                  if (salesSnap.data!.metadata.isFromCache ||
+                      returnsSnap.data!.metadata.isFromCache ||
+                      expenseSnap.data!.metadata.isFromCache) {
+                    warning = 'بيانات محفوظة مؤقتًا؛ قد لا تكون أحدث حركة';
+                  }
+                }
+                return Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                  child: Row(children: [
+                    const Icon(Icons.account_balance_wallet_outlined, color: gold, size: 20),
+                    const SizedBox(width: 8),
+                    const Expanded(child: Text('صافي الربح/الخسارة بعد المصروفات',
+                      style: TextStyle(fontSize: 12, color: Color(0xFFB8C5D9)))),
+                    Text(amount, style: TextStyle(color: valueColor, fontSize: 16,
+                      fontWeight: FontWeight.bold)),
+                    if (warning != null) Tooltip(message: warning,
+                      child: const Padding(padding: EdgeInsets.only(left: 4),
+                        child: Icon(Icons.info_outline, color: Colors.orangeAccent, size: 15))),
+                  ]),
+                );
+              },
+            ),
+        ),
+    );
+  }
+}
+
 class DashboardSummaryCard extends StatefulWidget {
   final bool owner;
   final String? actorId;
@@ -1492,6 +1561,7 @@ class _DashboardSummaryCardState extends State<DashboardSummaryCard> {
           ]),
         ),
         Row(children: metrics),
+        if (owner) DashboardNetProfitMetric(from: selectedFrom, to: selectedTo),
       ]),
     );
   }
@@ -3422,7 +3492,7 @@ class _ProfitReportState extends State<ProfitReport> {
   }
   String profitDateTime(DateTime value) => DateFormat('dd/MM/yyyy • HH:mm').format(value);
   @override Widget build(BuildContext context) {
-    final queryEnd = profitQueryEnd(end);
+    final queryEnd = profitPeriodQueryEnd(end, custom: period == 'custom');
     final validRange = queryEnd.isAfter(start);
     return Column(children: [
       Padding(padding: const EdgeInsets.symmetric(horizontal:8), child: Row(children:[
@@ -3434,9 +3504,9 @@ class _ProfitReportState extends State<ProfitReport> {
         Expanded(child:OutlinedButton.icon(key:const ValueKey('profit-to-button'),
           style:OutlinedButton.styleFrom(foregroundColor:vibBlue,side:const BorderSide(color:vibBlue)),
           onPressed:()=>chooseProfitBoundary(false),icon:const Icon(Icons.schedule),
-          label:Text('إلى ${profitDateTime(end)}',maxLines:1,overflow:TextOverflow.ellipsis))),
+          label:Text(period == 'custom' ? 'إلى ${profitDateTime(end)}' : 'إلى ${DateFormat('dd/MM/yyyy').format(end)} نهاية اليوم',maxLines:1,overflow:TextOverflow.ellipsis))),
       ])),
-      Text(validRange ? 'الفترة: ${profitDateTime(start)} إلى ${profitDateTime(end)}' : 'وقت النهاية لازم يكون بعد وقت البداية',
+      Text(validRange ? 'الفترة: ${profitDateTime(start)} إلى ${period == 'custom' ? profitDateTime(end) : '${DateFormat('dd/MM/yyyy').format(end)} نهاية اليوم'}' : 'وقت النهاية لازم يكون بعد وقت البداية',
         textAlign:TextAlign.center,style:TextStyle(color:validRange ? vibBlue : Colors.redAccent)),
       if(!validRange) const Expanded(child:SizedBox.shrink()) else Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
         stream: db.collection('products').snapshots(),
@@ -3458,39 +3528,20 @@ class _ProfitReportState extends State<ProfitReport> {
                   if (returnsSnap.hasError) return const Center(child: Text('تعذر تحميل المرتجعات'));
                   if (!returnsSnap.hasData) return const Center(child: CircularProgressIndicator());
                   final returns = returnsSnap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
-              double revenue = 0, knownCost = 0;
-              int missingCost = 0;
-              for (final event in [...sales.map((d) => (data: d.data(), sign: 1)), ...returns.map((d) => (data: d.data(), sign: -1))]) {
-                final sale = event.data;
-                revenue += event.sign * ((sale['total'] as num?)?.toDouble() ?? 0);
-                final rawItems = (sale['items'] as List?) ?? const [];
-                if (rawItems.isNotEmpty) {
-                  for (final raw in rawItems) {
-                    if (raw is! Map) continue;
-                    final qty = (raw['quantity'] as num?)?.toDouble() ?? 0;
-                    final cost = (raw['purchasePriceAtSale'] as num?)?.toDouble();
-                    // Never reprice a historical sale using today's product cost.
-                    if (cost != null && cost.isFinite && cost >= 0) {
-                      knownCost += event.sign * qty * cost;
-                    } else {
-                      missingCost++;
-                    }
-                  }
-                } else {
-                  final qty = (sale['quantity'] as num?)?.toDouble() ?? 0;
-                  final cost = (sale['purchasePriceAtSale'] as num?)?.toDouble();
-                  if (cost != null && cost.isFinite && cost >= 0) {
-                    knownCost += event.sign * qty * cost;
-                  } else {
-                    missingCost++;
-                  }
-                }
-              }
               return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'expenses').snapshots(), builder: (context, expensesSnap) {
                 if (expensesSnap.hasError) return const Center(child: Text('تعذر تحميل المصروفات'));
                 if (!expensesSnap.hasData) return const Center(child: CircularProgressIndicator());
-                final expenses = expensesSnap.data!.docs.where((d) { final data = d.data(); final date = (data['createdAt'] as Timestamp?)?.toDate(); return visibleAfterReset(data) && date != null && !date.isBefore(start) && date.isBefore(queryEnd); }).fold<double>(0, (sum, d) => sum + ((d.data()['amount'] as num?)?.toDouble() ?? 0));
-              final completeProfit = missingCost == 0;
+                final summary = summarizeProfitPeriod(
+                  sales: sales.map((d) => d.data()),
+                  returns: returns.map((d) => d.data()),
+                  expenseRows: expensesSnap.data!.docs.map((d) => d.data()),
+                  from: start, until: queryEnd,
+                );
+                final revenue = summary.revenue;
+                final knownCost = summary.knownCost;
+                final expenses = summary.expenses;
+                final missingCost = summary.missingCost;
+                final completeProfit = summary.net != null;
               return ListView(padding: const EdgeInsets.all(16), children: [
                 ListTile(title: const Text('عدد فواتير البيع',style:TextStyle(color:vibBlue)), trailing: Text('${sales.length}',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
                 ListTile(title: const Text('عدد المرتجعات خلال الفترة',style:TextStyle(color:vibBlue)), trailing: Text('${returns.length}',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
@@ -3500,9 +3551,9 @@ class _ProfitReportState extends State<ProfitReport> {
                 ListTile(title: const Text('الربح الإجمالي',style:TextStyle(color:vibBlue)),
                   trailing: Text(completeProfit ? '${(revenue - knownCost).toStringAsFixed(2)} ج.م' : 'غير مكتمل',
                     style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold))),
-                ListTile(title: const Text('الربح بعد المصروفات',style:TextStyle(color:vibBlue)),
-                  trailing: Text(completeProfit ? '${(revenue - knownCost - expenses).toStringAsFixed(2)} ج.م' : 'غير مكتمل',
-                    style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold))),
+                ListTile(title: const Text('صافي الربح/الخسارة بعد المصروفات',style:TextStyle(color:vibBlue)),
+                  trailing: Text(completeProfit ? '${summary.net!.toStringAsFixed(2)} ج.م' : 'غير مكتمل',
+                    style:TextStyle(color:summary.net != null && summary.net! < 0 ? Colors.redAccent : vibNeon,fontWeight:FontWeight.bold))),
                 if (missingCost > 0) Text('تحذير: تكلفة الشراء وقت البيع غير محفوظة في $missingCost بند/سجل. لا يمكن حساب ربح دقيق؛ لن نستبدلها بسعر الشراء الحالي لأن ده يغيّر أرباح الماضي.'),
                 const SizedBox(height: 16),
                 const Text('يُحسب الربح من تكلفة الصنف المحفوظة وقت البيع، بعد طرح المصروفات المسجلة. صحة التكلفة الأصلية تحتاج مراجعة فواتير الشراء.'),
