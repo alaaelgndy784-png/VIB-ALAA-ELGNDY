@@ -519,9 +519,9 @@ jobs:
           echo "$NEW_PACKAGE"
           grep -F "name='com.alaa.vibsales.managerscan'" <<< "$NEW_PACKAGE"
           grep -F "name='com.alaa.vibsales.managerscan'" <<< "$OLD_PACKAGE"
-          grep -F "versionCode='10209'" <<< "$NEW_PACKAGE"
+          grep -F "versionCode='12209'" <<< "$NEW_PACKAGE"
           grep -F "versionName='0.2.69'" <<< "$NEW_PACKAGE"
-          grep -F "versionCode='10208'" <<< "$OLD_PACKAGE"
+          grep -F "versionCode='12208'" <<< "$OLD_PACKAGE"
           "$SIGNER" verify --print-certs "$NEW" > /tmp/new-cert.txt
           "$SIGNER" verify --print-certs "$OLD" > /tmp/old-cert.txt
           NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert.txt | head -1 | tr -d '[:space:]')"
