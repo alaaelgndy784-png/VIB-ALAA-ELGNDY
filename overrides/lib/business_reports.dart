@@ -27,7 +27,9 @@ DateTime profitPeriodQueryEnd(DateTime selectedEnd, {bool custom = false}) =>
 // is a cashbox mirror and must not be subtracted for a second time.
 double profitExpensesForPeriod(
     Iterable<Map<String, dynamic>> movements, DateTime from, DateTime toExclusive) {
-  double total = 0;
+  // Round each movement to whole piastres before summing, matching the
+  // expense date-range report and avoiding floating-point drift.
+  var totalCents = 0;
   for (final item in movements) {
     if (item['accountType'] != 'expenses' || !visibleAfterReset(item)) continue;
     final rawDate = item['createdAt'];
@@ -35,9 +37,9 @@ double profitExpensesForPeriod(
       : rawDate is DateTime ? rawDate : null;
     if (recorded == null || recorded.isBefore(from) || !recorded.isBefore(toExclusive)) continue;
     final amount = (item['amount'] as num?)?.toDouble() ?? 0;
-    if (amount.isFinite && amount > 0) total += amount;
+    if (amount.isFinite && amount > 0) totalCents += (amount * 100).round();
   }
-  return total;
+  return totalCents / 100;
 }
 
 double netProfitAfterExpenses(double revenue, double cost, double expenses) =>
