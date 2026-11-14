@@ -3550,18 +3550,208 @@ class InventoryAudit extends StatefulWidget {
   @override State<InventoryAudit> createState() => _InventoryAuditState();
 }
 
-class Expenses extends StatelessWidget {
+class Expenses extends StatefulWidget {
   const Expenses({super.key});
-  @override Widget build(BuildContext context) => Column(children: [
-    Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(onPressed: () => expenseDialog(context), icon: const Icon(Icons.add), label: const Text('تسجيل مصروف'))),
-    Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'expenses').snapshots(), builder: (context, snap) {
-      if (snap.hasError) return const Center(child: Text('تعذر تحميل المصروفات'));
-      if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-      final rows = snap.data!.docs.where((d) => visibleAfterReset(d.data())).toList()
-        ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
-      final total = rows.fold<double>(0, (sum, row) => sum + ((row.data()['amount'] as num?)?.toDouble() ?? 0));
-      return Column(children: [ListTile(title: const Text('إجمالي المصروفات المسجلة'), trailing: Text('${total.toStringAsFixed(2)} ج.م')), Expanded(child: ListView(children: rows.map((row) { final data = row.data(); return ListTile(title: Text('${data['reason'] ?? ''}'), subtitle: Text('${data['category'] ?? 'عام'} • ${formatDate(data['createdAt'])}'), trailing: Text('${data['amount']} ج.م')); }).toList()))]);
-    }))]);
+  @override State<Expenses> createState() => _ExpensesState();
+}
+
+class _ExpensesState extends State<Expenses> {
+  late DateTime fromDate, toDate;
+
+  @override
+  void initState() {
+    super.initState();
+    final today = DateTime.now();
+    fromDate = toDate = DateTime(today.year, today.month, today.day);
+  }
+
+  Future<void> _chooseDate({required bool from}) async {
+    final current = from ? fromDate : toDate;
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: current,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      helpText: from ? 'تاريخ بداية المصروفات' : 'تاريخ نهاية المصروفات',
+    );
+    if (selected == null || !mounted) return;
+    setState(() {
+      final date = DateTime(selected.year, selected.month, selected.day);
+      if (from) {
+        fromDate = date;
+        if (fromDate.isAfter(toDate)) toDate = fromDate;
+      } else {
+        toDate = date;
+        if (toDate.isBefore(fromDate)) fromDate = toDate;
+      }
+    });
+  }
+
+  void _today() {
+    final now = DateTime.now();
+    setState(() => fromDate = toDate = DateTime(now.year, now.month, now.day));
+  }
+
+  void _month() {
+    final now = DateTime.now();
+    setState(() {
+      fromDate = DateTime(now.year, now.month, 1);
+      toDate = DateTime(now.year, now.month, now.day);
+    });
+  }
+
+  Widget _dateButton(String label, DateTime value, {required bool from}) {
+    return Expanded(child: OutlinedButton.icon(
+      key: ValueKey(from ? 'expenses-from-button' : 'expenses-to-button'),
+      onPressed: () => _chooseDate(from: from),
+      style: OutlinedButton.styleFrom(
+        foregroundColor: vibBlue,
+        side: const BorderSide(color: vibBlue),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+      icon: Icon(from ? Icons.date_range_outlined : Icons.event_available_outlined, size: 18),
+      label: FittedBox(fit: BoxFit.scaleDown,
+        child: Text('$label: ${DateFormat('dd/MM/yyyy').format(value)}',
+          style: const TextStyle(fontWeight: FontWeight.w700))),
+    ));
+  }
+
+  @override Widget build(BuildContext context) {
+    return Column(children: [
+      Container(
+        margin: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: const Color(0xFF081526),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: const Color(0xFF315681))),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Row(children: [
+            const Icon(Icons.filter_alt_outlined, color: vibNeon, size: 20),
+            const SizedBox(width: 6),
+            const Expanded(child: Text('مصروفات من تاريخ إلى تاريخ',
+              style: TextStyle(color: vibNeon, fontWeight: FontWeight.bold, fontSize: 15))),
+            TextButton(onPressed: _today, child: const Text('اليوم')),
+            TextButton(onPressed: _month, child: const Text('الشهر')),
+          ]),
+          const SizedBox(height: 6),
+          Row(children: [
+            _dateButton('من', fromDate, from: true),
+            const SizedBox(width: 8),
+            _dateButton('إلى', toDate, from: false),
+          ]),
+        ]),
+      ),
+      Padding(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
+        child: SizedBox(width: double.infinity, child: FilledButton.icon(
+          onPressed: () => expenseDialog(context),
+          style: FilledButton.styleFrom(backgroundColor: vibNeon,
+            foregroundColor: const Color(0xFF081526),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
+          icon: const Icon(Icons.add_circle_outline),
+          label: const Text('تسجيل مصروف جديد',
+            style: TextStyle(fontWeight: FontWeight.bold)))),
+      ),
+      Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+        stream: db.collection('accountMovements')
+          .where('accountType', isEqualTo: 'expenses').snapshots(),
+        builder: (context, snap) {
+          if (snap.hasError) {
+            return const Center(child: Text('تعذر تحميل المصروفات',
+              style: TextStyle(color: Colors.redAccent)));
+          }
+          if (!snap.hasData) return const Center(child: CircularProgressIndicator());
+          final summary = summarizeExpensePeriod(
+            snap.data!.docs.map((d) => d.data()), fromDate, toDate);
+          final rows = summary.rows;
+          final totalText = '${summary.total.toStringAsFixed(2)} ج.م';
+          return Column(children: [
+            Container(
+              margin: const EdgeInsets.fromLTRB(12, 6, 12, 8),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: const Color(0xFF0B2432),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: vibNeon, width: 1.2)),
+              child: Row(children: [
+                const Icon(Icons.account_balance_wallet_outlined,
+                  color: vibNeon, size: 30),
+                const SizedBox(width: 12),
+                Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    const Text('إجمالي مصروفات الفترة',
+                      style: TextStyle(color: Color(0xFFB8C5D9), fontSize: 12)),
+                    FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerRight,
+                      child: Text(totalText, style: const TextStyle(
+                        color: Color(0xFFFF6B6B), fontSize: 23, fontWeight: FontWeight.w800))),
+                  ])),
+                Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                  const Text('عدد الحركات', style: TextStyle(
+                    color: Color(0xFFB8C5D9), fontSize: 11)),
+                  Text('${rows.length}', style: const TextStyle(
+                    color: vibNeon, fontSize: 20, fontWeight: FontWeight.bold)),
+                ]),
+              ]),
+            ),
+            if (snap.data!.metadata.isFromCache || snap.data!.metadata.hasPendingWrites)
+              const Padding(padding: EdgeInsets.symmetric(horizontal: 16),
+                child: Text('قد توجد حركات لم تتم مزامنتها بعد',
+                  style: TextStyle(color: Colors.orangeAccent, fontSize: 12))),
+            Expanded(child: rows.isEmpty
+              ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(Icons.receipt_long_outlined, color: vibBlue, size: 38),
+                  SizedBox(height: 8),
+                  Text('لا توجد مصروفات في الفترة المحددة',
+                    style: TextStyle(color: Color(0xFFB8C5D9))),
+                ]))
+              : ListView.builder(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                itemCount: rows.length,
+                itemBuilder: (context, index) {
+                  final data = rows[index];
+                  final amount = (data['amount'] as num?)?.toDouble();
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0B1D33),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFF315681))),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                      Row(children: [
+                        const Icon(Icons.payments_outlined,
+                          color: Color(0xFFFF6B6B), size: 20),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text('${data['reason'] ?? ''}',
+                          style: const TextStyle(color: Colors.white,
+                            fontWeight: FontWeight.w700, fontSize: 15))),
+                        const SizedBox(width: 8),
+                        Text(amount == null ? '—' : '${amount.toStringAsFixed(2)} ج.م',
+                          style: const TextStyle(color: Color(0xFFFF6B6B),
+                            fontWeight: FontWeight.w800, fontSize: 15)),
+                      ]),
+                      const SizedBox(height: 8),
+                      Row(children: [
+                        const Icon(Icons.category_outlined, color: vibBlue, size: 16),
+                        const SizedBox(width: 4),
+                        Expanded(child: Text('${data['category'] ?? 'عام'}',
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: vibBlue, fontSize: 12))),
+                        const SizedBox(width: 8),
+                        const Icon(Icons.schedule_outlined, color: gold, size: 16),
+                        const SizedBox(width: 4),
+                        Text(formatDate(data['createdAt']),
+                          style: const TextStyle(color: gold, fontSize: 11)),
+                      ]),
+                    ]),
+                  );
+                })),
+          ]);
+        },
+      )),
+    ]);
+  }
 }
 
 Future<void> expenseDialog(BuildContext context) async {
