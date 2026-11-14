@@ -27,7 +27,7 @@ void main() {
     final now=DateTime.utc(2026,10,1);
     final rows=[cheque(when:now.add(const Duration(days:5))),cheque(id:'two',notificationId:2,when:now.add(const Duration(days:2))),cheque(id:'paid',notificationId:3,status:'done'),cheque(id:'disabled',notificationId:4,enabled:false),cheque(id:'past',notificationId:5,when:now.subtract(const Duration(minutes:1)))];
     final jobs=planChequeReminders(rows,now);
-    expect(jobs.map((j) => j.id),[2,1]);expect(jobs.first.body,contains('1000.50'));
+    expect(jobs.map((j) => j.id),[2,1]);expect(jobs.first.body,contains('1,000.50'));
     expect(() => planChequeReminders([cheque(),cheque(id:'collision')],now),throwsStateError);
     expect(() => planChequeReminders(List.generate(301,(i) => cheque(id:'$i',notificationId:i+1)),now),throwsStateError);
   });
