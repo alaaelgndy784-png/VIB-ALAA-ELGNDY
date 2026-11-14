@@ -88,6 +88,39 @@ void main() {
     expect(summarizeExpensePeriod([], from, to).totalCents, 0);
   });
 
+  test('profit expenses and expense-date report agree to the piastre', () {
+    final from = DateTime(2026, 11, 13);
+    final until = movementReportBoundary(DateTime(2026, 11, 13), next: true);
+    final moment = Timestamp.fromDate(movementReportBoundary(from).add(const Duration(hours: 10)));
+    final movements = [
+      {'accountType':'expenses', 'amount':0.10, 'createdAt':moment},
+      {'accountType':'expenses', 'amount':0.20, 'createdAt':moment},
+      {'accountType':'cash', 'kind':'expense', 'amount':0.30, 'createdAt':moment},
+    ];
+    final period = summarizeExpensePeriod(movements, from, from);
+    expect(period.totalCents, 30);
+    expect(profitExpensesForPeriod(movements,movementReportBoundary(from),until),0.30);
+    expect(netProfitAfterExpenses(0,0,
+      profitExpensesForPeriod(movements,movementReportBoundary(from),until)),-0.30);
+  });
+
+  test('expenses PDF exports selected Cairo dates, all rows and the total', () async {
+    final from = DateTime(2026, 11, 12), to = DateTime(2026, 11, 14);
+    final recorded = Timestamp.fromDate(
+      movementReportBoundary(DateTime(2026,11,13)).add(const Duration(hours: 15)));
+    final report = summarizeExpensePeriod([
+      {'accountType':'expenses','category':'إيجار','reason':'إيجار المحل',
+        'amount':500.25,'createdAt':recorded},
+      {'accountType':'cash','kind':'expense','amount':500.25,'createdAt':recorded},
+    ], from, to);
+    expect(report.rows.length, 1);
+    expect(report.totalCents, 50025);
+    final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    final bytes = await createExpensePeriodReportPdf(report, from, to, font);
+    expect(String.fromCharCodes(bytes.take(4)), '%PDF');
+    expect(bytes.length, greaterThan(1000));
+  });
+
   final day=DateTime(2026,10,4);
   testWidgets('typed sales report dates are applied when the period button is pressed', (tester) async {
     DateTime? appliedFrom, appliedTo;
