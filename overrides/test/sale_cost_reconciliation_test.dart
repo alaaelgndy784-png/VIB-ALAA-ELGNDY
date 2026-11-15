@@ -73,6 +73,7 @@ void main() {
   group('FIFO profit for ABS sprayer sold at purchase prices', () {
     const id='import_250501182315';
     const name='شطاف ABS + لى حرارى مقبل [علبة]';
+    const costFromCurrentCard=270.0;
     Map<String,dynamic> purchase(String ref, DateTime at, int qty, double cost) => {
       'id':ref,'createdAt':at,'status':'completed',
       'items':[{'productId':id,'productName':name,
@@ -83,7 +84,6 @@ void main() {
       'items':[{'productId':id,'productName':name,'quantity':qty,
         'unitPrice':price,'purchasePriceAtSale':costFromCurrentCard}],
     };
-    const costFromCurrentCard=270.0;
 
     test('old lot sold first; later 50 at 267 and 50 at 270 yield 150 EGP', () {
       final purchases=[
