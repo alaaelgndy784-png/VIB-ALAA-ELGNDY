@@ -5917,7 +5917,18 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                   .where((d) => d.data()['type'] == (widget.suppliers ? 'supplierPayment' : 'receipt'))
                   .map((d) => '${d.data()['originalId'] ?? ''}').toSet()
               : <String>{};
-          return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+            stream: widget.suppliers
+              ? db.collection('settings').doc(supplierPaymentLegacyRegistryId)
+                  .snapshots(includeMetadataChanges:true)
+              : null,
+            builder:(context, legacySnapshot) {
+              if(widget.suppliers && legacySnapshot.hasError)
+                return const Center(child:Text('تعذر تحميل أرقام سندات الصرف القديمة'));
+              if(widget.suppliers && !legacySnapshot.hasData)
+                return const Center(child:CircularProgressIndicator());
+              final legacyNumbers=readSupplierPaymentLegacyRegistry(legacySnapshot.data?.data());
+              return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: receipts,
             builder: (context, snapshot) {
               if (snapshot.hasError) return const Center(child: Text('تعذر تحميل تقرير السداد؛ راجع الاتصال والصلاحيات'));
@@ -5932,7 +5943,8 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
                 .map((d) {
                   final source=d.data();
                   if(!widget.suppliers)return <String,dynamic>{...source,'id':d.id};
-                  return supplierPaymentReportRow(d.id,source);
+                  return supplierPaymentReportRow(d.id,
+                    supplierPaymentWithLegacySerial(d.id,source,legacyNumbers));
                 }).toList();
               final rows = widget.suppliers ? receiptRows : vibCustomerPaymentReportRows(
                 receipts:receiptRows,sales:invoiceSnapshot.data!.rows,cancelledReceiptIds:cancelledIds);
@@ -5940,9 +5952,11 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
               final report = vibSelectReceiptParty(
                 allReceipts, customerSearch.text, selectedPaymentPartyKey);
               final pending = snapshot.data!.metadata.hasPendingWrites || invoiceSnapshot.data!.hasPendingWrites ||
-                (widget.owner && cancelSnapshot.data!.metadata.hasPendingWrites);
+                (widget.owner && cancelSnapshot.data!.metadata.hasPendingWrites) ||
+                (widget.suppliers && legacySnapshot.data!.metadata.hasPendingWrites);
               final cached = snapshot.data!.metadata.isFromCache || invoiceSnapshot.data!.fromCache ||
-                (widget.owner && cancelSnapshot.data!.metadata.isFromCache);
+                (widget.owner && cancelSnapshot.data!.metadata.isFromCache) ||
+                (widget.suppliers && legacySnapshot.data!.metadata.isFromCache);
               return Column(children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(8, 2, 8, 4),
@@ -6022,6 +6036,8 @@ class _CustomerPaymentReportState extends State<CustomerPaymentReport> {
               ]);
                 },
               );
+            },
+          );
             },
           );
         },
