@@ -68,6 +68,61 @@ void main() {
     });
   });
 
+  group('historic supplier payment numeric registry', () {
+    test('loads saved serials and ignores invalid values', () {
+      final map = readSupplierPaymentLegacyRegistry({
+        'numbers': {'old-1': 8, 'old-2': 9, 'bad': -5, 'other': 'ABC'}
+      });
+      expect(map, {'old-1': 8, 'old-2': 9});
+      expect(readSupplierPaymentLegacyRegistry(null), isEmpty);
+    });
+
+    test('legacy numbering only changes the displayed serial, not accounting', () {
+      final old = <String,dynamic>{
+        'accountType':'suppliers','kind':'payment','amount':17700,
+        'balanceBefore':17700,'balanceAfter':0,
+        'cashBefore':22000,'cashAfter':4300,
+        'accountName':'تاجر اختباري',
+        'createdAt':Timestamp.fromDate(DateTime(2026,11,1)),
+      };
+      final numbered = supplierPaymentWithLegacySerial('abcdEF',old,{'abcdEF':25});
+      expect(supplierPaymentVoucherDisplayNumber(numbered),'25');
+      expect(numbered['amount'],17700);
+      expect(numbered['balanceBefore'],17700);
+      expect(numbered['balanceAfter'],0);
+      expect(numbered['cashBefore'],22000);
+      expect(numbered['cashAfter'],4300);
+      expect(old.containsKey('paymentNumber'),isFalse);
+      final report = supplierPaymentReportRow('abcdEF',numbered);
+      expect(report['receiptNumber'],'25');
+      expect(supplierPaymentVoucherDisplayNumber(
+        supplierPaymentWithLegacySerial('new',{'paymentNumber':7},{'new':30})),'7');
+      expect(supplierPaymentVoucherDisplayNumber(
+        supplierPaymentWithLegacySerial('missing',old,{})),'سابق بدون ترقيم');
+    });
+
+    test('backfill avoids numbers already assigned to new slips', () {
+      final maxNumber = supplierPaymentMaxSerial(
+        [{'paymentNumber':1},{'paymentNumber':2},{'kind':'payment'}],
+        {'old1':20,'old2':21}, 18);
+      expect(maxNumber,21);
+      expect(nextSupplierPaymentVoucherNumber(maxNumber),22);
+    });
+
+    test('legacy mapped slip prints to both A4 and 80mm PDF', () async {
+      final old = <String,dynamic>{
+        'accountName':'مورد قديم','amount':125,'balanceBefore':500,
+        'balanceAfter':375,'cashBefore':1000,'cashAfter':875,
+        'createdAt':Timestamp.fromDate(DateTime(2026,11,1,12))};
+      final mapped=supplierPaymentWithLegacySerial('randomLetters',old,{'randomLetters':19});
+      for(final thermal in [false,true]) {
+        final bytes=await createSupplierPaymentVoucherPdf('randomLetters',mapped,font,thermal:thermal);
+        expect(String.fromCharCodes(bytes.take(5)),'%PDF-');
+        expect(bytes.length,greaterThan(1000));
+      }
+    });
+  });
+
   group('supplier payment voucher sequential numbers', () {
     test('first payment is 1 and each saved voucher increments once', () {
       expect(nextSupplierPaymentVoucherNumber(null), 1);
