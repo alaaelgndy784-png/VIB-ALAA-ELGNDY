@@ -103,6 +103,23 @@ String vibVoucherMoney(Object? value, {String missing = '0.00'}) {
   return NumberFormat('#,##0.00', 'en_US').format(piastres / 100);
 }
 
+
+int nextSupplierPaymentVoucherNumber(Object? previous) {
+  if (previous == null) return 1;
+  if (previous is! int || previous < 0 || previous >= 999999999) {
+    throw StateError('عداد سندات الصرف غير صحيح');
+  }
+  return previous + 1;
+}
+
+String supplierPaymentVoucherDisplayNumber(Map<String,dynamic> row) {
+  final raw = row['paymentNumber'];
+  if (raw is int && raw > 0) return '$raw';
+  if (raw is String && RegExp(r'^[0-9]+$').hasMatch(raw) &&
+      int.tryParse(raw) != null && int.parse(raw) > 0) return raw;
+  return 'سابق بدون ترقيم';
+}
+
 final saleCostVisible = ValueNotifier<bool>(false);
 final salePriceEditable = ValueNotifier<bool>(false);
 // Avoid duplicate server work every time the user stream emits an update.
@@ -5666,7 +5683,7 @@ Map<String,dynamic> supplierPaymentReportRow(String id,Map<String,dynamic> sourc
   'customerId':source['accountId']??'',
   'customerName':source['accountName']??'مورد غير مسمى',
   'receiptDate':source['createdAt'],
-  'receiptNumber':id,
+  'receiptNumber':supplierPaymentVoucherDisplayNumber(source),
   'paymentMethod':'صرف للمورد',
 };
 
@@ -6468,7 +6485,7 @@ class SupplierPaymentVouchers extends StatelessWidget {
         final confirmed = !row.metadata.hasPendingWrites && !snapshot.data!.metadata.isFromCache;
         return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Text('${data['accountName'] ?? ''} • ${vibVoucherMoney(data['amount'])} ج.م', style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold)),
-          Text('رقم السند: ${row.id}\n${formatDate(data['createdAt'])}\nالباقي للمورد: ${vibVoucherMoney(data['balanceAfter'])} ج.م'),
+          Text('رقم السند: ${supplierPaymentVoucherDisplayNumber(data)}\n${formatDate(data['createdAt'])}\nالباقي للمورد: ${vibVoucherMoney(data['balanceAfter'])} ج.م'),
           if (!confirmed) const Text('بانتظار تأكيد البيانات من الخادم'),
           Wrap(spacing: 8, children: [for (final thermal in [false,true]) OutlinedButton.icon(onPressed: confirmed ? () => printSupplierPaymentVoucher(context, row.id, data, thermal: thermal) : null, icon: const Icon(Icons.print), label: Text(thermal ? 'طباعة 80 مللي' : 'طباعة A4')),
             StreamBuilder<DocumentSnapshot<Map<String,dynamic>>>(stream:db.collection('voucherCancellations').doc('payment_${row.id}').snapshots(),builder:(context,cancelSnap)=>cancelSnap.data?.exists==true
@@ -6484,6 +6501,7 @@ Future<void> createSupplierPaymentVoucher(BuildContext context, {String? initial
   final amount = TextEditingController(), note = TextEditingController();
   final voucherRef = db.collection('accountMovements').doc(), cashMovement = db.collection('accountMovements').doc();
   String? supplierId = initialSupplierId;
+  int? savedNumber;
   bool saving = false;
   await showDialog<void>(context: context, barrierDismissible: false, builder: (dialog) => StatefulBuilder(builder: (dialog, update) => AlertDialog(
     title: const Text('سند صرف لمورد'),
@@ -6510,22 +6528,28 @@ Future<void> createSupplierPaymentVoucher(BuildContext context, {String? initial
           final existing = await tx.get(voucherRef);
           if (existing.exists) {
             if(existing.data()?['accountId'] != id || existing.data()?['amount'] != paid) throw StateError('تم حفظ السند السابق بالفعل؛ افتح سندًا جديدًا للمبلغ الجديد');
+            savedNumber = existing.data()?['paymentNumber'] as int?;
             return;
           }
           final user = (await tx.get(db.collection('users').doc(actor))).data();
           if (user?['role'] != 'owner' || user?['active'] != true) throw StateError('سند الصرف متاح للمدير فقط');
           final supplierRef = db.collection('suppliers').doc(id), cashRef = db.collection('settings').doc('cash');
+          final counterRef = db.collection('settings').doc('supplierPaymentVoucherCounter');
           final supplier = (await tx.get(supplierRef)).data(), cash = (await tx.get(cashRef)).data();
+          final counter = await tx.get(counterRef);
           if (supplier == null || supplier['active'] == false) throw StateError('المورد غير متاح');
+          final paymentNumber = nextSupplierPaymentVoucherNumber(counter.data()?['lastNumber']);
           final balance = (supplier['balance'] as num).toDouble(), beforeCash = ((cash?['balance'] as num?) ?? 0).toDouble();
           final after = supplierPaymentBalances(balance,beforeCash,paid), now = FieldValue.serverTimestamp();
           tx.update(supplierRef, {'balance': after.supplierAfter,'updatedAt': now});
           tx.set(cashRef, {'balance': after.cashAfter,'updatedAt': now},SetOptions(merge: true));
-          tx.set(voucherRef, {'accountType':'suppliers','accountId':id,'accountName':supplier['name'],'supplierPhone':supplier['phone'] ?? '', 'kind':'payment','amount':paid,'balanceBefore':balance,'balanceAfter':after.supplierAfter,'cashBefore':beforeCash,'cashAfter':after.cashAfter,'referenceId':voucherRef.id,'cashMovementId':cashMovement.id,'note':note.text.trim(),'actorId':actor,'actorName':user?['name'] ?? '', 'createdAt':now});
-          tx.set(cashMovement, {'accountType':'cash','accountId':id,'accountName':supplier['name'],'kind':'supplierPayment','amount':paid,'delta':-paid,'balanceBefore':beforeCash,'balanceAfter':after.cashAfter,'referenceId':voucherRef.id,'reason':'سند صرف لمورد','actorId':actor,'createdAt':now});
+          tx.set(counterRef, {'lastNumber':paymentNumber,'updatedAt':now},SetOptions(merge:true));
+          tx.set(voucherRef, {'accountType':'suppliers','accountId':id,'accountName':supplier['name'],'supplierPhone':supplier['phone'] ?? '', 'kind':'payment','paymentNumber':paymentNumber,'amount':paid,'balanceBefore':balance,'balanceAfter':after.supplierAfter,'cashBefore':beforeCash,'cashAfter':after.cashAfter,'referenceId':voucherRef.id,'cashMovementId':cashMovement.id,'note':note.text.trim(),'actorId':actor,'actorName':user?['name'] ?? '', 'createdAt':now});
+          tx.set(cashMovement, {'accountType':'cash','accountId':id,'accountName':supplier['name'],'kind':'supplierPayment','paymentNumber':paymentNumber,'amount':paid,'delta':-paid,'balanceBefore':beforeCash,'balanceAfter':after.cashAfter,'referenceId':voucherRef.id,'reason':'سند صرف لمورد رقم $paymentNumber','actorId':actor,'createdAt':now});
+          savedNumber = paymentNumber;
         });
         if (dialog.mounted) Navigator.pop(dialog);
-        if (context.mounted) await showInvoiceSaveProblem(context,'تم حفظ سند الصرف وتحديث حساب المورد والصندوق. السند متاح للطباعة في سندات صرف الموردين.', title:'تم حفظ سند الصرف', button:'تمام', success:true);
+        if (context.mounted) await showInvoiceSaveProblem(context,'تم حفظ سند الصرف رقم ${savedNumber ?? '—'} وتحديث حساب المورد والصندوق. السند متاح للطباعة في سندات صرف الموردين.', title:'تم حفظ سند الصرف', button:'تمام', success:true);
       } catch(e) { if (dialog.mounted) { update(() => saving = false); await showInvoiceSaveProblem(dialog,'تعذر حفظ سند الصرف: $e',title:'سند صرف المورد',button:'رجوع للسند'); } }
     }, child: Text(saving ? 'جارٍ الحفظ…' : 'حفظ سند الصرف'))],
   )));
@@ -6534,7 +6558,7 @@ Future<void> createSupplierPaymentVoucher(BuildContext context, {String? initial
 
 Future<Uint8List> createSupplierPaymentVoucherPdf(String id, Map<String,dynamic> data, pw.Font font, {bool thermal = false}) async {
   final pdf = pw.Document();
-  final lines = ['رقم السند: $id', 'التاريخ: ${formatDate(receiptEffectiveTimestamp(data))}', 'صرفنا إلى المورد: ${data['accountName'] ?? ''}', 'الهاتف: ${data['supplierPhone'] ?? ''}', 'المبلغ المصروف: ${vibVoucherMoney(data['amount'])} ج.م', 'رصيد المورد قبل السداد: ${vibVoucherMoney(data['balanceBefore'])} ج.م', 'الباقي عليك للمورد بعد السداد: ${vibVoucherMoney(data['balanceAfter'])} ج.م', 'الصندوق قبل الصرف: ${vibVoucherMoney(data['cashBefore'], missing: 'غير مسجل')} ج.م', 'الصندوق بعد الصرف: ${vibVoucherMoney(data['cashAfter'], missing: 'غير مسجل')} ج.م', 'المسؤول: ${data['actorName'] ?? data['actorId'] ?? ''}', 'البيان: ${data['note'] ?? ''}'];
+  final lines = ['رقم السند: ${supplierPaymentVoucherDisplayNumber(data)}', 'التاريخ: ${formatDate(receiptEffectiveTimestamp(data))}', 'صرفنا إلى المورد: ${data['accountName'] ?? ''}', 'الهاتف: ${data['supplierPhone'] ?? ''}', 'المبلغ المصروف: ${vibVoucherMoney(data['amount'])} ج.م', 'رصيد المورد قبل السداد: ${vibVoucherMoney(data['balanceBefore'])} ج.م', 'الباقي عليك للمورد بعد السداد: ${vibVoucherMoney(data['balanceAfter'])} ج.م', 'الصندوق قبل الصرف: ${vibVoucherMoney(data['cashBefore'], missing: 'غير مسجل')} ج.م', 'الصندوق بعد الصرف: ${vibVoucherMoney(data['cashAfter'], missing: 'غير مسجل')} ج.م', 'المسؤول: ${data['actorName'] ?? data['actorId'] ?? ''}', 'البيان: ${data['note'] ?? ''}'];
   final widgets = <pw.Widget>[
     pw.Text('VIB للتجارة والتوزيع',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:thermal ? 14 : 22)),
     pw.SizedBox(height:12),pw.Text('سند صرف لمورد',textAlign:pw.TextAlign.center,style:pw.TextStyle(fontSize:thermal ? 16 : 20,fontWeight:pw.FontWeight.bold)),
@@ -6554,7 +6578,7 @@ Future<void> printSupplierPaymentVoucher(BuildContext context,String id,Map<Stri
   try {
     final font = pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
     final bytes = await createSupplierPaymentVoucherPdf(id,data,font,thermal:thermal);
-    await Printing.layoutPdf(name:'VIB-SUPPLIER-PAYMENT-$id-${thermal ? '80MM' : 'A4'}.pdf',onLayout:(_) async => bytes);
+    await Printing.layoutPdf(name:'VIB-SUPPLIER-PAYMENT-${supplierPaymentVoucherDisplayNumber(data)}-${thermal ? '80MM' : 'A4'}.pdf',onLayout:(_) async => bytes);
   } catch(e) { if(context.mounted) await showInvoiceSaveProblem(context,'تعذر طباعة سند الصرف: $e',title:'طباعة سند الصرف',button:'تمام'); }
 }
 
