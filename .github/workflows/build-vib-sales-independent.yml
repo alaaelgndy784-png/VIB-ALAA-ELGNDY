@@ -170,10 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 10212/; s/versionName = .*/versionName = "0.2.72"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 10212' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.72"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=10212 --build-name=0.2.72
+          sed -i -E 's/versionCode = .*/versionCode = 10213/; s/versionName = .*/versionName = "0.2.73"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 10213' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.73"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=10213 --build-name=0.2.73
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -720,6 +720,63 @@ jobs:
             التقرير بالعربي ويتضمن تاريخ الحركة والفئة والبيان والمبلغ والإجمالي وعدد الحركات.
             يتم التأكد من المصروفات على الخادم قبل إرسال PDF، ولا تتم مضاعفة حركة الصندوق.
             تجميع صافي الربح بالقروش بدقة في الأيام دون مبيعات أيضًا.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
+
+  publish-manager-supplier-serials-0-2-73:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/fix/vib-manager-0-2-73-supplier-payment-serials-20261115'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tested manager APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+
+      - name: Verify signed in-place upgrade from 0.2.72
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.72-expense-pdf-20261115 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          NEW_PACKAGE="$("$AAPT" dump badging "$NEW" | grep '^package:')"
+          OLD_PACKAGE="$("$AAPT" dump badging "$OLD" | grep '^package:')"
+          echo "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$OLD_PACKAGE"
+          grep -F "versionCode='12213'" <<< "$NEW_PACKAGE"
+          grep -F "versionName='0.2.73'" <<< "$NEW_PACKAGE"
+          grep -F "versionCode='12212'" <<< "$OLD_PACKAGE"
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/new-cert.txt
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/old-cert.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-cert.txt | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA" && test "$NEW_SHA" = "$OLD_SHA"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+
+      - name: Publish VIB Manager 0.2.73 with numeric disbursement slips
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.73-supplier-payment-serials-20261115
+          name: VIB Manager 0.2.73 - Sequential Supplier Payment Vouchers
+          target_commitish: ${{ github.sha }}
+          body: |
+            تحديث مباشر فوق VIB Manager 0.2.72 بنفس اسم الحزمة وشهادة توقيع التطبيق.
+            سندات صرف الموردين الجديدة تحصل على أرقام متسلسلة 1، 2، 3، إلخ دون حروف عشوائية.
+            رقم الصرف يظهر في قائمة السندات وفي تقرير حركة المورد وفي طباعة A4 و80 مللي.
+            تخصيص رقم السند داخل معاملة واحدة مع تحديث رصيد المورد والصندوق منعًا لتكرار الأرقام.
+            السندات القديمة محفوظة دون إعادة ترقيم تاريخي، وهي معروضة كسندات سابقة غير مرقمة.
           files: |
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
