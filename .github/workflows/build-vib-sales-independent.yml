@@ -170,10 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 10215/; s/versionName = .*/versionName = "0.2.75"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 10215' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.75"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=10215 --build-name=0.2.75
+          sed -i -E 's/versionCode = .*/versionCode = 10216/; s/versionName = .*/versionName = "0.2.76"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 10216' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.76"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=10216 --build-name=0.2.76
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -892,6 +892,64 @@ jobs:
             الترقيم يتم بعد تأكيد المدير مع اتصال بالخادم، ولا يغيّر الحسابات أو مبالغ السندات القديمة.
             تعرض السندات الأرقام الجديدة في القائمة، تقارير الصرف، وطباعة 80 مللي وA4.
             يجب الضغط على زر الترقيم مرة واحدة لتخصيص الأرقام القديمة فعليًا؛ التثبيت وحده لا يرقّمها.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
+
+  publish-manager-fifo-profit-0-2-76:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/fix/vib-manager-0-2-76-fifo-shataf-profit-20261115'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tested manager APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+
+      - name: Verify signed in-place update from manager 0.2.75
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.75-pinned-old-voucher-numbering-20261115 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          NEW_PACKAGE="$("$AAPT" dump badging "$NEW" | grep '^package:')"
+          OLD_PACKAGE="$("$AAPT" dump badging "$OLD" | grep '^package:')"
+          echo "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$OLD_PACKAGE"
+          grep -F "versionCode='12216'" <<< "$NEW_PACKAGE"
+          grep -F "versionName='0.2.76'" <<< "$NEW_PACKAGE"
+          grep -F "versionCode='12215'" <<< "$OLD_PACKAGE"
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/new-cert.txt
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/old-cert.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-cert.txt | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA" && test "$NEW_SHA" = "$OLD_SHA"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+
+      - name: Publish VIB Manager 0.2.76 FIFO historic profit correction
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.76-fifo-profit-20261115
+          name: VIB Manager 0.2.76 - FIFO Historical Purchase Cost Profit
+          target_commitish: ${{ github.sha }}
+          body: |
+            تحديث مباشر فوق VIB Manager 0.2.75 بنفس توقيع أندرويد ورقم حزمة التطبيق.
+            إصلاح حساب أرباح المبيعات حسب دفعات الشراء الفعلية الوارد أولًا يُصرف أولًا (FIFO).
+            مثال: شطاف ABS، شراء 50 في 13,350 و50 في 13,500، وبيع 100 في 27,000؛ الربح الصحيح للصنف 150 جنيه.
+            يحتسب المخزون المباع في الفترات السابقة قبل حساب تكلفة بيع الفترة المطلوبة.
+            عند نقص سجل فواتير الشراء يُحتفَظ بالتكلفة المحفوظة وقت البيع بدل تخمين الأسعار.
+            لا يتم تعديل الفواتير أو رصيد الموردين أو العملاء أو أرصدة المخزون.
           files: |
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
