@@ -170,10 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 10214/; s/versionName = .*/versionName = "0.2.74"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 10214' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.74"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=10214 --build-name=0.2.74
+          sed -i -E 's/versionCode = .*/versionCode = 10215/; s/versionName = .*/versionName = "0.2.75"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 10215' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.75"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=10215 --build-name=0.2.75
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -835,6 +835,63 @@ jobs:
             منع تكرار الأرقام مع السندات الجديدة باستخدام عداد مركزي ومعاملة Firestore واحدة لكل دفعة.
             عرض الأرقام في قائمة السندات، وتقرير حركة سداد الموردين، وطباعة 80 مللي وA4.
             يجب فتح صفحة سندات صرف الموردين والضغط مرة واحدة على زر ترقيم السندات القديمة مع وجود الإنترنت.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
+
+  publish-manager-pinned-old-vouchers-0-2-75:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/fix/vib-manager-0-2-75-pinned-legacy-voucher-numbering-20261115'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tested manager APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+
+      - name: Verify signed in-place update from 0.2.74
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.74-old-supplier-payment-serials-20261115 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          NEW_PACKAGE="$("$AAPT" dump badging "$NEW" | grep '^package:')"
+          OLD_PACKAGE="$("$AAPT" dump badging "$OLD" | grep '^package:')"
+          echo "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$NEW_PACKAGE"
+          grep -F "name='com.alaa.vibsales.managerscan'" <<< "$OLD_PACKAGE"
+          grep -F "versionCode='12215'" <<< "$NEW_PACKAGE"
+          grep -F "versionName='0.2.75'" <<< "$NEW_PACKAGE"
+          grep -F "versionCode='12214'" <<< "$OLD_PACKAGE"
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/new-cert.txt
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/old-cert.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-cert.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-cert.txt | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA" && test "$NEW_SHA" = "$OLD_SHA"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+
+      - name: Publish VIB Manager 0.2.75 pinned old vouchers numbering action
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.75-pinned-old-voucher-numbering-20261115
+          name: VIB Manager 0.2.75 - Visible Historical Supplier Voucher Numbering
+          target_commitish: ${{ github.sha }}
+          body: |
+            تحديث فوق VIB Manager 0.2.74 بنفس توقيع البرنامج واسم حزمة أندرويد.
+            تثبيت زر «ترقيم سندات الصرف القديمة بالأرقام» باللون الأخضر فوق قائمة السندات؛ لا يختفي مع التمرير.
+            الترقيم يتم بعد تأكيد المدير مع اتصال بالخادم، ولا يغيّر الحسابات أو مبالغ السندات القديمة.
+            تعرض السندات الأرقام الجديدة في القائمة، تقارير الصرف، وطباعة 80 مللي وA4.
+            يجب الضغط على زر الترقيم مرة واحدة لتخصيص الأرقام القديمة فعليًا؛ التثبيت وحده لا يرقّمها.
           files: |
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
