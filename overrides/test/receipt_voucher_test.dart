@@ -68,6 +68,41 @@ void main() {
     });
   });
 
+  group('supplier payment voucher sequential numbers', () {
+    test('first payment is 1 and each saved voucher increments once', () {
+      expect(nextSupplierPaymentVoucherNumber(null), 1);
+      expect(nextSupplierPaymentVoucherNumber(1), 2);
+      expect(nextSupplierPaymentVoucherNumber(18), 19);
+      expect(() => nextSupplierPaymentVoucherNumber(-1), throwsStateError);
+      expect(() => nextSupplierPaymentVoucherNumber('abc'), throwsStateError);
+    });
+
+    test('shows only numeric serial and never random internal document id', () {
+      expect(supplierPaymentVoucherDisplayNumber({'paymentNumber': 1}), '1');
+      expect(supplierPaymentVoucherDisplayNumber({'paymentNumber': 22}), '22');
+      expect(supplierPaymentVoucherDisplayNumber({'paymentNumber': '23'}), '23');
+      expect(supplierPaymentVoucherDisplayNumber({'id': 'eLM3qQfkT9'}), 'سابق بدون ترقيم');
+      final supplierReport=supplierPaymentReportRow('eLM3qQfkT9', {
+        'paymentNumber': 5, 'accountId':'s1','accountName':'تاجر اختباري',
+        'amount': 80,'createdAt':Timestamp.fromDate(DateTime(2026,11,15))});
+      expect(supplierReport['receiptNumber'],'5');
+      expect(receiptDisplayNumber(supplierReport),'5');
+    });
+
+    test('supplier payment PDF generates for a numeric voucher on A4 and thermal', () async {
+      final payment={'paymentNumber': 14,'accountName':'مورد تجريبي',
+        'supplierPhone':'01000000000','amount':175.5,
+        'balanceBefore':350,'balanceAfter':174.5,'cashBefore':700,
+        'cashAfter':524.5,'actorName':'المدير','note':'سداد دفعة',
+        'createdAt':Timestamp.fromDate(DateTime(2026,11,15,10))};
+      for(final thermal in [false,true]) {
+        final bytes=await createSupplierPaymentVoucherPdf('eLM3qQfkT9', payment, font, thermal: thermal);
+        expect(String.fromCharCodes(bytes.take(5)), '%PDF-');
+        expect(bytes.length, greaterThan(1000));
+      }
+    });
+  });
+
   test('legacy receipt numbers are shown as readable references', () {
     expect(receiptDisplayNumber({'id':'abcdef123456'}),'VIB-RC--ABCDEF');
   });
