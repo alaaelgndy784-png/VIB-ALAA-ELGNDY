@@ -47,6 +47,7 @@ part 'approval_alerts.dart';
 
 part 'invoice_editor.dart';
 part 'sale_cost_reconciliation.dart';
+part 'sale_fifo_costs.dart';
 part 'customer_payment_sources.dart';
 part 'pending_sales.dart';
 part 'pending_receipts.dart';
@@ -1625,8 +1626,8 @@ class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric>
     final endDay = _dashboardStartOfDay(widget.to);
     final end = DateTime(endDay.year, endDay.month, endDay.day + 1);
     final startStamp = Timestamp.fromDate(start), endStamp=Timestamp.fromDate(end);
+    // Include earlier sales so already-sold purchase lots aren't reused.
     _salesStream = db.collection('sales')
-      .where('createdAt',isGreaterThanOrEqualTo:startStamp)
       .where('createdAt',isLessThan:endStamp).snapshots();
     _returnsStream = db.collection('salesReturns')
       .where('createdAt',isGreaterThanOrEqualTo:startStamp)
@@ -1648,19 +1649,23 @@ class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric>
           var hasMissingCost = false;
           var isLoss = false;
           if (salesSnap.hasData && returnsSnap.hasData && purchasesSnap.hasData && expensesSnap.hasData) {
-            final purchaseRecords = purchasesSnap.data!.docs.map((d)=>d.data()).toList();
+            final purchaseRecords = purchasesSnap.data!.docs
+              .map((d)=><String,dynamic>{...d.data(),'id':d.id}).toList();
+            final fifoCosts = fifoSaleCostsFromPurchaseLots(
+              purchases:purchaseRecords,
+              sales:salesSnap.data!.docs.map((d)=><String,dynamic>{...d.data(),'id':d.id}));
             double revenue = 0;
             double cost = 0;
-            void includeInvoice(Map<String, dynamic> data, double sign) {
+            void includeInvoice(Map<String, dynamic> data, double sign, {String saleId = ''}) {
               if (!visibleAfterReset(data)) return;
               revenue += sign * ((data['total'] as num?)?.toDouble() ?? 0);
-              final verified = sign > 0 ? verifiedCostsForSaleData(data,purchaseRecords) : <String,double>{};
+              final allocated = sign > 0 ? (fifoCosts[saleId] ?? <String,double>{}) : <String,double>{};
               final rawItems = data['items'];
               if (rawItems is List && rawItems.isNotEmpty) {
                 for (final raw in rawItems) {
                   if (raw is! Map) continue;
                   final quantity = (raw['quantity'] as num?)?.toDouble() ?? 0;
-                  final atSaleCost = verified['${raw['productId'] ?? ''}'] ??
+                  final atSaleCost = allocated['${raw['productId'] ?? ''}'] ??
                     (raw['purchasePriceAtSale'] as num?)?.toDouble();
                   if (atSaleCost == null || !atSaleCost.isFinite || atSaleCost < 0) {
                     hasMissingCost = true;
@@ -1670,7 +1675,7 @@ class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric>
                 }
               } else {
                 final quantity = (data['quantity'] as num?)?.toDouble() ?? 0;
-                final atSaleCost = verified['${data['productId'] ?? ''}'] ??
+                final atSaleCost = allocated['${data['productId'] ?? ''}'] ??
                   (data['purchasePriceAtSale'] as num?)?.toDouble();
                 if (atSaleCost == null || !atSaleCost.isFinite || atSaleCost < 0) {
                   hasMissingCost = true;
@@ -1679,8 +1684,15 @@ class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric>
                 }
               }
             }
-            for (final doc in salesSnap.data!.docs) { includeInvoice(doc.data(), 1); }
-            for (final doc in returnsSnap.data!.docs) { includeInvoice(doc.data(), -1); }
+            for (final doc in salesSnap.data!.docs) {
+              final at = _purchaseCostTimestamp(doc.data()['createdAt']);
+              if(at != null && at >= start.millisecondsSinceEpoch) {
+                includeInvoice(doc.data(), 1, saleId:doc.id);
+              }
+            }
+            for (final doc in returnsSnap.data!.docs) {
+              includeInvoice(doc.data(), -1);
+            }
             final firstDay = _dashboardStartOfDay(widget.from);
             final endDay = _dashboardStartOfDay(widget.to);
             final until = DateTime(endDay.year, endDay.month, endDay.day + 1);
@@ -1700,7 +1712,7 @@ class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric>
               const SizedBox(height: 4),
               Tooltip(
                 message: hasMissingCost ? 'بعض الفواتير لا تحتوي على تكلفة الشراء وقت البيع' :
-                  'صافي الربح بعد مرتجعات ومصروفات الفترة، ويظهر بالسالب إذا لم توجد مبيعات',
+                  'صافي الربح حسب دفعات الشراء (الوارد أولًا يُصرف أولًا)، بعد المرتجعات والمصروفات',
                 child: FittedBox(fit: BoxFit.scaleDown, child: Text(value,
                   style: TextStyle(color: isLoss && !hasMissingCost ? Colors.redAccent : const Color(0xFFFFC857),
                     fontSize: 17, fontWeight: FontWeight.w800))),
@@ -4342,15 +4354,25 @@ class _ProfitReportState extends State<ProfitReport> {
         builder: (context, productsSnap) {
           if (productsSnap.hasError) return const Center(child: Text('تعذر تحميل فواتير المشتريات لمراجعة التكلفة'));
           if (!productsSnap.hasData) return const Center(child: CircularProgressIndicator());
-          final purchaseRecords = productsSnap.data!.docs.map((d)=>d.data()).toList();
+          final purchaseRecords = productsSnap.data!.docs
+            .map((d)=><String,dynamic>{...d.data(),'id':d.id}).toList();
           return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+            // Include historic sales before the report window so FIFO can
+            // account for units already sold in an earlier period.
             stream: db.collection('sales')
-              .where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
               .where('createdAt', isLessThan: Timestamp.fromDate(queryEnd)).snapshots(),
             builder: (context, salesSnap) {
               if (salesSnap.hasError) return const Center(child: Text('تعذر تحميل المبيعات'));
               if (!salesSnap.hasData) return const Center(child: CircularProgressIndicator());
-              final sales = salesSnap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
+              final historicalSales = salesSnap.data!.docs
+                .where((d) => visibleAfterReset(d.data())).toList();
+              final sales = historicalSales.where((d) {
+                final at=_purchaseCostTimestamp(d.data()['createdAt']);
+                return at!=null && at >= start.millisecondsSinceEpoch;
+              }).toList();
+              final fifoCosts = fifoSaleCostsFromPurchaseLots(
+                purchases:purchaseRecords,
+                sales:historicalSales.map((d)=><String,dynamic>{...d.data(),'id':d.id}));
               return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
                 stream: db.collection('salesReturns').where('createdAt', isGreaterThanOrEqualTo: Timestamp.fromDate(start)).where('createdAt', isLessThan: Timestamp.fromDate(queryEnd)).snapshots(),
                 builder: (context, returnsSnap) {
@@ -4359,16 +4381,17 @@ class _ProfitReportState extends State<ProfitReport> {
                   final returns = returnsSnap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
               double revenue = 0, knownCost = 0;
               int missingCost = 0;
-              for (final event in [...sales.map((d) => (data: d.data(), sign: 1)), ...returns.map((d) => (data: d.data(), sign: -1))]) {
+              for (final event in [...sales.map((d) => (data: d.data(), sign: 1, id:d.id)), ...returns.map((d) => (data: d.data(), sign: -1, id:d.id))]) {
                 final sale = event.data;
                 revenue += event.sign * ((sale['total'] as num?)?.toDouble() ?? 0);
-                final verified = event.sign > 0 ? verifiedCostsForSaleData(sale,purchaseRecords) : <String,double>{};
+                final allocated = event.sign > 0
+                  ? (fifoCosts[event.id] ?? <String,double>{}) : <String,double>{};
                 final rawItems = (sale['items'] as List?) ?? const [];
                 if (rawItems.isNotEmpty) {
                   for (final raw in rawItems) {
                     if (raw is! Map) continue;
                     final qty = (raw['quantity'] as num?)?.toDouble() ?? 0;
-                    final cost = verified['${raw['productId'] ?? ''}'] ??
+                    final cost = allocated['${raw['productId'] ?? ''}'] ??
                       (raw['purchasePriceAtSale'] as num?)?.toDouble();
                     // Use only a matching purchase before the sale, never today's product cost.
                     if (cost != null && cost.isFinite && cost >= 0) {
@@ -4379,7 +4402,7 @@ class _ProfitReportState extends State<ProfitReport> {
                   }
                 } else {
                   final qty = (sale['quantity'] as num?)?.toDouble() ?? 0;
-                  final cost = verified['${sale['productId'] ?? ''}'] ??
+                  final cost = allocated['${sale['productId'] ?? ''}'] ??
                     (sale['purchasePriceAtSale'] as num?)?.toDouble();
                   if (cost != null && cost.isFinite && cost >= 0) {
                     knownCost += event.sign * qty * cost;
@@ -4407,7 +4430,7 @@ class _ProfitReportState extends State<ProfitReport> {
                     style:TextStyle(color:completeProfit && netProfitAfterExpenses(revenue, knownCost, expenses) < 0 ? Colors.redAccent : vibNeon,fontWeight:FontWeight.bold))),
                 if (missingCost > 0) Text('تحذير: تكلفة الشراء وقت البيع غير محفوظة في $missingCost بند/سجل. لا يمكن حساب ربح دقيق؛ لن نستبدلها بسعر الشراء الحالي لأن ده يغيّر أرباح الماضي.'),
                 const SizedBox(height: 16),
-                const Text('يُحسب الربح بتكلفة آخر فاتورة شراء مطابقة لكود واسم الصنف قبل البيع، وإن لم توجد فاتورة مؤكدة نستخدم تكلفة البيع المسجلة. لا تتغير أرصدة المخزون أو العملاء بسبب عرض التقرير.'),
+                const Text('تُحسب تكلفة البيع من دفعات الشراء الفعلية بطريقة الوارد أولًا يُصرف أولًا (FIFO)، بعد استبعاد الكميات المباعة سابقًا. عند نقص بيانات المشتريات نحتفظ بتكلفة البيع المسجلة بدل التخمين. التقرير لا يعدّل الفواتير أو أرصدة العملاء والمخزون.'),
               ]);
               });
               });
