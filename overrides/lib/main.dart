@@ -70,6 +70,7 @@ part 'invoice_lookup.dart';
 part 'account_statements.dart';
 part 'staff_purchases.dart';
 part 'voucher_cancellations.dart';
+part 'supplier_payment_legacy_serials.dart';
 part 'sales_invoice_cancellations.dart';
 part 'employee_visits.dart';
 part 'employee_collections.dart';
@@ -6474,15 +6475,50 @@ class SupplierPaymentVouchers extends StatelessWidget {
         child:const CustomerPaymentReport(owner:true,suppliers:true)))),
       icon:const Icon(Icons.query_stats,color:vibNeon),label:const Text('تقرير إجمالي حركة سداد الموردين',style:TextStyle(color:vibNeon))))),
     Padding(padding: const EdgeInsets.all(12), child: FilledButton.icon(onPressed: () => createSupplierPaymentVoucher(context), icon: const Icon(Icons.add), label: const Text('إنشاء سند صرف لمورد'))),
-    Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(stream: db.collection('accountMovements').where('accountType', isEqualTo: 'suppliers').snapshots(includeMetadataChanges: true), builder: (context, snapshot) {
+    Expanded(child: StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: db.collection('settings').doc(supplierPaymentLegacyRegistryId).snapshots(includeMetadataChanges: true),
+      builder: (context, legacySnap) {
+        if (legacySnap.hasError) return const Center(child: Text('تعذر تحميل أرقام سندات الصرف القديمة'));
+        if (!legacySnap.hasData) return const Center(child: CircularProgressIndicator());
+        final legacyNumbers = readSupplierPaymentLegacyRegistry(legacySnap.data?.data());
+        return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: db.collection('accountMovements')
+            .where('accountType', isEqualTo: 'suppliers').snapshots(includeMetadataChanges: true),
+          builder: (context, snapshot) {
       if (snapshot.hasError) return Center(child: Text('تعذر تحميل سندات الصرف: ${snapshot.error}'));
       if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
       final rows = snapshot.data!.docs.where((d) => d.data()['kind'] == 'payment' && visibleAfterReset(d.data())).toList()
         ..sort((a,b) => ((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0).compareTo((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
       if (rows.isEmpty) return const Center(child: Text('لا توجد سندات صرف للموردين بعد'));
-      return ListView.builder(itemCount: rows.length, itemBuilder: (context, i) {
-        final row = rows[i], data = row.data();
-        final confirmed = !row.metadata.hasPendingWrites && !snapshot.data!.metadata.isFromCache;
+      final missingCount = rows.where((d) =>
+        supplierPaymentVoucherDisplayNumber(
+          supplierPaymentWithLegacySerial(d.id,d.data(),legacyNumbers)) == 'سابق بدون ترقيم').length;
+      return ListView.builder(
+        itemCount: rows.length + (missingCount > 0 ? 1 : 0),
+        itemBuilder: (context, i) {
+        if (missingCount > 0 && i == 0) {
+          return Padding(padding:const EdgeInsets.fromLTRB(12,4,12,10),
+            child: ValueListenableBuilder<bool>(
+              valueListenable:supplierPaymentLegacyNumberingBusy,
+              builder:(context,busy,_) => OutlinedButton.icon(
+                key:const ValueKey('supplier-payment-number-old-vouchers'),
+                onPressed: busy || legacySnap.data!.metadata.isFromCache ||
+                    legacySnap.data!.metadata.hasPendingWrites || snapshot.data!.metadata.isFromCache
+                  ? null : () => promptOldSupplierPaymentNumbering(context,missingCount),
+                icon:busy
+                  ? const SizedBox(width:18,height:18,
+                      child:CircularProgressIndicator(strokeWidth:2))
+                  : const Icon(Icons.format_list_numbered),
+                label:Text(busy ? 'جارٍ ترقيم السندات القديمة'
+                  : 'ترقيم $missingCount سند صرف قديم بالأرقام'),
+              )));
+        }
+        final row = rows[i - (missingCount > 0 ? 1 : 0)];
+        final data = supplierPaymentWithLegacySerial(row.id,row.data(),legacyNumbers);
+        final confirmed = !row.metadata.hasPendingWrites &&
+          !snapshot.data!.metadata.isFromCache &&
+          !legacySnap.data!.metadata.isFromCache &&
+          !legacySnap.data!.metadata.hasPendingWrites;
         return Card(child: Padding(padding: const EdgeInsets.all(12), child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
           Text('${data['accountName'] ?? ''} • ${vibVoucherMoney(data['amount'])} ج.م', style: const TextStyle(color: vibNeon, fontWeight: FontWeight.bold)),
           Text('رقم السند: ${supplierPaymentVoucherDisplayNumber(data)}\n${formatDate(data['createdAt'])}\nالباقي للمورد: ${vibVoucherMoney(data['balanceAfter'])} ج.م'),
@@ -6493,6 +6529,8 @@ class SupplierPaymentVouchers extends StatelessWidget {
               : IconButton(tooltip:'إلغاء سند الصرف وعكس أثره المحاسبي',icon:const Icon(Icons.undo,color:Colors.redAccent),onPressed:()=>cancelSupplierPaymentVoucher(context,row.id,data)))]),
         ])));
       });
+        },
+      );
     })),
   ]);
 }
