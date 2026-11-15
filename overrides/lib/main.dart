@@ -1686,7 +1686,7 @@ class _DashboardGrossProfitMetricState extends State<DashboardGrossProfitMetric>
             }
             for (final doc in salesSnap.data!.docs) {
               final at = _purchaseCostTimestamp(doc.data()['createdAt']);
-              if(at != null && at >= start.millisecondsSinceEpoch) {
+              if(at != null && at >= _dashboardStartOfDay(widget.from).millisecondsSinceEpoch) {
                 includeInvoice(doc.data(), 1, saleId:doc.id);
               }
             }
