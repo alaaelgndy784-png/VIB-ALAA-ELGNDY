@@ -70,6 +70,68 @@ void main() {
     expect(costs['shared-corner-code'],135.0);
   });
 
+  group('FIFO profit for ABS sprayer sold at purchase prices', () {
+    const id='import_250501182315';
+    const name='شطاف ABS + لى حرارى مقبل [علبة]';
+    Map<String,dynamic> purchase(String ref, DateTime at, int qty, double cost) => {
+      'id':ref,'createdAt':at,'status':'completed',
+      'items':[{'productId':id,'productName':name,
+        'quantity':qty,'unitCost':cost}],
+    };
+    Map<String,dynamic> sale(String ref, DateTime at, int qty, double price) => {
+      'id':ref,'createdAt':at,'status':'completed',
+      'items':[{'productId':id,'productName':name,'quantity':qty,
+        'unitPrice':price,'purchasePriceAtSale':costFromCurrentCard}],
+    };
+    const costFromCurrentCard=270.0;
+
+    test('old lot sold first; later 50 at 267 and 50 at 270 yield 150 EGP', () {
+      final purchases=[
+        purchase('oct-lot',DateTime(2026,10,7,12,10),50,261),
+        purchase('nov-lot-a',DateTime(2026,11,14,14,7),50,267),
+        purchase('nov-lot-b',DateTime(2026,11,14,14,41),50,270),
+      ];
+      final sales=[
+        sale('oct-sale',DateTime(2026,10,7,12,50),50,266.22),
+        sale('001331',DateTime(2026,11,14,18,16),100,270),
+      ];
+      final fifo=fifoSaleCostsFromPurchaseLots(purchases:purchases,sales:sales);
+      expect(fifo['oct-sale']![id],261);
+      expect(fifo['001331']![id],268.5);
+      final revenue=100*270;
+      final cost=fifo['001331']![id]!*100;
+      expect(revenue-cost,150);
+      expect(cost,26850);
+      // The original saved cost snapshot of 270 EGP per unit remains unchanged.
+      expect((sales[1]['items'] as List).first['purchasePriceAtSale'],270);
+    });
+
+    test('never pull a later purchase backward in time to invent profit', () {
+      final fifo=fifoSaleCostsFromPurchaseLots(
+        purchases:[purchase('later',DateTime(2026,11,15),100,200)],
+        sales:[sale('before',DateTime(2026,11,14),100,270)]);
+      expect(fifo['before'],isNull);
+    });
+
+    test('does not mix different product names sharing the same product id', () {
+      final fifo=fifoSaleCostsFromPurchaseLots(
+        purchases:[purchase('a',DateTime(2026,11,13),50,267)],
+        sales:[{
+          'id':'different','createdAt':DateTime(2026,11,14),
+          'items':[{'productId':id,'productName':'شطاف مختلف',
+            'quantity':50,'unitPrice':270}],
+        }]);
+      expect(fifo['different'],isNull);
+    });
+
+    test('sale with incomplete purchase history gets no guessed FIFO price', () {
+      final fifo=fifoSaleCostsFromPurchaseLots(
+        purchases:[purchase('half',DateTime(2026,11,13),50,267)],
+        sales:[sale('full',DateTime(2026,11,14),100,270)]);
+      expect(fifo['full'],isNull);
+    });
+  });
+
   testWidgets('each draft invoice item has a visible working remove button', (tester) async {
     final price=TextEditingController(text:'154.50'),quantity=TextEditingController(text:'5');
     var removed=false;
