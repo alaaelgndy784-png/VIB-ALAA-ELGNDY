@@ -6074,10 +6074,20 @@ Future<void> printCustomerPaymentReport(BuildContext context, DateTime day, Rece
       if(cancelled.metadata.isFromCache || cancelled.metadata.hasPendingWrites) throw StateError('انتظر تأكيد حالات الإلغاء من السيرفر');
       cancelledIds = cancelled.docs.map((d)=>'${d.data()['originalId'] ?? ''}').toSet();
     }
+    final registrySnapshot = suppliers
+      ? await db.collection('settings').doc(supplierPaymentLegacyRegistryId)
+          .get(const GetOptions(source:Source.server))
+      : null;
+    if(suppliers && (registrySnapshot!.metadata.isFromCache ||
+        registrySnapshot.metadata.hasPendingWrites)) {
+      throw StateError('انتظر تأكيد أرقام السندات القديمة من الخادم');
+    }
+    final legacyNumbers = readSupplierPaymentLegacyRegistry(registrySnapshot?.data());
     final receiptRows=snapshot.docs.where((d)=>visibleAfterReset(d.data())&&!cancelledIds.contains(d.id)&&(!suppliers||d.data()['kind']=='payment')).map((d){
       final source=d.data();
       if(!suppliers)return <String,dynamic>{...source,'id':d.id};
-      return supplierPaymentReportRow(d.id,source);
+      return supplierPaymentReportRow(d.id,
+        supplierPaymentWithLegacySerial(d.id,source,legacyNumbers));
     }).toList();
     final invoiceRows=<Map<String,dynamic>>[];
     if(owner && !suppliers) {
