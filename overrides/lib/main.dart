@@ -6519,27 +6519,35 @@ class SupplierPaymentVouchers extends StatelessWidget {
       final missingCount = rows.where((d) =>
         supplierPaymentVoucherDisplayNumber(
           supplierPaymentWithLegacySerial(d.id,d.data(),legacyNumbers)) == 'سابق بدون ترقيم').length;
-      return ListView.builder(
-        itemCount: rows.length + (missingCount > 0 ? 1 : 0),
-        itemBuilder: (context, i) {
-        if (missingCount > 0 && i == 0) {
-          return Padding(padding:const EdgeInsets.fromLTRB(12,4,12,10),
+      return Column(children: [
+        if (missingCount > 0) Padding(
+          padding: const EdgeInsets.fromLTRB(12,4,12,8),
+          child: SizedBox(width:double.infinity,
             child: ValueListenableBuilder<bool>(
               valueListenable:supplierPaymentLegacyNumberingBusy,
-              builder:(context,busy,_) => OutlinedButton.icon(
+              builder:(context,busy,_) => FilledButton.icon(
                 key:const ValueKey('supplier-payment-number-old-vouchers'),
+                style:FilledButton.styleFrom(
+                  backgroundColor:vibNeon,foregroundColor:const Color(0xFF081526),
+                  padding:const EdgeInsets.symmetric(vertical:12,horizontal:10)),
                 onPressed: busy || legacySnap.data!.metadata.isFromCache ||
-                    legacySnap.data!.metadata.hasPendingWrites || snapshot.data!.metadata.isFromCache
+                    legacySnap.data!.metadata.hasPendingWrites ||
+                    snapshot.data!.metadata.isFromCache ||
+                    snapshot.data!.metadata.hasPendingWrites
                   ? null : () => promptOldSupplierPaymentNumbering(context,missingCount),
                 icon:busy
                   ? const SizedBox(width:18,height:18,
                       child:CircularProgressIndicator(strokeWidth:2))
                   : const Icon(Icons.format_list_numbered),
-                label:Text(busy ? 'جارٍ ترقيم السندات القديمة'
-                  : 'ترقيم $missingCount سند صرف قديم بالأرقام'),
-              )));
-        }
-        final row = rows[i - (missingCount > 0 ? 1 : 0)];
+                label:FittedBox(fit:BoxFit.scaleDown,
+                  child:Text(busy ? 'جارٍ ترقيم السندات القديمة'
+                    : 'ترقيم $missingCount سند صرف قديم بالأرقام',
+                    style:const TextStyle(fontWeight:FontWeight.bold))),
+              )))),
+        Expanded(child:ListView.builder(
+          itemCount:rows.length,
+          itemBuilder:(context,i) {
+        final row = rows[i];
         final data = supplierPaymentWithLegacySerial(row.id,row.data(),legacyNumbers);
         final confirmed = !row.metadata.hasPendingWrites &&
           !snapshot.data!.metadata.isFromCache &&
@@ -6554,7 +6562,8 @@ class SupplierPaymentVouchers extends StatelessWidget {
               ? const Padding(padding:EdgeInsets.all(12),child:Text('ملغي',style:TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold)))
               : IconButton(tooltip:'إلغاء سند الصرف وعكس أثره المحاسبي',icon:const Icon(Icons.undo,color:Colors.redAccent),onPressed:()=>cancelSupplierPaymentVoucher(context,row.id,data)))]),
         ])));
-      });
+          })),
+      ]);
         },
       );
     })),
