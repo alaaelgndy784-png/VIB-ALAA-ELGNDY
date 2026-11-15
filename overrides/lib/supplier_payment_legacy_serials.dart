@@ -136,3 +136,41 @@ Future<int> assignOldSupplierPaymentSerials() async {
   }
   return created;
 }
+
+final supplierPaymentLegacyNumberingBusy = ValueNotifier<bool>(false);
+
+Future<void> promptOldSupplierPaymentNumbering(BuildContext context, int count) async {
+  if (supplierPaymentLegacyNumberingBusy.value) return;
+  final agreed = await showDialog<bool>(context:context,builder:(dialog) => AlertDialog(
+    title: const Text('ترقيم سندات الصرف القديمة'),
+    content: Text('يوجد $count سند صرف قديم من غير رقم متسلسل. '
+      'هيتحفظ رقم جديد لكل سند حسب تاريخ إنشائه، من غير تغيير أصل السند '
+      'أو مبالغه أو رصيد المورد أو الصندوق. '
+      'الأرقام الجديدة مش هتتكرر مع سندات الصرف الموجودة. '
+      'يجب الاتصال بالإنترنت لإتمام العملية.'),
+    actions: [
+      TextButton(onPressed:()=>Navigator.pop(dialog,false),
+        child:const Text('إلغاء')),
+      FilledButton(onPressed:()=>Navigator.pop(dialog,true),
+        child:const Text('تأكيد ترقيم السندات')),
+    ],
+  ));
+  if (agreed != true || !context.mounted) return;
+  supplierPaymentLegacyNumberingBusy.value = true;
+  try {
+    final changed = await assignOldSupplierPaymentSerials();
+    if (context.mounted) await showInvoiceSaveProblem(context,
+      changed == 0
+        ? 'السندات القديمة مُرقّمة بالفعل.'
+        : 'تم تخصيص أرقام متسلسلة لعدد $changed سند صرف قديم. '
+          'أرصدة الموردين والصندوق ومبالغ السندات لم تتغير.',
+      title:'ترقيم سندات الصرف',button:'تمام',success:true);
+  } catch (error) {
+    if (context.mounted) await showInvoiceSaveProblem(context,
+      'تعذر استكمال ترقيم السندات القديمة: $error. '
+      'يمكنك إعادة المحاولة؛ الأرقام المحفوظة لن تتكرر.',
+      title:'تعذر الترقيم',button:'رجوع');
+  } finally {
+    supplierPaymentLegacyNumberingBusy.value = false;
+  }
+}
