@@ -40,6 +40,7 @@ import 'inventory_price_data.dart';
 import 'inventory_rows.dart';
 import 'sales_invoice_exit_guard.dart';
 import 'purchase_invoice_exit_guard.dart';
+import 'purchase_draft.dart';
 
 part 'cheques.dart';
 part 'chat_alerts.dart';
@@ -5037,6 +5038,53 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
   final suppliers = await db.collection('suppliers').get();
   if (!context.mounted) return;
   final activeSuppliers=suppliers.docs.where((d)=>d.data()['active'] != false).toList();
+
+  // Reuse the old document ID when retrying a timed-out purchase commit.
+  final draftStore = PurchaseDraftStore(
+    await SharedPreferences.getInstance(),
+    userId: FirebaseAuth.instance.currentUser!.uid, owner: owner);
+  Map<String, dynamic>? recovered = draftStore.read();
+  if (recovered != null) {
+    bool serverVerified = false;
+    try {
+      final existing = await db.collection('purchases').doc(recovered['id'] as String)
+        .get(const GetOptions(source: Source.server))
+        .timeout(const Duration(seconds: 5));
+      serverVerified = true;
+      if (existing.exists) {
+        await draftStore.clear();
+        if (context.mounted) {
+          await showInvoiceSavedActions(context, 'purchases', existing.id, existing.data()!);
+        }
+        return;
+      }
+    } catch (_) {
+      // The previous request may have committed. Do not give it a new ID yet.
+    }
+    if (!context.mounted) return;
+    final decision = await showDialog<bool>(
+      context: context, barrierDismissible: false,
+      builder: (popup) => AlertDialog(
+        title: const Text('استرجاع فاتورة مشتريات'),
+        content: Text(serverVerified
+          ? 'لقيت مسودة على الموبايل. استرجع البنود والأسعار وكمل.'
+          : 'الاتصال بالخادم مش مؤكد، وممكن الفاتورة تكون اتحفظت. استرجع نفس المسودة بنفس رقم العملية علشان ما تتسجلش مرتين.'),
+        actions: [
+          if (serverVerified) TextButton(
+            onPressed: () => Navigator.pop(popup, false),
+            child: const Text('تجاهل المسودة')),
+          FilledButton(
+            onPressed: () => Navigator.pop(popup, true),
+            child: const Text('استرجاع البنود')),
+        ],
+      ),
+    );
+    if (!context.mounted) return;
+    if (decision == false) {
+      await draftStore.clear();
+      recovered = null;
+    } else if (decision != true) { return; }
+  }
   final addedSuppliers = <String,Map<String,dynamic>>{};
   String supplierId = '';
   final lines = <ScannedLine>[];
@@ -5044,10 +5092,59 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
   final invoice = TextEditingController();
   final markup = TextEditingController();
   final note = TextEditingController();
-  final employeePurchaseRef=db.collection('purchases').doc();
-  final managerPurchaseRef=db.collection('purchases').doc();
+  final stablePurchaseId = (recovered?['id'] as String?) ?? db.collection('purchases').doc().id;
+  final employeePurchaseRef=db.collection('purchases').doc(stablePurchaseId);
+  final managerPurchaseRef=db.collection('purchases').doc(stablePurchaseId);
   final draftNumber = owner ? await invoiceDraftNumberPreview('purchases') : 'يُخصص رقمها عند المدير';
   bool saving = false, credit = true, checkout = false;
+
+  if (recovered != null) {
+    final savedSupplierId = (recovered['supplierId'] ?? '').toString();
+    if (activeSuppliers.any((doc) => doc.id == savedSupplierId)) supplierId = savedSupplierId;
+    paid.text = (recovered['paid'] ?? '0').toString();
+    invoice.text = (recovered['invoice'] ?? '').toString();
+    markup.text = (recovered['markup'] ?? '').toString();
+    note.text = (recovered['note'] ?? '').toString();
+    credit = recovered['credit'] != false;
+    var missing = 0;
+    for (final item in recovered['items'] as List) {
+      if (item is! Map) continue;
+      final id = (item['id'] ?? '').toString();
+      if (!productDocs.any((doc) => doc.id == id) ||
+          lines.any((line) => line.productId == id) ||
+          lines.length >= (owner ? 50 : 4)) {
+        missing++; continue;
+      }
+      final line = ScannedLine(productId: id);
+      line.quantity.text = (item['quantity'] ?? '1').toString();
+      line.cost.text = (item['cost'] ?? '').toString();
+      line.discount.baseCost = (item['baseCost'] as num?)?.toDouble();
+      line.discount.percent = (item['discountPercent'] as num?)?.toDouble() ?? 0;
+      lines.add(line);
+    }
+    if (missing > 0 && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('في أصناف من المسودة مش متاحة. راجع البنود قبل الحفظ.')));
+    }
+  }
+  Map<String, dynamic> draftSnapshot() => {
+    'version': 1, 'kind': 'purchase', 'id': stablePurchaseId,
+    'supplierId': supplierId, 'credit': credit,
+    'paid': paid.text, 'invoice': invoice.text,
+    'markup': markup.text, 'note': note.text,
+    'items': [
+      for (final line in lines)
+        if (line.productId != null) {
+          'id': line.productId,
+          'quantity': line.quantity.text, 'cost': line.cost.text,
+          'baseCost': line.discount.baseCost,
+          'discountPercent': line.discount.percent,
+        },
+    ],
+  };
+  final autosave = PurchaseDraftAutosave(draftStore);
+  autosave.start(draftSnapshot);
+
 
   await showDialog<void>(
     context: context,
@@ -5079,6 +5176,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
       }
       return PurchaseInvoiceExitGuard(
         saving:saving,
+        onDiscard: () => autosave.stop(clear: true),
         child:InvoiceEditorFrame(
         title:checkout ? 'حفظ فاتورة المشتريات' : 'فاتورة مشتريات',checkout:checkout,total:previewTotal,
         tableMode:true,invoiceNumber:draftNumber,itemCount:lines.length,
@@ -5147,7 +5245,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
           ),
         ]),
         actions: [
-          TextButton(onPressed:saving ? null : () {if(checkout) {setLocal(()=>checkout=false);} else {requestPurchaseInvoiceExit(c, saving:saving);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
+          TextButton(onPressed:saving ? null : () {if(checkout) {setLocal(()=>checkout=false);} else {requestPurchaseInvoiceExit(c, saving:saving, onDiscard: () => autosave.stop(clear: true));}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
           FilledButton(onPressed: saving ? null : () async {
             FocusScope.of(c).unfocus();
             if (lines.isEmpty) {
@@ -5179,10 +5277,19 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
               return;
             }
 
+            // Durable local copy must exist before the multi-document transaction.
+            try {
+              await autosave.save(draftSnapshot());
+            } catch (_) {
+              if (c.mounted) await showInvoiceSaveProblem(c,
+                'تعذر حفظ مسودة المشتريات على الموبايل. راجع مساحة التخزين.');
+              return;
+            }
             if(!owner) {
               setLocal(()=>saving=true);
               try {
                 final saved=await saveEmployeePurchase(employeePurchaseRef.id,supplierId,entries,payment,invoice.text.trim(),note.text.trim());
+                try { await autosave.stop(clear: true); } catch (_) {}
                 if(c.mounted)Navigator.pop(c);
                 if(context.mounted)await showInvoiceSavedActions(context,'purchases',employeePurchaseRef.id,saved);
               } catch(e) {if(c.mounted){setLocal(()=>saving=false);await showInvoiceSaveProblem(c,'تعذر حفظ مشتريات الموظف: $e');}}
@@ -5316,6 +5423,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
                 return {...invoiceData, 'createdAt': Timestamp.now()};
               });
 
+              try { await autosave.stop(clear: true); } catch (_) {}
               if (c.mounted) Navigator.pop(c);
               if (context.mounted) await showInvoiceSavedActions(context, 'purchases', purchaseRef.id, savedInvoice);
             } catch (e) {
@@ -5330,6 +5438,12 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
     }),
   );
 
+  try {
+    if (PurchaseDraftStore.hasInput(draftSnapshot())) {
+      await autosave.save(draftSnapshot());
+    }
+    await autosave.stop(clear: false);
+  } catch (_) { await autosave.stop(clear: false); }
   for (final row in lines) { row.dispose(); }
   paid.dispose();
   invoice.dispose();
