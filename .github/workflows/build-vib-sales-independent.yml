@@ -167,7 +167,8 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4075 --build-name=0.2.50
+          sed -i -E 's/versionCode = .*/versionCode = 10217/; s/versionName = .*/versionName = "0.2.77"/' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=10217 --build-name=0.2.77
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -238,6 +239,36 @@ jobs:
         with:
           name: VIB-SALES-MANAGER-APK
           path: manager-files
+
+      - name: Verify update compatibility with VIB Manager 0.2.76
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous-manager
+          gh release download vib-manager-0.2.76-fifo-profit-20261115 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous-manager
+          OLD=previous-manager/VIB-SALES-MANAGER.apk
+          NEW=manager-files/VIB-SALES-MANAGER.apk
+          test -s "$OLD"
+          test -s "$NEW"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT"
+          test -x "$SIGNER"
+          "$AAPT" dump badging "$NEW" | head -n 3 | tee /tmp/new-manager-badging.txt
+          "$AAPT" dump badging "$OLD" | head -n 3 | tee /tmp/old-manager-badging.txt
+          grep -F "name='com.alaa.vibsales.managerscan'" /tmp/new-manager-badging.txt
+          grep -F "versionCode='10217'" /tmp/new-manager-badging.txt
+          grep -F "versionName='0.2.77'" /tmp/new-manager-badging.txt
+          grep -F "versionCode='10216'" /tmp/old-manager-badging.txt
+          "$SIGNER" verify --print-certs "$NEW" | tee /tmp/new-manager-certificate.txt
+          "$SIGNER" verify --print-certs "$OLD" | tee /tmp/old-manager-certificate.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-manager-certificate.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-manager-certificate.txt | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          echo "Confirmed: higher versionCode, same manager app ID and certificate as 0.2.76"
 
       - name: Publish manager APK download
         uses: softprops/action-gh-release@v2

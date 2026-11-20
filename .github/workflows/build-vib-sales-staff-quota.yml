@@ -171,7 +171,8 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4075 --build-name=0.2.50
+          sed -i -E 's/versionCode = .*/versionCode = 10217/; s/versionName = .*/versionName = "0.2.77"/' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=10217 --build-name=0.2.77
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
