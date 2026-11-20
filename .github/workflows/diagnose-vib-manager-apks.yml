@@ -1,0 +1,44 @@
+name: Diagnose VIB Manager Android APK Compatibility
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/diagnose-vib-manager-apks.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compare-released-apks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compare package name, version codes and signatures across released Manager APKs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          echo "=== APK COMPATIBILITY AUDIT ==="
+          for tag in \
+            vib-sales-manager-latest \
+            vib-manager-0.2.76-fifo-profit-20261115 \
+            vib-manager-0.2.73-supplier-payment-serials-20261115 \
+            vib-manager-0.2.68-purchases-expenses-20261114 \
+            vib-manager-0.2.66-complete-customer-payments-20261109 \
+            vib-manager-0.2.63-login-recovery-20261105 \
+            vib-sales-0.2.56-product-invoice-trace-20261102 \
+            vib-sales-0.2.54-payment-colors-20261102 \
+            vib-manager-0.2.48-preview-fixed-tiles-20261102; do
+            mkdir -p "$tag"
+            if ! gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir "$tag"; then
+              echo "DOWNLOAD_FAILED $tag"
+              continue
+            fi
+            APK="$tag/VIB-SALES-MANAGER.apk"
+            printf '\n=== %s ===\n' "$tag"
+            stat -c 'Size %s bytes' "$APK"
+            "$AAPT" dump badging "$APK" | grep -m1 '^package:' || true
+            "$SIGNER" verify --print-certs "$APK" | grep -E 'certificate SHA-256 digest|Signer #1 certificate DN' || true
+          done
