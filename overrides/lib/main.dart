@@ -4233,7 +4233,8 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
               key:ObjectKey(lines[i]),number:i+1,name:'${productDocs.firstWhere((d)=>d.id==lines[i].productId).data()?['name'] ?? ''}',
               price:lines[i].cost,quantity:lines[i].quantity,onEdit:saving ? null : ()=>editSelected(lines[i])),
             Builder(builder:(context){
-              final row=lines[i],id=row.productId!;
+              final row=lines[i];
+              final id=row.productId!;
               final product=productDocs.firstWhere((p)=>p.id==id).data()!;
               final cost=double.tryParse(row.cost.text.replaceAll(',','.')) ?? 0;
               final oldSale=(product['price'] as num?)?.toDouble() ?? 0;
@@ -4259,7 +4260,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
                         pendingPrices:pendingSalePrices,initialId:id,globalMarkup:increase,
                         onChanged:()=>setLocal(() {})),
                       icon:const Icon(Icons.edit,size:16),label:const Text('تسعير')),
-                  ]))),
+                  ])),
               );
             }),
           ]),
