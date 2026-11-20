@@ -273,7 +273,7 @@ class InvoiceCompactTableLine extends StatelessWidget {
                 fillColor:belowCost ? const Color(0xFFFFCDD2) : const Color(0xFFFFF9C4),
                 contentPadding:const EdgeInsets.symmetric(horizontal:2,vertical:8),
                 border:const OutlineInputBorder())))),
-        ]))));
+        ])));
   }
 }
 
