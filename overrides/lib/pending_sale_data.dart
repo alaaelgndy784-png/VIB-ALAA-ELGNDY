@@ -1,5 +1,14 @@
 import 'dart:convert';
 
+/// Compare recorded purchase cost against the actual sale price. Never
+/// allow a manager override to silently turn a loss-making sale into a posting.
+/// Missing cost cannot be compared; ensure product purchase price is recorded.
+bool salePriceBelowRecordedCost(num salePrice, Object? purchaseCost) {
+  if (purchaseCost is! num || !purchaseCost.toDouble().isFinite || purchaseCost < 0) return false;
+  if (!salePrice.toDouble().isFinite || salePrice < 0) return true;
+  return salePrice.toDouble() + 0.000000001 < purchaseCost.toDouble();
+}
+
 const salePaymentMethodLabels = <String, String>{
   'cash': 'نقدي',
   'instapay': 'إنستا باي',
