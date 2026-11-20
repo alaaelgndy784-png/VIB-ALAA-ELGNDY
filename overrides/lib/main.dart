@@ -4307,6 +4307,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
                     'unitCost': e.cost,
                     'lineTotal': lineTotal,
                     'sellingPriceAtPurchase': e.changeSellingPrice ? e.sellingPrice :
+                      increase != null ? double.parse((e.cost * (1 + increase / 100)).toStringAsFixed(2)) :
                       (product['price'] as num?)?.toDouble(),
                   });
 
