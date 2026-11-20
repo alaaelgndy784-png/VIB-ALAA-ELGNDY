@@ -327,6 +327,10 @@ class _InvoiceLineEditorDialogState extends State<_InvoiceLineEditorDialog> {
         if(q==null || q<=0 || p==null || !p.isFinite || p<0) {
           await showInvoiceSaveProblem(context,'أدخل عددًا أكبر من صفر وسعرًا صحيحًا',title:'بيانات الصنف',button:'رجوع للصنف');return;
         }
+        if (widget.saleScreen && salePriceBelowRecordedCost(p, widget.unitCost)) {
+          await showInvoiceSaveProblem(context,'سعر بيع ${widget.name} أقل من التكلفة ${widget.unitCost!.toStringAsFixed(2)} ج.م',title:'ممنوع البيع بخسارة',button:'تعديل السعر');
+          return;
+        }
         finish(InvoiceLineEditAction.apply);
       },child:const Text('متابعة')),
     ],
