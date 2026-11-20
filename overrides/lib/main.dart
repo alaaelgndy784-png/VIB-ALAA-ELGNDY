@@ -2568,7 +2568,6 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
   String customerId = '';
   bool credit = false;
   bool allowShortage = false;
-  bool allowBelowCost = false;
   bool saving = false, checkout = false;
   final paid = TextEditingController(text: '0');
   final instaPay = TextEditingController(text: '0');
@@ -2652,8 +2651,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           if(owner) TextField(controller:note,enabled:!saving,maxLength:1000,decoration:_vibInvoiceInput('ملاحظة الفاتورة')),
           if(owner) ExpansionTile(title:const Text('صلاحيات المدير',style:TextStyle(fontSize:13)),children:[
             SwitchListTile(dense:true,title:const Text('السماح بالبيع رغم نقص الكمية'),value:allowShortage,onChanged:saving ? null : (v)=>update(()=>allowShortage=v)),
-            SwitchListTile(dense:true,title:const Text('السماح بسعر أقل من التكلفة'),value:allowBelowCost,onChanged:saving ? null : (v)=>update(()=>allowBelowCost=v)),
-            if(allowShortage || allowBelowCost) TextField(controller:reason,enabled:!saving,decoration:_vibInvoiceInput('سبب الاستثناء (إلزامي)')),
+            if(allowShortage) TextField(controller:reason,enabled:!saving,decoration:_vibInvoiceInput('سبب الاستثناء (إلزامي)')),
           ]),
         ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
           for(var i=0;i<lines.length;i++) InvoiceCompactTableLine(
@@ -2685,7 +2683,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               }
               final p = productDoc(id).data();
               final cost = (p['purchasePrice'] as num?)?.toDouble();
-              if (cost != null && price < cost && !(owner && allowBelowCost)) {
+              if (salePriceBelowRecordedCost(price, p['purchasePrice'])) {
                 await showInvoiceSaveProblem(c, 'سعر ${p['name']} أقل من التكلفة');
                 return;
               }
@@ -2715,7 +2713,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               await showInvoiceSaveProblem(c, 'اختر عميلًا مسجلًا لربط الفاتورة ورصيد المديونية بحسابه');
               return;
             }
-            if ((allowShortage || allowBelowCost) && reason.text.trim().isEmpty) {
+            if (allowShortage && reason.text.trim().isEmpty) {
               await showInvoiceSaveProblem(c, 'اكتب سبب الاستثناء');
               return;
             }
@@ -2744,13 +2742,13 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 }
                 final commit=commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
                   total:total,payment:payment,paymentBreakdown:paymentBreakdown,credit:credit,customerId:customerId,saleRef:saleRef,
-                  invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
+                  invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:false,overrideReason:reason.text.trim());
                 savedInvoice=await commit.timeout(Duration(seconds: owner ? 12 : 8));
               } catch(e) {
                 if(!owner||(!isTemporaryFirestoreOffline(e) && !isFirestoreQuotaExhausted(e))) rethrow;
                 await submitManagerOfflineSale(id:saleRef.id,branchId:branchId,entries:entries,customerId:customerId,
                   credit:credit,paid:payment,total:total,note:note.text.trim(),allowShortage:allowShortage,
-                  allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
+                  allowBelowCost:false,overrideReason:reason.text.trim());
                 if(c.mounted)Navigator.pop(c);
                 if(context.mounted)await showInvoiceSaveProblem(context,
                   isFirestoreQuotaExhausted(e)
@@ -6349,7 +6347,7 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
       if (product == null || product['active'] != true || quantity <= 0 || quantity > 1000000 || price < 0) {
         throw Exception('راجع الصنف والسعر والكمية');
       }
-      if (!purchase && product['purchasePrice'] is num && price < cents(product['purchasePrice'] as num)) {
+      if (!purchase && salePriceBelowRecordedCost(price / 100, product['purchasePrice'])) {
         throw Exception('سعر البيع أقل من التكلفة');
       }
       final available = (stockSnaps[i].data()?['quantity'] as num?)?.toInt() ?? 0;
@@ -8268,8 +8266,7 @@ Future<void> replaceSaleLocally(String id, int revision, String requestId,
       if (product == null || q <= 0 || q > 1000000 || price < 0 || newQuantities.containsKey(p)) throw Exception('راجع الأصناف والأسعار والكميات');
       if (product['active'] != true && !oldQuantities.containsKey(p)) throw Exception('الصنف غير نشط');
       final prior = original.where((x) => x['productId'] == p).toList();
-      final unchangedPrice=prior.isNotEmpty && prior.every((x)=>cents(x['unitPrice'])==price);
-      if (!unchangedPrice && price < cents((product['purchasePrice'] as num?) ?? 0)) throw Exception('سعر البيع أقل من التكلفة');
+      if (salePriceBelowRecordedCost(price / 100, product['purchasePrice'])) throw Exception('سعر البيع أقل من التكلفة');
       newQuantities[p] = q; total += q * price;
       items.add({'productId': p, 'productName': product['name'], 'quantity': q, 'unitPrice': price / 100,
         'lineTotal': q * price / 100, 'purchasePriceAtSale': prior.isEmpty ? product['purchasePrice'] ?? 0 : prior.first['purchasePriceAtSale'] ?? 0});
