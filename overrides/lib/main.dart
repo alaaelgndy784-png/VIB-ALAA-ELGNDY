@@ -3605,8 +3605,16 @@ class _PurchasesState extends State<Purchases>{
                 style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 16)),
               Text('رقم الفاتورة: ${invoiceDisplayNumber('purchases',d.id,p)}'),
             ]),
-            subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}'),
-            trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+            subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? (p['cancelledByMistake']==true ? ' • ملغاة' : ' • مرتجع') : ''}'),
+            trailing: Row(mainAxisSize:MainAxisSize.min,children:[
+              Text('${p['total'] ?? 0} ج.م',style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
+              if(owner && p['status']=='completed')
+                IconButton(
+                  tooltip:'إلغاء فاتورة مشتريات بالخطأ',
+                  icon:const Icon(Icons.cancel_outlined,color:Colors.redAccent),
+                  onPressed:()=>confirmReturn(context,'purchases',d.id,p,purchaseMistake:true),
+                ),
+            ]),
             onTap: () => showInvoiceOverview(context, 'purchases', d.id, initialData: p),
           ));
         });
@@ -6375,7 +6383,11 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
     if (canPrint) ListTile(leading: const Icon(Icons.print, color: gold), title: Text(data['printedAt'] == null ? 'طباعة الفاتورة' : 'إعادة طباعة الفاتورة'), onTap: () { Navigator.pop(c); selectInvoicePaper(context, type, id, data); }),
     if (type == 'sales') ListTile(leading: const Icon(Icons.chat, color: Colors.greenAccent), title: const Text('إرسال الفاتورة PDF على واتساب'), onTap: () { Navigator.pop(c); sendInvoiceWhatsApp(context, id, data); }),
     if (!returned && profile?['role'] == 'owner') ListTile(leading: const Icon(Icons.assignment_return, color: Colors.orangeAccent), title: const Text('إرجاع صنف من الفاتورة'), onTap: () { Navigator.pop(c); type=='sales' ? confirmPartialSalesReturn(context, id) : confirmPartialPurchaseReturn(context,id); }),
-    if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
+    if (type=='purchases' && !returned && profile?['role']=='owner')
+      ListTile(leading:const Icon(Icons.cancel_outlined,color:Colors.redAccent),
+        title:const Text('إلغاء فاتورة مشتريات بالخطأ'),
+        onTap:(){Navigator.pop(c);confirmReturn(context,type,id,data,purchaseMistake:true);}),
+    if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? (data['cancelledByMistake']==true?'تم إلغاء الفاتورة':'تم إرجاع الفاتورة') : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
   ])));
 }
 
@@ -7274,8 +7286,9 @@ Future<void> returnPurchaseInvoiceItem(String id,int sourceItemIndex,int quantit
   return (cash: postedCash, debt: due);
 }
 
-Future<void> confirmReturn(BuildContext context, String type, String id, Map<String, dynamic> data) async {
+Future<void> confirmReturn(BuildContext context, String type, String id, Map<String, dynamic> data,{bool purchaseMistake=false}) async {
   try {
+    if(purchaseMistake && type!='purchases')throw StateError('الإلغاء بالخطأ للمشتريات فقط');
     final current = (await db.collection(type).doc(id).get(const GetOptions(source: Source.server))).data();
     if (current == null || current['status'] == 'returned' || !visibleAfterReset(current)) throw StateError('الفاتورة غير متاحة للمرتجع');
     if (type == 'sales' || type == 'purchases') {
@@ -7299,19 +7312,24 @@ Future<void> confirmReturn(BuildContext context, String type, String id, Map<Str
     final balance = (party?['balance'] as num?)?.toDouble() ?? 0;
     final after = ((balance * 100).round() - (settlement.debt * 100).round()) / 100;
     if (!context.mounted) return;
-    final yes = await showDialog<bool>(context: context, builder: (c) => AlertDialog(title: const Text('مراجعة وتأكيد المرتجع'), content: SingleChildScrollView(child: Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
-      Text('الفاتورة: $id\n${sales ? 'العميل' : 'المورد'}: ${current[sales ? 'customerName' : 'supplierName'] ?? ''}'),
+    final yes = await showDialog<bool>(context: context, builder: (c) => AlertDialog(title: Text(purchaseMistake?'إلغاء فاتورة مشتريات بالخطأ':'مراجعة وتأكيد المرتجع'), content: SingleChildScrollView(child: Column(mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.start,children:[
+      Text('الفاتورة: ${invoiceDisplayNumber(type,id,current)}\n${sales ? 'العميل' : 'المورد'}: ${current[sales ? 'customerName' : 'supplierName'] ?? ''}'),
       Text(sales ? 'ستُضاف كميات الفاتورة إلى المخزون.' : 'ستُخصم كميات الفاتورة من المخزون الرئيسي.'),
       Text('تخفيض الذمة: ${settlement.debt.toStringAsFixed(2)} ج.م'),
       if(party != null) Text('الرصيد الحالي: ${balance.toStringAsFixed(2)}\nالرصيد بعد المرتجع: ${after.toStringAsFixed(2)} • ${accountBalanceLabel(after,supplier:!sales)}'),
       Text('${sales ? 'رد من الصندوق' : 'استرداد إلى الصندوق'}: ${settlement.cash.toStringAsFixed(2)} ج.م'),
       if(!sales) const Text('سندات الصرف العامة للمورد تظل مسجلة. أي رصيد سالب بعد المرتجع يُحسب مبلغًا لك عند المورد، ولا يُرد من الصندوق مرة أخرى.'),
       if(sales) const Text('سندات القبض المرتبطة بهذه الفاتورة تدخل في رد النقدية. سندات القبض العامة تظل محفوظة؛ أي زيادة بعد المرتجع تصبح رصيدًا للعميل عندك.'),
-      const Text('الفاتورة الأصلية تظل محفوظة، ولا يمكن إرجاعها مرتين. الأرصدة تُراجع مجددًا عند التنفيذ.'),
-    ])), actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('إلغاء')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('تأكيد المرتجع'))])) ?? false;
+      Text(purchaseMistake
+        ? 'سيُلغى أثر الشراء على المخزون والذمة والصندوق، مع حفظ الفاتورة في السجل بعلامة «ملغاة» للتدقيق. سعر تكلفة الصنف وسعر بيعه الحاليان لا يرجعان تلقائياً؛ راجعهما بعد الإلغاء.'
+        : 'الفاتورة الأصلية تظل محفوظة، ولا يمكن إرجاعها مرتين. الأرصدة تُراجع مجددًا عند التنفيذ.'),
+    ])), actions:[TextButton(onPressed:()=>Navigator.pop(c,false),child:const Text('رجوع')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:Text(purchaseMistake?'تأكيد إلغاء الفاتورة':'تأكيد المرتجع'))])) ?? false;
     if (!yes || !context.mounted) return;
-    await returnInvoice(type, id, expectedSignature: invoiceReturnSignature(current));
-    if (context.mounted) await showInvoiceSaveProblem(context,'تم تسجيل المرتجع وتحديث المخزون والذمة والصندوق وحفظ الفاتورة الأصلية.',title:'تم تسجيل المرتجع',button:'تمام',success:true);
+    await returnInvoice(type, id, expectedSignature: invoiceReturnSignature(current), purchaseMistake:purchaseMistake);
+    if (context.mounted) await showInvoiceSaveProblem(context,purchaseMistake
+      ? 'تم عكس قيد المشتريات والمخزون والذمة والصندوق، ووسم الفاتورة بأنها ملغاة. راجع سعر تكلفة الصنف وسعر بيعه في قائمة المنتجات.'
+      : 'تم تسجيل المرتجع وتحديث المخزون والذمة والصندوق وحفظ الفاتورة الأصلية.',
+      title:purchaseMistake?'تم إلغاء فاتورة المشتريات':'تم تسجيل المرتجع',button:'تمام',success:true);
   } catch (e) { if (context.mounted) await showInvoiceSaveProblem(context,'تعذر المرتجع: $e',title:'لم يتم تسجيل المرتجع',button:'رجوع'); }
 }
 
@@ -7322,8 +7340,9 @@ String accountBalanceLabel(num balance, {required bool supplier}) => balance < 0
 String invoiceReturnSignature(Map<String,dynamic> data) => jsonEncode({for(final key in
   ['status','revision','items','productId','quantity','branchId','stockBranchId','customerId','supplierId','total','due','paid','receiptPaid','onlinePaid','onlinePaymentEver','cashPosted','cashPaidPosted','partialReturnQuantities','partialReturnTotal','partialCashRefund','partialDebtReduction']) key:data[key]});
 
-Future<void> returnInvoice(String type, String id, {String? expectedSignature}) async {
+Future<void> returnInvoice(String type, String id, {String? expectedSignature,bool purchaseMistake=false}) async {
   if (!['sales', 'purchases'].contains(type)) throw StateError('نوع الفاتورة غير صحيح');
+  if(purchaseMistake && type!='purchases')throw StateError('الإلغاء بالخطأ للمشتريات فقط');
   final preflight = (await db.collection(type).doc(id).get()).data();
   if (preflight == null) throw Exception('الفاتورة غير موجودة');
   await db.runTransaction((tx) async {
@@ -7499,7 +7518,9 @@ Future<void> returnInvoice(String type, String id, {String? expectedSignature}) 
         tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'purchase_return', 'amount': refund, 'delta': refund, 'balanceBefore': cashBefore, 'balanceAfter': cashAfter, 'accountId': d['supplierId'], 'accountName': d['supplierName'], 'referenceId': ret.id, 'reason': 'استرداد نقدية مرتجع مشتريات', 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
       }
       tx.update(supplierRef, {'balance': supplierAfter, 'updatedAt': now});
-      tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
+      tx.set(ret, {...d, 'sourceInvoiceId': id, 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now,
+        if(purchaseMistake)'returnType':'mistake_cancellation',
+        if(purchaseMistake)'cancellationReason':'فاتورة مشتريات مسجلة بالخطأ'});
       tx.set(db.collection('accountMovements').doc(), {
         'accountType': 'suppliers',
         'accountId': d['supplierId'],
@@ -7512,7 +7533,9 @@ Future<void> returnInvoice(String type, String id, {String? expectedSignature}) 
         'createdAt': now,
         'actorId': FirebaseAuth.instance.currentUser!.uid,
       });
-      tx.update(invoiceRef, {'status': 'returned', 'returnedAt': now, 'returnId': ret.id});
+      tx.update(invoiceRef, {'status': 'returned', 'returnedAt': now, 'returnId': ret.id,
+        if(purchaseMistake)'cancelledByMistake':true,
+        if(purchaseMistake)'cancelledAt':now});
     }
   });
 }
