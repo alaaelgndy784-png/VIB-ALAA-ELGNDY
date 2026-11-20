@@ -354,9 +354,11 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                     throw Exception('سعر الصنف اتغير؛ افتح الفاتورة من جديد');
                   }
                   final cost = (product['purchasePrice'] as num?)?.toDouble();
-                  if (cost != null && e.price < cost && !(owner && allowBelowCost)) {
-                    throw Exception('سعر البيع أقل من التكلفة');
-                  }
+                  // Check the live cost inside the Firestore transaction.
+                  // Never honor legacy allowBelowCost overrides, even on offline drafts.
+                  final costError=belowCostSaleMessage(
+                    productName:'${product['name'] ?? e.id}',unitPrice:e.price,unitCost:cost);
+                  if(costError!=null)throw Exception(costError);
                   liveProducts[e.id] = product;
                 }
                 final stockSnaps = <String, DocumentSnapshot<Map<String, dynamic>>>{};
@@ -500,10 +502,10 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                   if (items.length == 1) 'productName': items.first['productName'],
                   if (items.length == 1) 'quantity': items.first['quantity'],
                   if (items.length == 1) 'unitPrice': items.first['unitPrice'],
-                  if (owner && (allowShortage || allowBelowCost)) 'managerOverride': {
+                  if (owner && allowShortage) 'managerOverride': {
                     'reason': overrideReason,
                     'allowShortage': allowShortage,
-                    'allowBelowCost': allowBelowCost,
+                    'allowBelowCost': false,
                     'actorId': actor,
                   },
                 };

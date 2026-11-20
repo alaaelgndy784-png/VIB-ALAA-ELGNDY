@@ -41,6 +41,7 @@ import 'inventory_rows.dart';
 import 'sales_invoice_exit_guard.dart';
 import 'purchase_invoice_exit_guard.dart';
 import 'purchase_draft.dart';
+import 'sale_price_floor.dart';
 
 part 'cheques.dart';
 part 'chat_alerts.dart';
@@ -3139,7 +3140,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
           if(owner) TextField(controller:note,enabled:!saving,maxLength:1000,decoration:_vibInvoiceInput('ملاحظة الفاتورة')),
           if(owner) ExpansionTile(title:const Text('صلاحيات المدير',style:TextStyle(fontSize:13)),children:[
             SwitchListTile(dense:true,title:const Text('السماح بالبيع رغم نقص الكمية'),value:allowShortage,onChanged:saving ? null : (v)=>update(()=>allowShortage=v)),
-            SwitchListTile(dense:true,title:const Text('السماح بسعر أقل من التكلفة'),value:allowBelowCost,onChanged:saving ? null : (v)=>update(()=>allowBelowCost=v)),
+            const ListTile(dense:true,leading:Icon(Icons.lock_outline,color:Colors.redAccent),title:Text('البيع بأقل من التكلفة ممنوع للمدير والموظف حتى مع الخصم')),
             if(allowShortage || allowBelowCost) TextField(controller:reason,enabled:!saving,decoration:_vibInvoiceInput('سبب الاستثناء (إلزامي)')),
           ]),
         ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
@@ -3188,8 +3189,10 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               }
               final p = productDoc(id).data();
               final cost = (p['purchasePrice'] as num?)?.toDouble();
-              if (cost != null && price < cost && !(owner && allowBelowCost)) {
-                await showInvoiceSaveProblem(c, 'سعر ${p['name']} أقل من التكلفة');
+              final costError = belowCostSaleMessage(
+                productName:'${p['name'] ?? id}',unitPrice:price,unitCost:cost);
+              if (costError != null) {
+                await showInvoiceSaveProblem(c,costError);
                 return;
               }
               entries.add((id: id, name: '${p['name'] ?? ''}', qty: qty, price:price,cost:cost,discount:row.discount.percent,basePrice:row.discount.baseCost ?? price));
