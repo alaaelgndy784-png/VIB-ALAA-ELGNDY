@@ -2332,62 +2332,86 @@ Future<DocumentSnapshot<Map<String, dynamic>>?> _createPurchaseProduct(BuildCont
   return created;
 }
 
+// Preview pricing uses the purchase invoice's draft; no product is changed
+// in Firestore until the user confirms the entire purchase.
+double _purchaseSellingPreview(String id,double cost,double oldSale,
+  Map<String,double> pending,double? percent) {
+  if(pending.containsKey(id)) return pending[id]!;
+  if(percent != null && percent.isFinite && percent >= 0 && percent <= 1000) {
+    return double.parse((cost*(1+percent/100)).toStringAsFixed(2));
+  }
+  return oldSale;
+}
+
 Future<void> _editPurchaseSellingPrice(
   BuildContext context,
-  List<DocumentSnapshot<Map<String, dynamic>>> productDocs,
-  List<ScannedLine> lines,
-) async {
-  final ids = lines.map((line) => line.productId).whereType<String>().toSet();
-  final candidates = productDocs.where((product) => ids.contains(product.id)).toList();
-  if (candidates.isEmpty) return;
-  var selectedId = candidates.first.id;
-  final price = TextEditingController(text: '${candidates.first.data()?['price'] ?? ''}');
-  var savingPrice = false;
-  await showDialog<void>(context: context, builder: (dialogContext) => StatefulBuilder(builder: (c, setLocal) => AlertDialog(
-    title: const Text('تعديل سعر البيع'),
-    content: Column(mainAxisSize: MainAxisSize.min, children: [
-      DropdownButtonFormField<String>(
-        initialValue: selectedId,
-        isExpanded: true,
-        decoration: const InputDecoration(labelText: 'اختر الصنف من الفاتورة'),
-        items: [for (final product in candidates) DropdownMenuItem(value: product.id, child: Text('${product.data()?['name'] ?? ''}', overflow: TextOverflow.ellipsis))],
-        onChanged: savingPrice ? null : (id) {
-          if (id == null) return;
-          setLocal(() {
-            selectedId = id;
-            price.text = '${productDocs.firstWhere((product) => product.id == id).data()?['price'] ?? ''}';
-          });
-        },
-      ),
-      TextField(controller: price, enabled: !savingPrice,
-        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        decoration: const InputDecoration(labelText: 'سعر البيع الجديد *', suffixText: 'ج.م')),
-    ]),
-    actions: [
-      TextButton(onPressed: savingPrice ? null : () => Navigator.pop(c), child: const Text('إلغاء')),
-      FilledButton.icon(onPressed: savingPrice ? null : () async {
-        final value = double.tryParse(price.text.trim().replaceAll(',', '.'));
-        if (value == null || !value.isFinite || value < 0) {
-          ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('اكتب سعر بيع صحيحًا')));
-          return;
-        }
-        setLocal(() => savingPrice = true);
-        try {
-          final ref = db.collection('products').doc(selectedId);
-          await ref.update({'price': value, 'updatedAt': FieldValue.serverTimestamp()});
-          final updated = await ref.get();
-          final index = productDocs.indexWhere((product) => product.id == selectedId);
-          if (index >= 0 && updated.exists) productDocs[index] = updated;
-          if (c.mounted) Navigator.pop(c);
-          if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تحديث سعر البيع')));
-        } catch (e) {
-          if (c.mounted) setLocal(() => savingPrice = false);
-          if (c.mounted) ScaffoldMessenger.of(c).showSnackBar(SnackBar(content: Text('تعذر تحديث سعر البيع: $e')));
-        }
-      }, icon: const Icon(Icons.save_outlined), label: const Text('حفظ')),
-    ],
-  )));
-  price.dispose();
+  List<DocumentSnapshot<Map<String, dynamic>>> products,
+  List<ScannedLine> lines, {
+  required Map<String,double> pendingPrices,
+  required VoidCallback onChanged,
+  String? initialId,
+  double? globalMarkup,
+}) async {
+  final ids=lines.map((e)=>e.productId).whereType<String>().toSet();
+  if(ids.isEmpty)return;
+  var id=initialId != null && ids.contains(initialId) ? initialId : ids.first;
+  double costOf(String key)=>double.tryParse(
+    lines.firstWhere((e)=>e.productId==key).cost.text.trim().replaceAll(',','.')) ?? 0;
+  double oldOf(String key)=>(products.firstWhere((e)=>e.id==key).data()?['price'] as num?)?.toDouble() ?? 0;
+  double preview(String key)=>_purchaseSellingPreview(key,costOf(key),oldOf(key),pendingPrices,globalMarkup);
+  final sale=TextEditingController(text:preview(id).toStringAsFixed(2));
+  final percent=TextEditingController();
+  void fromSale(){
+    final cost=costOf(id),value=double.tryParse(sale.text.replaceAll(',','.'));
+    percent.text=cost>0 && value!=null && value.isFinite
+      ? ((value/cost-1)*100).toStringAsFixed(2) : '';
+  }
+  fromSale();
+  await showDialog<void>(context:context,builder:(dialogContext)=>
+    StatefulBuilder(builder:(c,update){
+      final cost=costOf(id);
+      final value=double.tryParse(sale.text.replaceAll(',','.'));
+      return AlertDialog(
+        title:const Text('تسعير سريع قبل حفظ المشتريات'),
+        content:SizedBox(width:420,child:SingleChildScrollView(child:Column(
+          mainAxisSize:MainAxisSize.min,crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+          DropdownButtonFormField<String>(initialValue:id,isExpanded:true,
+            decoration:const InputDecoration(labelText:'الصنف'),
+            items:[for(final p in products.where((p)=>ids.contains(p.id)))
+              DropdownMenuItem(value:p.id,child:Text('${p.data()?['name'] ?? ''}',overflow:TextOverflow.ellipsis))],
+            onChanged:(v){if(v==null)return;update((){id=v;sale.text=preview(v).toStringAsFixed(2);fromSale();});}),
+          Text('التكلفة الجديدة: ${cost.toStringAsFixed(2)} ج.م'),
+          Text('سعر البيع القديم: ${oldOf(id).toStringAsFixed(2)} ج.م'),
+          TextField(controller:percent,keyboardType:const TextInputType.numberWithOptions(decimal:true),
+            decoration:const InputDecoration(labelText:'نسبة الزيادة على التكلفة %'),
+            onChanged:(txt){final p=double.tryParse(txt.replaceAll(',','.'));
+              update((){if(p!=null && p.isFinite && p>=0 && p<=1000)
+                sale.text=(cost*(1+p/100)).toStringAsFixed(2);});}),
+          TextField(controller:sale,keyboardType:const TextInputType.numberWithOptions(decimal:true),
+            decoration:const InputDecoration(labelText:'سعر البيع النهائي'),
+            onChanged:(_)=>update(fromSale)),
+          if(value!=null && value<cost) const Text('تحذير: سعر البيع أقل من تكلفة الشراء',
+            style:TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold)),
+        ]))),
+        actions:[
+          if(pendingPrices.containsKey(id)) TextButton(
+            onPressed:(){pendingPrices.remove(id);onChanged();Navigator.pop(c);},
+            child:const Text('إلغاء تسعير البند')),
+          TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إلغاء')),
+          FilledButton(onPressed:(){
+            final v=double.tryParse(sale.text.trim().replaceAll(',','.'));
+            if(v==null||!v.isFinite||v<0){
+              ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content:Text('سعر بيع غير صحيح')));
+              return;
+            }
+            pendingPrices[id]=double.parse(v.toStringAsFixed(2));
+            onChanged();
+            Navigator.pop(c);
+          },child:const Text('اعتماد مع الفاتورة')),
+        ],
+      );
+    }));
+  sale.dispose();percent.dispose();
 }
 
 Future<void> archiveProduct(BuildContext context, String id, String name) async {
@@ -4099,6 +4123,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
   final paid = TextEditingController(text: '0');
   final invoice = TextEditingController();
   final markup = TextEditingController();
+  final pendingSalePrices = <String,double>{};
   final note = TextEditingController();
   final employeePurchaseRef=db.collection('purchases').doc();
   final managerPurchaseRef=db.collection('purchases').doc();
@@ -4149,10 +4174,20 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
             if(id != null && c.mounted) addSelected(id);
           },
         ),
+        if(owner && lines.isNotEmpty) Padding(
+          padding:const EdgeInsets.symmetric(vertical:5),
+          child:TextField(controller:markup,enabled:!saving,
+            keyboardType:const TextInputType.numberWithOptions(decimal:true),
+            decoration:_vibInvoiceInput('زيادة سعر البيع لكل أصناف الفاتورة %'),
+            onChanged:(_)=>setLocal(() {}),
+          )),
         if(owner) Wrap(alignment:WrapAlignment.end,spacing:8,children:[
           if(lines.isNotEmpty) OutlinedButton.icon(
             key:const ValueKey('edit-purchase-selling-price'),
-            onPressed:saving ? null : () => _editPurchaseSellingPrice(c,productDocs,lines),
+            onPressed:saving ? null : () => _editPurchaseSellingPrice(c,productDocs,lines,
+              pendingPrices:pendingSalePrices,
+              globalMarkup:double.tryParse(markup.text.trim().replaceAll(',','.')),
+              onChanged:()=>setLocal(() {})),
             icon:const Icon(Icons.sell_outlined),label:const Text('تعديل سعر البيع'),
           ),
           TextButton.icon(
@@ -4190,14 +4225,44 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
           ExpansionTile(title:const Text('تفاصيل إضافية (اختياري)',style:TextStyle(fontSize:13)),children:[
             TextField(controller:invoice,enabled:!saving,decoration:_vibInvoiceInput('رقم فاتورة المورد')),
             const SizedBox(height:8),
-            if(owner) TextField(controller:markup,enabled:!saving,keyboardType:const TextInputType.numberWithOptions(decimal:true),
-              decoration:_vibInvoiceInput('زيادة سعر البيع %')),
+            if(owner) const Text('نسبة زيادة البيع موجودة أعلى الفاتورة. ويمكن تسعير كل بند منفردًا.'),
           ]),
         ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
-          for(var i=0;i<lines.length;i++) InvoiceCompactTableLine(
-            key:ObjectKey(lines[i]),number:i+1,name:'${productDocs.firstWhere((d)=>d.id==lines[i].productId).data()?['name'] ?? ''}',
-            price:lines[i].cost,quantity:lines[i].quantity,onEdit:saving ? null : ()=>editSelected(lines[i]),
-          ),
+          for(var i=0;i<lines.length;i++) Column(children:[
+            InvoiceCompactTableLine(
+              key:ObjectKey(lines[i]),number:i+1,name:'${productDocs.firstWhere((d)=>d.id==lines[i].productId).data()?['name'] ?? ''}',
+              price:lines[i].cost,quantity:lines[i].quantity,onEdit:saving ? null : ()=>editSelected(lines[i])),
+            Builder(builder:(context){
+              final row=lines[i],id=row.productId!;
+              final product=productDocs.firstWhere((p)=>p.id==id).data()!;
+              final cost=double.tryParse(row.cost.text.replaceAll(',','.')) ?? 0;
+              final oldSale=(product['price'] as num?)?.toDouble() ?? 0;
+              final increase=double.tryParse(markup.text.trim().replaceAll(',','.'));
+              final proposed=_purchaseSellingPreview(id,cost,oldSale,pendingSalePrices,increase);
+              final bad=proposed<cost-0.00001;
+              return Padding(padding:const EdgeInsets.only(bottom:6),
+                child:Container(padding:const EdgeInsets.symmetric(horizontal:7,vertical:5),
+                  decoration:BoxDecoration(color:bad?const Color(0xFF3B1717):const Color(0xFF16271A),
+                    borderRadius:BorderRadius.circular(6),
+                    border:Border.all(color:bad?Colors.redAccent:Colors.green)),
+                  child:Row(children:[
+                    Expanded(child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
+                      Text('تكلفة: ${cost.toStringAsFixed(2)} | بيع قديم: ${oldSale.toStringAsFixed(2)}',
+                        style:const TextStyle(fontSize:11)),
+                      Text(bad?'تحذير: بيع ${proposed.toStringAsFixed(2)} أقل من التكلفة':
+                        'سعر البيع عند الحفظ: ${proposed.toStringAsFixed(2)}',
+                        style:TextStyle(color:bad?Colors.redAccent:Colors.lightGreenAccent,
+                          fontWeight:FontWeight.bold,fontSize:12)),
+                    ])),
+                    if(owner) TextButton.icon(onPressed:saving?null:()=>
+                      _editPurchaseSellingPrice(c,productDocs,lines,
+                        pendingPrices:pendingSalePrices,initialId:id,globalMarkup:increase,
+                        onChanged:()=>setLocal(() {})),
+                      icon:const Icon(Icons.edit,size:16),label:const Text('تسعير')),
+                  ]))),
+              );
+            }),
+          ]),
         ]),
         actions: [
           TextButton(onPressed:saving ? null : () {if(checkout) {setLocal(()=>checkout=false);} else {Navigator.pop(c);}},child:Text(checkout ? 'رجوع للبنود' : 'إلغاء')),
@@ -4231,6 +4296,27 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
               await showInvoiceSaveProblem(c, 'نسبة زيادة سعر البيع غير صحيحة');
               return;
             }
+            if(owner){
+              final underCost=<String>[];
+              for(final e in entries){
+                final product=productDocs.firstWhere((p)=>p.id==e.id).data()!;
+                final previous=(product['price'] as num?)?.toDouble() ?? 0;
+                final proposed=_purchaseSellingPreview(e.id,e.cost,previous,pendingSalePrices,increase);
+                if(!proposed.isFinite||proposed<0){await showInvoiceSaveProblem(c,'راجع سعر البيع');return;}
+                if(proposed<e.cost-0.00001)underCost.add('${product['name']}: بيع ${proposed.toStringAsFixed(2)} مقابل تكلفة ${e.cost.toStringAsFixed(2)}');
+              }
+              if(underCost.isNotEmpty){
+                final proceed=await showDialog<bool>(context:c,builder:(dialog)=>AlertDialog(
+                  title:const Text('تحذير: سعر البيع أقل من تكلفة الشراء'),
+                  content:SingleChildScrollView(child:Text(underCost.take(10).join('\n'))),
+                  actions:[
+                    TextButton(onPressed:()=>Navigator.pop(dialog,false),child:const Text('تعديل الأسعار')),
+                    FilledButton(onPressed:()=>Navigator.pop(dialog,true),child:const Text('حفظ بعد التنبيه')),
+                  ],
+                ))??false;
+                if(!proceed)return;
+              }
+            }
 
             if(!owner) {
               setLocal(()=>saving=true);
@@ -4248,6 +4334,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
               'items':entries.map((e)=>[e.id,e.qty,e.cost]).toList(),
               'paid':payment,'invoice':invoice.text.trim(),
               'note':note.text.trim(),'markup':increase,
+              'salePrices':{for(final e in entries) if(pendingSalePrices.containsKey(e.id)) e.id:pendingSalePrices[e.id]},
             });
             try {
               final supplier = addedSuppliers[supplierId] ?? suppliers.docs.firstWhere((d) => d.id == supplierId).data();
@@ -4308,7 +4395,8 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
                     'purchasePrice': e.cost,
                     'lastPurchaseId': purchaseRef.id,
                     'lastPurchaseAt': FieldValue.serverTimestamp(),
-                    if (increase != null) 'price': double.parse((e.cost * (1 + increase / 100)).toStringAsFixed(2)),
+                    if (increase != null || pendingSalePrices.containsKey(e.id))
+                       'price': _purchaseSellingPreview(e.id,e.cost,(product['price'] as num?)?.toDouble() ?? 0,pendingSalePrices,increase),
                     'updatedAt': FieldValue.serverTimestamp(),
                   });
 
