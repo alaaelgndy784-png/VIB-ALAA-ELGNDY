@@ -4,6 +4,15 @@ import '../lib/pending_sale_data.dart';
 Map<String,dynamic> request(int n)=>{'customerId':'customer','credit':true,'paid':10.0,'total':n*22.23,
   'items':[for(var i=0;i<n;i++){'productId':'p$i','quantity':2,'unitPrice':11.115,'basePrice':12.35,'discountPercent':10}]};
 void main() {
+  test('below-cost sale blocked for manager, staff and edited invoices',() {
+    expect(salePriceBelowRecordedCost(99.99,100),isTrue);
+    expect(salePriceBelowRecordedCost(100,100),isFalse);
+    expect(salePriceBelowRecordedCost(100.01,100),isFalse);
+    expect(salePriceBelowRecordedCost(14.99,15.00),isTrue);
+    expect(salePriceBelowRecordedCost(13.50,null),isFalse);
+    expect(salePriceBelowRecordedCost(double.nan,100),isTrue);
+    expect(salePriceBelowRecordedCost(12.0,double.nan),isFalse);
+  });
   test('employee offline draft round-trips without changing invoice lines or totals',() {
     final draft=OfflineEmployeeSaleData.parse({
       'id':'sale123','branchId':'branchA','customerId':'customerA','createdAt':'2026-10-14T08:00:00Z',
