@@ -256,8 +256,10 @@ jobs:
           SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
           test -x "$AAPT"
           test -x "$SIGNER"
-          "$AAPT" dump badging "$NEW" | head -n 3 | tee /tmp/new-manager-badging.txt
-          "$AAPT" dump badging "$OLD" | head -n 3 | tee /tmp/old-manager-badging.txt
+          "$AAPT" dump badging "$NEW" > /tmp/new-manager-badging.txt
+          head -n 3 /tmp/new-manager-badging.txt
+          "$AAPT" dump badging "$OLD" > /tmp/old-manager-badging.txt
+          head -n 3 /tmp/old-manager-badging.txt
           grep -F "name='com.alaa.vibsales.managerscan'" /tmp/new-manager-badging.txt
           grep -F "versionCode='10217'" /tmp/new-manager-badging.txt
           grep -F "versionName='0.2.77'" /tmp/new-manager-badging.txt
