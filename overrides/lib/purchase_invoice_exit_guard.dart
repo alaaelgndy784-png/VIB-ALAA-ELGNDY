@@ -6,16 +6,18 @@ class PurchaseInvoiceExitGuard extends StatelessWidget {
     super.key,
     required this.saving,
     required this.child,
+    this.onDiscard,
   });
 
   final bool saving;
   final Widget child;
+  final Future<void> Function()? onDiscard;
 
   @override
   Widget build(BuildContext context) => PopScope<void>(
         canPop: false,
         onPopInvokedWithResult: (didPop, result) {
-          if (!didPop) requestPurchaseInvoiceExit(context, saving: saving);
+          if (!didPop) requestPurchaseInvoiceExit(context, saving: saving, onDiscard: onDiscard);
         },
         child: child,
       );
@@ -25,6 +27,7 @@ class PurchaseInvoiceExitGuard extends StatelessWidget {
 Future<void> requestPurchaseInvoiceExit(
   BuildContext context, {
   required bool saving,
+  Future<void> Function()? onDiscard,
 }) async {
   if (saving || !context.mounted) return;
   final leave = await showDialog<bool>(
@@ -47,5 +50,8 @@ Future<void> requestPurchaseInvoiceExit(
       ],
     ),
   );
-  if (leave == true && context.mounted) Navigator.of(context).pop();
+  if (leave == true && context.mounted) {
+    if (onDiscard != null) await onDiscard();
+    if (context.mounted) Navigator.of(context).pop();
+  }
 }
