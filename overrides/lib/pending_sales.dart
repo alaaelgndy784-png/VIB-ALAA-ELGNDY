@@ -354,8 +354,8 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                     throw Exception('سعر الصنف اتغير؛ افتح الفاتورة من جديد');
                   }
                   final cost = (product['purchasePrice'] as num?)?.toDouble();
-                  if (cost != null && e.price < cost && !(owner && allowBelowCost)) {
-                    throw Exception('سعر البيع أقل من التكلفة');
+                  if (salePriceBelowRecordedCost(e.price, product['purchasePrice'])) {
+                    throw Exception('ممنوع حفظ الفاتورة: الصنف ${product['name']} سعر بيعه ${e.price.toStringAsFixed(2)} ج، وتكلفته ${cost!.toStringAsFixed(2)} ج');
                   }
                   liveProducts[e.id] = product;
                 }
@@ -500,7 +500,7 @@ Future<Map<String,dynamic>> commitGroupedSale({required bool owner, required Str
                   if (items.length == 1) 'productName': items.first['productName'],
                   if (items.length == 1) 'quantity': items.first['quantity'],
                   if (items.length == 1) 'unitPrice': items.first['unitPrice'],
-                  if (owner && (allowShortage || allowBelowCost)) 'managerOverride': {
+                  if (owner && allowShortage) 'managerOverride': {
                     'reason': overrideReason,
                     'allowShortage': allowShortage,
                     'allowBelowCost': allowBelowCost,
