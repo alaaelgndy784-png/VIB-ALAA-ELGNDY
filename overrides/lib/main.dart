@@ -3368,7 +3368,8 @@ class _SalesState extends State<Sales> {
     final rows = snap.data!.docs
         .where((d) {
           final date = (d.data()['createdAt'] as Timestamp?)?.toDate();
-          return visibleAfterReset(d.data()) && (owner || d.data()['branchId'] == branchId) &&
+          return visibleAfterReset(d.data()) && d.data()['status'] != 'cancelled' &&
+            (owner || d.data()['branchId'] == branchId) &&
             date != null && !date.isBefore(movementReportBoundary(selectedFrom)) && date.isBefore(movementReportBoundary(selectedTo,next:true));
         })
         .toList()
@@ -3437,7 +3438,21 @@ class _SalesState extends State<Sales> {
             Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'cancelled' ? ' • ملغاة بالخطأ' : sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${sale['partialReturnTotal']} ج.م' : ''}'),
             _sellerLabel(sale),
           ]),
-          trailing: Text('${sale['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+          trailing: SizedBox(width: 94, child: Column(
+            mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+            Text('${sale['total'] ?? 0} ج.م', maxLines: 1, overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 12)),
+            if (owner && saleInvoiceCanBeCancelled(sale))
+              SizedBox(height: 30, child: TextButton.icon(
+                key: ValueKey('delete-sales-invoice-${d.id}'),
+                style: TextButton.styleFrom(foregroundColor: Colors.redAccent,
+                  padding: const EdgeInsets.symmetric(horizontal: 2),
+                  visualDensity: VisualDensity.compact),
+                onPressed: () => confirmSalesInvoiceCancellation(context,d.id),
+                icon: const Icon(Icons.delete_outline, size: 15),
+                label: const Text('مسح', style: TextStyle(fontSize: 12)),
+              )),
+          ])),
           onTap: () => showInvoiceOverview(context, 'sales', d.id, initialData: sale),
         ));
       }).toList())),
@@ -4501,7 +4516,8 @@ class _PurchasesState extends State<Purchases>{
       builder: (context, snap) {
         if (snap.hasError) return const Center(child: Text('تعذر تحميل المشتريات'));
         if (!snap.hasData) return const Center(child: CircularProgressIndicator());
-        final rows = snap.data!.docs.where((d) => visibleAfterReset(d.data())).toList();
+        final rows = snap.data!.docs.where((d) =>
+          visibleAfterReset(d.data()) && d.data()['status'] != 'cancelled').toList();
         final groupedRows = vibGroupLegacyPurchases([
           for (final row in rows) VibPurchaseRow(row.id, row.data()),
         ]);
@@ -4531,7 +4547,22 @@ class _PurchasesState extends State<Purchases>{
               Text('رقم الفاتورة: ${invoiceDisplayNumber('purchases',d.id,p)}'),
             ]),
             subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}${d.grouped ? ' • ${d.sources.length} أصناف أصلية مجمعة' : ''}'),
-            trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
+            trailing: SizedBox(width: 94, child: Column(
+              mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text('${p['total'] ?? 0} ج.م', maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 12)),
+                if (owner && !d.grouped && purchaseInvoiceCanBeCancelled(p))
+                  SizedBox(height: 30, child: TextButton.icon(
+                    key: ValueKey('delete-purchases-invoice-${d.id}'),
+                    style: TextButton.styleFrom(foregroundColor: Colors.redAccent,
+                      padding: const EdgeInsets.symmetric(horizontal: 2),
+                      visualDensity: VisualDensity.compact),
+                    onPressed: () => confirmPurchaseInvoiceCancellation(context,d.id),
+                    icon: const Icon(Icons.delete_outline, size: 15),
+                    label: const Text('مسح', style: TextStyle(fontSize: 12)),
+                  )),
+              ])),
             onTap: () => showVibGroupedPurchase(context, d),
           ));
         });
