@@ -109,7 +109,7 @@ class PendingReceiptPage extends StatelessWidget {
                                     color: gold,
                                   ),
                                   title: Text(
-                                    '${data['customerName'] ?? 'عميل'} • ${vibVoucherMoney(data['amount'])} ج.م',
+                                    '${data['customerName'] ?? 'عميل'} • ${vibReceiptCurrency(data['amount'])}',
                                     style: const TextStyle(color: gold, fontWeight: FontWeight.bold),
                                   ),
                                   subtitle: Text(
