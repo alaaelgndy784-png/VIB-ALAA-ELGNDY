@@ -30,7 +30,7 @@ try:
 except (OSError, UnicodeError) as exc:
     sys.exit(f"VIB MANAGER REGRESSION GUARD FAILED: {exc}")
 
-codes = [int(x) for x in re.findall(r"versionCode = (20\d{3})", workflow)]
+codes = [int(x) for x in re.findall(r"versionCode = (2\d{4})", workflow)]
 checks = [
     ("manager purchase screen exists", "purchaseDialog(context,owner:owner)" in main),
     ("manager's independent selling-price visibility",
