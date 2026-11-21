@@ -327,7 +327,18 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
                 Text('رقم الفاتورة: ${invoiceDisplayNumber(widget.type,row.id,data)}'),
               ])),
               subtitle: Text('${formatDate(data['createdAt'])}${sales ? ' • فرع: ${data['branchId'] ?? ''}' : ''}${cancelled ? '\nفاتورة ملغاة بالخطأ' : returned ? '\nفاتورة مرتجعة' : ''}${row.grouped ? '\n${row.sources.length} أصناف قديمة مجمعة' : ''}'),
-              trailing: Text('$total ج.م', style: TextStyle(color: returned ? Colors.redAccent : dayColor, fontWeight: FontWeight.bold)),
+              trailing: !sales && !staffApp ? SizedBox(width: 110, child: Column(
+                mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text('$total ج.م', maxLines: 1, overflow: TextOverflow.ellipsis,
+                    style: TextStyle(color: returned ? Colors.redAccent : dayColor,
+                      fontWeight: FontWeight.bold, fontSize: 12)),
+                  SizedBox(height: 30, child: PurchaseInvoiceDeleteButton(
+                    invoiceId: row.id, invoice: data, grouped: row.grouped)),
+                ],
+              )) : Text('$total ج.م',
+                style: TextStyle(color: returned ? Colors.redAccent : dayColor,
+                  fontWeight: FontWeight.bold)),
               onTap: () => !sales && row.grouped
                   ? showVibGroupedPurchase(context, row)
                   : showInvoiceOverview(context, widget.type, row.id, initialData: data),

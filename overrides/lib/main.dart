@@ -4552,16 +4552,9 @@ class _PurchasesState extends State<Purchases>{
                 Text('${p['total'] ?? 0} ج.م', maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 12)),
-                if (owner && !d.grouped && purchaseInvoiceCanBeCancelled(p))
-                  SizedBox(height: 30, child: TextButton.icon(
-                    key: ValueKey('delete-purchases-invoice-${d.id}'),
-                    style: TextButton.styleFrom(foregroundColor: Colors.redAccent,
-                      padding: const EdgeInsets.symmetric(horizontal: 2),
-                      visualDensity: VisualDensity.compact),
-                    onPressed: () => confirmPurchaseInvoiceCancellation(context,d.id),
-                    icon: const Icon(Icons.delete_outline, size: 15),
-                    label: const Text('مسح', style: TextStyle(fontSize: 12)),
-                  )),
+                if (owner)
+                  SizedBox(height: 30, child: PurchaseInvoiceDeleteButton(
+                    invoiceId: d.id, invoice: p, grouped: d.grouped)),
               ])),
             onTap: () => showVibGroupedPurchase(context, d),
           ));

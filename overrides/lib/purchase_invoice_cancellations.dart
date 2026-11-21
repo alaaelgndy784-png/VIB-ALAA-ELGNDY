@@ -1,5 +1,64 @@
 part of 'main.dart';
 
+String? purchaseInvoiceCancellationBlockReason(Map<String, dynamic> invoice,
+    {bool grouped = false}) {
+  if (grouped) {
+    return 'فاتورة مشتريات قديمة مجمعة. لا يمكن إلغاؤها آليًا لعدم ضمان دقة عكس المخزون وحساب المورد.';
+  }
+  if (invoice['status'] == 'cancelled') {
+    return 'الفاتورة ملغاة بالفعل، وسجل الإلغاء محفوظ.';
+  }
+  if (invoice['status'] == 'returned') {
+    return 'الفاتورة دي عليها مرتجع. لا يمكن إلغاؤها مرة ثانية.';
+  }
+  if (invoice['status'] != 'completed') {
+    return 'الفاتورة غير مكتملة أو غير معتمدة؛ الإلغاء المحاسبي غير متاح حاليًا.';
+  }
+  final partialTotal = invoice['partialReturnTotal'];
+  final partial = invoice['partialReturnQuantities'];
+  if ((partialTotal is num && partialTotal > 0) ||
+      (partial is Map && partial.isNotEmpty)) {
+    return 'الفاتورة عليها مرتجع جزئي؛ راجع المرتجع قبل إلغاء الفاتورة كلها.';
+  }
+  if (!purchaseInvoiceCanBeCancelled(invoice)) {
+    return 'بيانات الفاتورة القديمة ناقصة بنود أو مورد أو مدفوع. لا يمكن عكس الحساب والمخزون بأمان.';
+  }
+  return null;
+}
+
+Future<void> requestPurchaseInvoiceCancellation(BuildContext context,
+    String invoiceId, Map<String, dynamic> invoice, {bool grouped = false}) async {
+  final blocked = purchaseInvoiceCancellationBlockReason(invoice, grouped: grouped);
+  if (blocked != null) {
+    if (context.mounted) {
+      await showInvoiceSaveProblem(context, blocked,
+        title: 'لا يمكن مسح الفاتورة بأمان', button: 'رجوع');
+    }
+    return;
+  }
+  if (context.mounted) await confirmPurchaseInvoiceCancellation(context, invoiceId);
+}
+
+class PurchaseInvoiceDeleteButton extends StatelessWidget {
+  final String invoiceId;
+  final Map<String, dynamic> invoice;
+  final bool grouped;
+  const PurchaseInvoiceDeleteButton({super.key, required this.invoiceId,
+    required this.invoice, this.grouped = false});
+  @override
+  Widget build(BuildContext context) => TextButton.icon(
+    key: ValueKey('delete-purchases-invoice-$invoiceId'),
+    style: TextButton.styleFrom(foregroundColor: Colors.redAccent,
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      visualDensity: VisualDensity.compact),
+    onPressed: () => requestPurchaseInvoiceCancellation(context,
+      invoiceId, invoice, grouped: grouped),
+    icon: const Icon(Icons.delete_outline, size: 15),
+    label: const Text('مسح', style: TextStyle(fontSize: 12)),
+  );
+}
+
+
 // Deleting a posted purchase is an accounting cancellation, not a Firestore
 // delete. The original document and its number are retained for the audit.
 bool purchaseInvoiceCanBeCancelled(Map<String, dynamic> invoice) {

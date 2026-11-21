@@ -3,6 +3,25 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/main.dart';
 
 void main() {
+  test('purchase invoice cancellation explains unsupported cases', () {
+    final old = <String,dynamic>{'status':'completed','total':50};
+    expect(purchaseInvoiceCancellationBlockReason(old), isNotNull);
+    expect(purchaseInvoiceCancellationBlockReason(old, grouped:true), contains('مجمعة'));
+    expect(purchaseInvoiceCancellationBlockReason({
+      'status':'completed','supplierId':'s1',
+      'items':[{'productId':'p1','quantity':1,'unitCost':50}],
+      'total':50,'paid':0,'due':50,
+    }), isNull);
+  });
+  testWidgets('delete appears on legacy purchase invoice even when blocked', (tester) async {
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body:
+      PurchaseInvoiceDeleteButton(invoiceId:'legacy-1',
+        invoice: const {'status':'completed','total':50}))));
+    expect(find.byKey(const ValueKey('delete-purchases-invoice-legacy-1')), findsOneWidget);
+    expect(find.text('مسح'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   test('purchase delete only applies to complete modern invoices without returns', () {
     final invoice = <String, dynamic>{
       'status': 'completed', 'supplierId': 'supplier-1',
