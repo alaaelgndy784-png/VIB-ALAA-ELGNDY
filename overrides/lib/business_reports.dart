@@ -648,7 +648,7 @@ Future<void> showInvoiceOverview(BuildContext context, String type, String id,
     await Navigator.of(context).push(MaterialPageRoute<void>(builder: (page) =>
       Directionality(textDirection: TextDirection.rtl, child: Scaffold(
         appBar: AppBar(
-          title: Text(historicalSalesReadOnly ? 'فاتورة مبيعات مؤرشفة — للعرض فقط' : type == 'sales' ? 'فاتورة المبيعات${data['status']=='cancelled' ? ' — ملغاة' : ''}' : historicalPurchaseReadOnly ? 'فاتورة مشتريات مؤرشفة — للعرض فقط' : 'فاتورة المشتريات'),
+          title: Text(historicalSalesReadOnly ? 'فاتورة مبيعات مؤرشفة — للعرض فقط' : type == 'sales' ? 'فاتورة المبيعات${data['status']=='cancelled' ? ' — ملغاة' : ''}' : historicalPurchaseReadOnly ? 'فاتورة مشتريات مؤرشفة — للعرض فقط' : 'فاتورة المشتريات${data['status']=='cancelled' ? ' — ملغاة' : ''}'),
           actions: [
             if (!historicalReadOnly) IconButton(
               tooltip: 'إجراءات الفاتورة: تعديل وطباعة ومرتجعات',
@@ -694,6 +694,19 @@ Future<void> showInvoiceOverview(BuildContext context, String type, String id,
                     label: const Text('إلغاء الفاتورة المنشأة بالخطأ'),
                     onPressed: () async {
                       final cancelled = await confirmSalesInvoiceCancellation(page, id);
+                      if (cancelled && page.mounted) Navigator.pop(page);
+                    },
+                  ))),
+            if (type == 'purchases' && !staffApp && !historicalReadOnly &&
+                purchaseInvoiceCanBeCancelled(data))
+              Padding(padding: const EdgeInsets.only(bottom: 6),
+                child: SizedBox(width: double.infinity, height: 38,
+                  child: OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
+                    icon: const Icon(Icons.delete_outline, size: 17),
+                    label: const Text('مسح فاتورة المشتريات المنشأة بالخطأ'),
+                    onPressed: () async {
+                      final cancelled = await confirmPurchaseInvoiceCancellation(page, id);
                       if (cancelled && page.mounted) Navigator.pop(page);
                     },
                   ))),
