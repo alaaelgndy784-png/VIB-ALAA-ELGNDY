@@ -40,7 +40,7 @@ source = replace_once(source,
 source = replace_once(source,
     "subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}${d.grouped ? ' • ${d.sources.length} أصناف أصلية مجمعة' : ''}'),",
     "subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}${d.grouped ? ' • ${d.sources.length} أصناف أصلية مجمعة' : ''}',style:const TextStyle(color:Colors.redAccent)),")
-if "delete-purchases-invoice-" not in source:
+if "PurchaseInvoiceDeleteButton(" not in source and "delete-purchases-invoice-" not in source:
     source = replace_once(source,
         "trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),",
         "trailing: Text('${p['total'] ?? 0} ج.م', style: const TextStyle(color: Colors.lightBlueAccent, fontWeight: FontWeight.bold)),")
