@@ -3,19 +3,21 @@ import 'package:flutter_test/flutter_test.dart';
 import '../lib/main.dart';
 
 void main() {
-  test('purchase invoice delete is allowed only for completed non-returned invoice', () {
-    expect(purchaseInvoiceCanBeCancelled({
-      'status': 'completed', 'total': 120, 'paid': 20, 'due': 100
-    }), isTrue);
-    expect(purchaseInvoiceCanBeCancelled({'status': 'cancelled'}), isFalse);
-    expect(purchaseInvoiceCanBeCancelled({'status': 'returned'}), isFalse);
-    expect(purchaseInvoiceCanBeCancelled({'status': 'pending'}), isFalse);
-    expect(purchaseInvoiceCanBeCancelled({
-      'status': 'completed','partialReturnTotal': 1,
-    }), isFalse);
-    expect(purchaseInvoiceCanBeCancelled({
-      'status': 'completed','partialReturnQuantities': {'p1': 1},
-    }), isFalse);
+  test('purchase delete only applies to complete modern invoices without returns', () {
+    final invoice = <String, dynamic>{
+      'status': 'completed', 'supplierId': 'supplier-1',
+      'items': [{'productId':'p1','quantity':2,'unitCost':6.50}],
+      'total': 13.00, 'paid': 3.00, 'due': 10.00,
+    };
+    expect(purchaseInvoiceCanBeCancelled(invoice), isTrue);
+    expect(purchaseInvoiceCanBeCancelled({...invoice, 'status':'cancelled'}), isFalse);
+    expect(purchaseInvoiceCanBeCancelled({...invoice, 'status':'returned'}), isFalse);
+    expect(purchaseInvoiceCanBeCancelled({...invoice, 'status':'pending'}), isFalse);
+    expect(purchaseInvoiceCanBeCancelled({...invoice, 'items': []}), isFalse);
+    expect(purchaseInvoiceCanBeCancelled({...invoice, 'supplierId': ''}), isFalse);
+    expect(purchaseInvoiceCanBeCancelled({...invoice, 'partialReturnTotal': 1}), isFalse);
+    expect(purchaseInvoiceCanBeCancelled({...invoice,
+      'partialReturnQuantities': {'p1': 1}}), isFalse);
   });
 
   for (final saleColumn in [false, true]) {
