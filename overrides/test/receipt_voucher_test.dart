@@ -10,6 +10,20 @@ void main() {
   setUpAll(() async {
     font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
   });
+  test('receipt, approval and cancellation money is always exactly two decimals', () {
+    final legacy = <String, dynamic>{
+      'amount': 3499.9800000000005,
+      'balanceBefore': 27244.889999999992,
+      'balanceAfter': 69638.70000000001,
+    };
+    expect(vibReceiptCurrency(legacy['amount']), '3,499.98 ج.م');
+    expect(vibReceiptCurrency(legacy['balanceBefore']), '27,244.89 ج.م');
+    expect(vibReceiptCurrency(legacy['balanceAfter']), '69,638.70 ج.م');
+    expect(vibReceiptCurrency(100.0), '100.00 ج.م');
+    expect(vibReceiptCurrency(0.1 + 0.2), '0.30 ج.م');
+    // A formatting operation must never change saved voucher data.
+    expect(legacy['amount'], 3499.9800000000005);
+  });
   group('vibVoucherMoney', () {
     test('formats old floating-point balances to exactly two piastres', () {
       expect(vibVoucherMoney(27244.889999999992), '27,244.89');
