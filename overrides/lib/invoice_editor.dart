@@ -416,7 +416,7 @@ class _InvoiceLineEditorResult {
   final double? baseCost;
   final double percent;
   _InvoiceLineEditorResult(this.action,this.price,this.quantity,this.baseCost,this.percent,
-    this.sellingPrice,this.sellingPriceChanged=false);
+    [this.sellingPrice,this.sellingPriceChanged=false]);
 }
 
 Future<InvoiceLineEditAction?> showInvoiceLineEditor(BuildContext context, {
