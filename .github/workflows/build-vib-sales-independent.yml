@@ -170,10 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 20085/; s/versionName = .*/versionName = "0.2.85"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 20085' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.85"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=20085 --build-name=0.2.85
+          sed -i -E 's/versionCode = .*/versionCode = 20086/; s/versionName = .*/versionName = "0.2.86"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 20086' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.86"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=20086 --build-name=0.2.86
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
           if [ "${{ matrix.app }}" = manager ]; then
@@ -182,8 +182,8 @@ jobs:
             BADGING="$($AAPT dump badging dist/VIB-SALES-MANAGER.apk | head -n 1)"
             echo "$BADGING"
             grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-            grep -F "versionCode='22085'" <<< "$BADGING"
-            grep -F "versionName='0.2.85'" <<< "$BADGING"
+            grep -F "versionCode='22086'" <<< "$BADGING"
+            grep -F "versionName='0.2.86'" <<< "$BADGING"
             SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             test -x "$SIGNER"
             "$SIGNER" verify --print-certs dist/VIB-SALES-MANAGER.apk > dist/signature-check.txt
@@ -1076,6 +1076,66 @@ jobs:
           body: |
             Manager update above 0.2.84 with the same Android app ID and signing key.
             Show red Arabic delete on all purchase invoice rows, including full invoice history.
+            Cancellation asks for a reason, reverses stock and accounting atomically,
+            and hides cancelled invoices from everyday lists while preserving audit history.
+            Draft invoice item delete now uses visible Arabic text.
+            Preserve the 0.2.84 fourth purchase selling-price field and its behavior.
+            Retains purchase draft recovery, below-cost sales guard, and delete-line control.
+            Passed repository tests and Android APK compatibility checks.
+            Back up your data before installing; actual phone behavior is not yet verified.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
+
+  publish-manager-money-display-0-2-86:
+    needs: build
+    if: github.ref == 'refs/heads/fix/manager-money-display-invoices-receipts-0-2-86-20261121'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tested manager 0.2.86
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+      - name: Verify in-place update above Manager 0.2.84
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.84-delete-invoices-20261121 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          "$AAPT" dump badging "$NEW" | grep -m1 '^package:' | tee /tmp/new-manager-package
+          "$AAPT" dump badging "$OLD" | grep -m1 '^package:' | tee /tmp/old-manager-package
+          grep -F "name='com.alaa.vibsales.managerscan'" /tmp/new-manager-package
+          grep -F "name='com.alaa.vibsales.managerscan'" /tmp/old-manager-package
+          grep -F "versionCode='22086'" /tmp/new-manager-package
+          grep -F "versionName='0.2.86'" /tmp/new-manager-package
+          grep -F "versionCode='22084'" /tmp/old-manager-package
+          "$SIGNER" verify --print-certs "$NEW" | tee /tmp/new-manager-cert
+          "$SIGNER" verify --print-certs "$OLD" | tee /tmp/old-manager-cert
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-manager-cert | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-manager-cert | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          test "$NEW_SHA" = "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+      - name: Release verified VIB Manager 0.2.86
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.86-money-format-purchase-delete-20261121
+          target_commitish: ${{ github.sha }}
+          name: VIB Manager 0.2.86 - Fixed Invoice and Receipt Money Display
+          body: |
+            Manager update above 0.2.84 with the same Android app ID and signing key.
+            Show red Arabic delete on all purchase invoice rows, including full invoice history.\n            Invoice, purchase and receipt amounts display two decimal digits (no binary float artifacts).
             Cancellation asks for a reason, reverses stock and accounting atomically,
             and hides cancelled invoices from everyday lists while preserving audit history.
             Draft invoice item delete now uses visible Arabic text.
