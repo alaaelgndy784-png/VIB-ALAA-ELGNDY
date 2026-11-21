@@ -967,3 +967,60 @@ jobs:
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
           make_latest: false
+
+  publish-manager-inline-price-0-2-82:
+    needs: build
+    if: github.ref == 'refs/heads/fix/restore-manager-0-2-82-20261121'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tested manager 0.2.82
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+      - name: Verify in-place update above currently installed Manager 0.2.81
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.81-safe-20261121 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          "$AAPT" dump badging "$NEW" | grep -m1 '^package:' | tee /tmp/new-manager-package
+          "$AAPT" dump badging "$OLD" | grep -m1 '^package:' | tee /tmp/old-manager-package
+          grep -F "name='com.alaa.vibsales.managerscan'" /tmp/new-manager-package
+          grep -F "name='com.alaa.vibsales.managerscan'" /tmp/old-manager-package
+          grep -F "versionCode='22082'" /tmp/new-manager-package
+          grep -F "versionName='0.2.82'" /tmp/new-manager-package
+          grep -F "versionCode='22081'" /tmp/old-manager-package
+          "$SIGNER" verify --print-certs "$NEW" | tee /tmp/new-manager-cert
+          "$SIGNER" verify --print-certs "$OLD" | tee /tmp/old-manager-cert
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-manager-cert | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-manager-cert | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA"
+          test "$NEW_SHA" = "$OLD_SHA"
+          test "$NEW_SHA" = "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+      - name: Release verified VIB Manager 0.2.82
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.82-inline-purchase-sale-price-20261121
+          target_commitish: ${{ github.sha }}
+          name: VIB Manager 0.2.82 - Editable sale price inside purchase invoice
+          body: |
+            New manager update above 0.2.81 with the same Android app ID and signing key.
+            Editable per-line selling-price column directly inside purchase invoices, saved
+            with the purchase invoice and product catalog as a single transaction.
+            Retains purchase draft recovery, below-cost sales guard, and delete-line control.
+            Passed repository tests and Android APK compatibility checks.
+            Back up your data before installing; actual phone behavior is not yet verified.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
