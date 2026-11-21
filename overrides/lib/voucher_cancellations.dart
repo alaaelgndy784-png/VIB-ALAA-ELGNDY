@@ -85,7 +85,7 @@ Future<bool> applySupplierPaymentCancellation(String id) async {
 
 Future<void> cancelReceiptVoucher(BuildContext context,String id,Map<String,dynamic> displayed) async {
   if(!await _confirmVoucherCancellation(context,'إلغاء سند القبض',
-    'سيُعكس مبلغ ${displayed['amount']} ج.م على رصيد العميل والصندوق، مع الاحتفاظ بالسند الأصلي وسجل الإلغاء.')) return;
+    'سيُعكس مبلغ ${vibReceiptCurrency(displayed['amount'])} على رصيد العميل والصندوق، مع الاحتفاظ بالسند الأصلي وسجل الإلغاء.')) return;
   try {
     final changed=await applyReceiptVoucherCancellation(id);
     if(context.mounted)await showInvoiceSaveProblem(context,changed?'تم إلغاء سند القبض وعكس أثره على حساب العميل والصندوق. السند الأصلي محفوظ.':'السند ملغي بالفعل.',title:'تم الإلغاء',button:'تمام',success:true);
@@ -101,7 +101,7 @@ Future<void> cancelReceiptVoucher(BuildContext context,String id,Map<String,dyna
 
 Future<void> cancelSupplierPaymentVoucher(BuildContext context,String id,Map<String,dynamic> displayed) async {
   if(!await _confirmVoucherCancellation(context,'إلغاء سند الصرف',
-    'سيُعاد المبلغ ${displayed['amount']} ج.م إلى رصيد الصندوق وتُعاد مديونية المورد، مع الاحتفاظ بالسند الأصلي وسجل الإلغاء.')) return;
+    'سيُعاد المبلغ ${vibReceiptCurrency(displayed['amount'])} إلى رصيد الصندوق وتُعاد مديونية المورد، مع الاحتفاظ بالسند الأصلي وسجل الإلغاء.')) return;
   try {
     final changed=await applySupplierPaymentCancellation(id);
     if(context.mounted)await showInvoiceSaveProblem(context,changed?'تم إلغاء سند الصرف وإعادة أثره إلى حساب المورد والصندوق. السند الأصلي محفوظ.':'السند ملغي بالفعل.',title:'تم الإلغاء',button:'تمام',success:true);
