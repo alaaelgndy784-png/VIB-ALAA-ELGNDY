@@ -8924,7 +8924,6 @@ Future<void> returnInvoice(String type, String id,
         'actorId': FirebaseAuth.instance.currentUser!.uid,
       });
       tx.update(invoiceRef, {'status': cancellingPurchase ? 'cancelled' : 'returned',
-        if(cancellingPurchase) 'cancelledAt':now,
         'returnedAt': now, 'returnId': ret.id});
     }
   });
