@@ -13,6 +13,7 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
   // Audit view is read-only and intentionally includes archived/legacy invoices.
   bool _allDates = false;
   bool _includeArchived = false;
+  bool _showCancelled = false;
   Timer? _dayRolloverTimer;
   late Stream<QuerySnapshot<Map<String, dynamic>>> invoices;
   final TextEditingController partySearchController = TextEditingController();
@@ -231,6 +232,14 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
       padding: EdgeInsets.symmetric(horizontal: 10, vertical: 3),
       child: Text('عرض السجل كاملًا للقراءة فقط، بلا تغيير في المخزون أو الحسابات. اختر تاريخًا واضغط تطبيق لتضييق الفترة.',
         textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: gold))),
+    if (!staffApp) Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: OutlinedButton.icon(
+        key: const ValueKey('show-cancelled-invoices'),
+        icon: Icon(_showCancelled ? Icons.visibility_off_outlined : Icons.history),
+        label: Text(_showCancelled ? 'إخفاء الفواتير الملغاة من العرض' : 'إظهار الفواتير الملغاة للمراجعة'),
+        onPressed: () => setState(() => _showCancelled = !_showCancelled),
+      )),
     if (!staffApp) Padding(padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
       child: SizedBox(width: double.infinity, child: OutlinedButton.icon(
         style: OutlinedButton.styleFrom(minimumSize: const Size(0, 34),
@@ -270,7 +279,9 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
       if(numbering)return const Center(child:CircularProgressIndicator());
       if (snapshot.hasError && !snapshot.hasData) return const Center(child: Text('تعذر تحميل الفواتير؛ راجع اتصال الإنترنت وحاول مرة أخرى'));
       if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-      final rows = snapshot.data!.docs.where((row) => _includeArchived || visibleAfterReset(row.data())).toList();
+      final rows = snapshot.data!.docs.where((row) =>
+        (_includeArchived || visibleAfterReset(row.data())) &&
+        (_showCancelled || row.data()['status'] != 'cancelled')).toList();
       if (_searchingByParty || _allDates) {
         rows.sort((a, b) {
           final rawA = a.data()['createdAt'], rawB = b.data()['createdAt'];
@@ -299,8 +310,8 @@ class _InvoiceHistoryPageState extends State<InvoiceHistoryPage> with WidgetsBin
           final number=invoiceDisplayNumber(widget.type,row.id,data);
           final party = '${data[sales ? 'customerName' : 'supplierName'] ?? ''}'.trim();
           final total = ((data['total'] as num?) ?? 0).toStringAsFixed(2);
-          final cancelled = sales && data['status'] == 'cancelled';
-           final returned = data['status'] == 'returned' || cancelled;
+          final cancelled = data['status'] == 'cancelled';
+          final returned = data['status'] == 'returned' || cancelled;
           return Card(
             margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             color: dayColor.withOpacity(0.14),
