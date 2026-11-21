@@ -153,7 +153,7 @@ jobs:
       - name: Verify invoice PDF rendering
         if: matrix.app == 'manager'
         working-directory: VIB-SALES-INDEPENDENT
-        run: flutter test test/sales_invoice_exit_guard_test.dart test/purchase_invoice_exit_guard_test.dart test/purchase_draft_test.dart test/purchase_sale_price_popup_test.dart test/customer_payment_sources_test.dart test/sale_cost_reconciliation_test.dart test/store_movement_test.dart test/receipt_voucher_test.dart test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart test/chat_alerts_test.dart test/approval_alerts_test.dart test/archived_purchase_view_test.dart test/return_quota_message_test.dart test/dashboard_metric_icons_test.dart test/product_import_test.dart test/inventory_tools_test.dart test/inventory_rows_test.dart test/invoice_serial_core_test.dart test/invoice_parties_test.dart test/reports_test.dart test/pending_sale_data_test.dart test/pending_sale_review_test.dart test/sale_price_floor_test.dart test/customer_sales_report_test.dart test/sales_invoice_cancellations_test.dart test/product_invoice_movement_test.dart test/product_movement_layout_test.dart test/payment_receipt_scope_test.dart test/legacy_purchase_groups_test.dart test/return_invoice_test.dart
+        run: flutter test test/sales_invoice_exit_guard_test.dart test/purchase_invoice_exit_guard_test.dart test/purchase_draft_test.dart test/purchase_sale_price_popup_test.dart test/purchase_invoice_cancellations_test.dart test/customer_payment_sources_test.dart test/sale_cost_reconciliation_test.dart test/store_movement_test.dart test/receipt_voucher_test.dart test/accounting_test.dart test/invoice_pdf_test.dart test/cheques_test.dart test/chat_alerts_test.dart test/approval_alerts_test.dart test/archived_purchase_view_test.dart test/return_quota_message_test.dart test/dashboard_metric_icons_test.dart test/product_import_test.dart test/inventory_tools_test.dart test/inventory_rows_test.dart test/invoice_serial_core_test.dart test/invoice_parties_test.dart test/reports_test.dart test/pending_sale_data_test.dart test/pending_sale_review_test.dart test/sale_price_floor_test.dart test/customer_sales_report_test.dart test/sales_invoice_cancellations_test.dart test/product_invoice_movement_test.dart test/product_movement_layout_test.dart test/payment_receipt_scope_test.dart test/legacy_purchase_groups_test.dart test/return_invoice_test.dart
 
       - name: Upload invoice PDF previews
         if: matrix.app == 'manager'
@@ -170,10 +170,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 20083/; s/versionName = .*/versionName = "0.2.83"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 20083' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.83"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=20083 --build-name=0.2.83
+          sed -i -E 's/versionCode = .*/versionCode = 20084/; s/versionName = .*/versionName = "0.2.84"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 20084' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.84"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=20084 --build-name=0.2.84
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
           if [ "${{ matrix.app }}" = manager ]; then
@@ -182,8 +182,8 @@ jobs:
             BADGING="$($AAPT dump badging dist/VIB-SALES-MANAGER.apk | head -n 1)"
             echo "$BADGING"
             grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-            grep -F "versionCode='22083'" <<< "$BADGING"
-            grep -F "versionName='0.2.83'" <<< "$BADGING"
+            grep -F "versionCode='22084'" <<< "$BADGING"
+            grep -F "versionName='0.2.84'" <<< "$BADGING"
             SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             test -x "$SIGNER"
             "$SIGNER" verify --print-certs dist/VIB-SALES-MANAGER.apk > dist/signature-check.txt
@@ -968,23 +968,23 @@ jobs:
             manager/SHA256SUMS.txt
           make_latest: false
 
-  publish-manager-popup-price-0-2-83:
+  publish-manager-invoice-delete-0-2-84:
     needs: build
-    if: github.ref == 'refs/heads/fix/purchase-price-fourth-field-20261121'
+    if: github.ref == 'refs/heads/fix/manager-invoice-delete-buttons-0-2-84-20261121'
     runs-on: ubuntu-latest
     steps:
-      - name: Download tested manager 0.2.83
+      - name: Download tested manager 0.2.84
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
           path: manager
-      - name: Verify in-place update above Manager 0.2.82
+      - name: Verify in-place update above Manager 0.2.83
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p previous
-          gh release download vib-manager-0.2.82-inline-purchase-sale-price-20261121 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          gh release download vib-manager-0.2.83-purchase-popup-sale-price-20261121 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
           NEW=manager/VIB-SALES-MANAGER.apk
           OLD=previous/VIB-SALES-MANAGER.apk
           test -s "$NEW" && test -s "$OLD"
@@ -996,9 +996,9 @@ jobs:
           "$AAPT" dump badging "$OLD" | grep -m1 '^package:' | tee /tmp/old-manager-package
           grep -F "name='com.alaa.vibsales.managerscan'" /tmp/new-manager-package
           grep -F "name='com.alaa.vibsales.managerscan'" /tmp/old-manager-package
-          grep -F "versionCode='22083'" /tmp/new-manager-package
-          grep -F "versionName='0.2.83'" /tmp/new-manager-package
-          grep -F "versionCode='22082'" /tmp/old-manager-package
+          grep -F "versionCode='22084'" /tmp/new-manager-package
+          grep -F "versionName='0.2.84'" /tmp/new-manager-package
+          grep -F "versionCode='22083'" /tmp/old-manager-package
           "$SIGNER" verify --print-certs "$NEW" | tee /tmp/new-manager-cert
           "$SIGNER" verify --print-certs "$OLD" | tee /tmp/old-manager-cert
           NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-manager-cert | head -1 | tr -d '[:space:]')"
@@ -1007,17 +1007,19 @@ jobs:
           test "$NEW_SHA" = "$OLD_SHA"
           test "$NEW_SHA" = "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f"
           sha256sum "$NEW" > manager/SHA256SUMS.txt
-      - name: Release verified VIB Manager 0.2.83
+      - name: Release verified VIB Manager 0.2.84
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: vib-manager-0.2.83-purchase-popup-sale-price-20261121
+          tag_name: vib-manager-0.2.84-delete-invoices-20261121
           target_commitish: ${{ github.sha }}
-          name: VIB Manager 0.2.83 - Fourth sale price in purchase item dialog
+          name: VIB Manager 0.2.84 - Clear Delete buttons for sales and purchases
           body: |
-            New manager update above 0.2.82 with the same Android app ID and signing key.
-            Editable fourth selling-price box inside the purchase item editor popup, plus
-            the per-line selling-price table column. Changes are confirmed with the item
-            and saved with the invoice and product catalog in one transaction.
+            Manager update above 0.2.83 with the same Android app ID and signing key.
+            Show red Arabic delete buttons next to saved sales and purchase invoices.
+            Cancellation asks for a reason, reverses stock and accounting atomically,
+            and hides cancelled invoices from everyday lists while preserving audit history.
+            Draft invoice item delete now uses visible Arabic text.
+            Preserve the 0.2.83 fourth purchase selling-price field and its behavior.
             Retains purchase draft recovery, below-cost sales guard, and delete-line control.
             Passed repository tests and Android APK compatibility checks.
             Back up your data before installing; actual phone behavior is not yet verified.
