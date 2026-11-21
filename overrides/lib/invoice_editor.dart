@@ -314,7 +314,7 @@ class InvoiceCompactTableHeader extends StatelessWidget {
         style:TextStyle(color:Colors.black,fontSize:11,fontWeight:FontWeight.bold))),
       if(showSellingPrice) const Expanded(flex:3,child:Text('سعر البيع',textAlign:TextAlign.center,
         style:TextStyle(color:Colors.black,fontSize:11,fontWeight:FontWeight.bold))),
-      const SizedBox(width:36,child:Text('مسح',textAlign:TextAlign.center,
+      const SizedBox(width:44,child:Text('مسح',textAlign:TextAlign.center,
         style:TextStyle(color:Colors.black,fontSize:10,fontWeight:FontWeight.bold))),
     ]));
 }
@@ -369,11 +369,12 @@ class InvoiceCompactTableLine extends StatelessWidget {
                 fillColor:belowCost ? const Color(0xFFFFCDD2) : const Color(0xFFFFF9C4),
                 contentPadding:const EdgeInsets.symmetric(horizontal:2,vertical:8),
                 border:const OutlineInputBorder())))),
-          SizedBox(width:36,child:onDelete == null ? const SizedBox.shrink() : IconButton(
+          SizedBox(width:44,child:onDelete == null ? const SizedBox.shrink() : TextButton(
             key:ValueKey('remove-draft-invoice-line-$number'),
-            tooltip:'مسح البند قبل حفظ الفاتورة',padding:EdgeInsets.zero,
-            visualDensity:VisualDensity.compact,iconSize:21,
-            icon:const Icon(Icons.delete_outline,color:Colors.red),onPressed:onDelete)),
+            style:TextButton.styleFrom(foregroundColor:Colors.red,
+              padding:EdgeInsets.zero, visualDensity:VisualDensity.compact),
+            onPressed:onDelete,
+            child:const Text('مسح',style:TextStyle(fontSize:11,fontWeight:FontWeight.bold)))),
         ])));
   }
 }
@@ -398,11 +399,12 @@ class InvoiceCompactReadOnlyLine extends StatelessWidget {
           Expanded(flex:3,child:value(price.toStringAsFixed(2),background:const Color(0xFFB9F6CA))),
           Expanded(flex:2,child:value('$quantity',background:const Color(0xFFFFF59D))),
           Expanded(flex:3,child:value((price*quantity).toStringAsFixed(2),background:const Color(0xFF90CAF9))),
-          SizedBox(width:36,child:onDelete == null ? const SizedBox.shrink() : IconButton(
+          SizedBox(width:44,child:onDelete == null ? const SizedBox.shrink() : TextButton(
             key:ValueKey('remove-draft-invoice-line-$number'),
-            tooltip:'مسح البند قبل حفظ الفاتورة',
-            padding:EdgeInsets.zero,visualDensity:VisualDensity.compact,iconSize:21,
-            icon:const Icon(Icons.delete_outline,color:Colors.red),onPressed:onDelete)),
+            style:TextButton.styleFrom(foregroundColor:Colors.red,
+              padding:EdgeInsets.zero, visualDensity:VisualDensity.compact),
+            onPressed:onDelete,
+            child:const Text('مسح',style:TextStyle(fontSize:11,fontWeight:FontWeight.bold)))),
         ]))));
   }
 }
