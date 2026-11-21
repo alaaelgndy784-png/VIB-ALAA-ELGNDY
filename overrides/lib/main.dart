@@ -75,6 +75,7 @@ part 'staff_purchases.dart';
 part 'voucher_cancellations.dart';
 part 'supplier_payment_legacy_serials.dart';
 part 'sales_invoice_cancellations.dart';
+part 'purchase_invoice_cancellations.dart';
 part 'employee_visits.dart';
 part 'employee_collections.dart';
 part 'return_invoices.dart';
@@ -8626,9 +8627,10 @@ Future<void> returnInvoice(String type, String id,
     {String? expectedSignature, String? expectedCancellationSnapshot,
      String? cancellationReason,
      List<String> cancelledReceiptIds = const []}) async {
-  final cancellingSale = cancellationReason != null;
-  if (cancellingSale && type != 'sales') throw StateError('الإلغاء مخصص للمبيعات فقط');
-  if (cancellingSale && cancellationReason!.trim().length < 5) {
+  final cancelling = cancellationReason != null;
+  final cancellingSale = cancelling && type == 'sales';
+  final cancellingPurchase = cancelling && type == 'purchases';
+  if (cancelling && cancellationReason!.trim().length < 5) {
     throw StateError('سبب الإلغاء مطلوب');
   }
   if (!['sales', 'purchases'].contains(type)) throw StateError('نوع الفاتورة غير صحيح');
@@ -8647,6 +8649,12 @@ Future<void> returnInvoice(String type, String id,
       if (expectedCancellationSnapshot == null ||
           saleCancellationFinancialSnapshot(d) != expectedCancellationSnapshot) {
         throw StateError('تغير إجمالي الفاتورة أو المدفوع أو الأصناف أو العميل فعلًا؛ افتح الفاتورة وراجع بياناتها قبل الإلغاء.');
+      }
+    } else if (cancellingPurchase) {
+      if (expectedSignature == null ||
+          invoiceReturnSignature(d) != expectedSignature ||
+          !purchaseInvoiceCanBeCancelled(d)) {
+        throw StateError('فاتورة المشتريات تغيّرت أو بدأت لها مرتجعات؛ افتحها من جديد قبل الإلغاء.');
       }
     } else if (expectedSignature != null &&
         invoiceReturnSignature(d) != expectedSignature) {
@@ -8859,7 +8867,8 @@ Future<void> returnInvoice(String type, String id,
         tx.set(db.collection('accountMovements').doc(), {'accountType': 'cash', 'kind': 'purchase_return', 'amount': refund, 'delta': refund, 'balanceBefore': cashBefore, 'balanceAfter': cashAfter, 'accountId': d['supplierId'], 'accountName': d['supplierName'], 'referenceId': ret.id, 'reason': 'استرداد نقدية مرتجع مشتريات', 'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
       }
       tx.update(supplierRef, {'balance': supplierAfter, 'updatedAt': now});
-      tx.set(ret, {...d, 'sourceInvoiceId': id, 'returnType': 'full',
+      tx.set(ret, {...d, 'sourceInvoiceId': id, 'returnType': cancellingPurchase ? 'cancellation' : 'full',
+        if (cancellingPurchase) 'cancellationReason': cancellationReason,
         'cashRefund': refund, 'debtReduction': due,
         'balanceBefore': oldBalance, 'balanceAfter': supplierAfter,
         'actorId': FirebaseAuth.instance.currentUser!.uid, 'createdAt': now});
@@ -8875,7 +8884,9 @@ Future<void> returnInvoice(String type, String id,
         'createdAt': now,
         'actorId': FirebaseAuth.instance.currentUser!.uid,
       });
-      tx.update(invoiceRef, {'status': 'returned', 'returnedAt': now, 'returnId': ret.id});
+      tx.update(invoiceRef, {'status': cancellingPurchase ? 'cancelled' : 'returned',
+        if(cancellingPurchase) 'cancelledAt':now,
+        'returnedAt': now, 'returnId': ret.id});
     }
   });
 }
