@@ -7659,6 +7659,14 @@ Future<void> invoiceActions(BuildContext context, String type, String id, Map<St
           Navigator.pop(c);
           await confirmSalesInvoiceCancellation(context, id);
         }),
+    if (type == 'purchases' && profile?['role'] == 'owner' &&
+        purchaseInvoiceCanBeCancelled(data) && visibleAfterReset(data))
+      ListTile(leading: const Icon(Icons.delete_outline, color: Colors.redAccent),
+        title: const Text('مسح فاتورة مشتريات معمولة بالغلط'),
+        onTap: () async {
+          Navigator.pop(c);
+          await confirmPurchaseInvoiceCancellation(context, id);
+        }),
     if (canReturn) ListTile(leading: Icon(Icons.undo, color: returned ? Colors.grey : Colors.redAccent), title: Text(returned ? 'تم إرجاع الفاتورة' : type == 'sales' ? 'إرجاع فاتورة المبيعات' : 'إرجاع فاتورة المشتريات'), enabled: !returned, onTap: returned ? null : () { Navigator.pop(c); confirmReturn(context, type, id, data); }),
   ])));
 }
