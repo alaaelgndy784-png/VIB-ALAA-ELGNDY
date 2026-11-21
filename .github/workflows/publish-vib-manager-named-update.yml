@@ -1,0 +1,37 @@
+name: Publish Distinct VIB Manager 0.2.77 Download Name
+
+on:
+  push:
+    paths:
+      - '.github/workflows/publish-vib-manager-named-update.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish-safe-named-copy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify and publish same signed manager APK with unmistakable filename
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p original-manager
+          gh release download vib-sales-manager-latest --repo "$GITHUB_REPOSITORY" --pattern 'VIB-SALES-MANAGER.apk' --dir original-manager
+          APK=original-manager/VIB-SALES-MANAGER.apk
+          test -s "$APK"
+          echo 'b50bdd7f4c343d724779432acb6172babcb1a160151b36e10837e716f6e39bb3  original-manager/VIB-SALES-MANAGER.apk' | sha256sum --check
+          unzip -t "$APK" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$AAPT" dump badging "$APK" | tee manager-badging.txt | grep -m1 '^package:'
+          grep -F "name='com.alaa.vibsales.managerscan'" manager-badging.txt
+          grep -F "versionCode='12217'" manager-badging.txt
+          grep -F "versionName='0.2.77'" manager-badging.txt
+          "$SIGNER" verify --print-certs "$APK" | tee signer-check.txt
+          grep -F '5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f' signer-check.txt
+          cp "$APK" VIB-MANAGER-UPDATE-0.2.77.apk
+          gh release upload vib-sales-manager-latest VIB-MANAGER-UPDATE-0.2.77.apk --repo "$GITHUB_REPOSITORY" --clobber
+          sha256sum VIB-MANAGER-UPDATE-0.2.77.apk
