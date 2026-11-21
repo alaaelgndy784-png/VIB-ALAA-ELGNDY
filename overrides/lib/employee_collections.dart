@@ -114,7 +114,7 @@ class _EmployeeCollectionInvoiceRow extends StatelessWidget {
       .map((key)=>'${salePaymentMethodLabels[key]} ${(split[key]!).toStringAsFixed(2)}').join(' • ');
     return ListTile(dense:true,title:Text('${data['customerName']??'بدون عميل'}',maxLines:1,overflow:TextOverflow.ellipsis),
       subtitle:Text('فاتورة ${invoiceDisplayNumber('sales',id,data)} • ${formatDate(data['createdAt'])}\n$methods'),
-      isThreeLine:true,trailing:Text('${data['paid']??0} ج.م',style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
+      isThreeLine:true,trailing:Text(vibReceiptCurrency(data['paid']),style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
       onTap:()=>invoiceActions(context,'sales',id,data,canReturn:false));
   }
 }
