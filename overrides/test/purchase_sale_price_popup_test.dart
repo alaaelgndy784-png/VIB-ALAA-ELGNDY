@@ -4,6 +4,11 @@ import '../lib/main.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('manager purchase keeps selling price regardless of navigation owner flag', () {
+    expect(purchaseEditorShowsSalePrice(owner:true, employeeApp:false), isTrue);
+    expect(purchaseEditorShowsSalePrice(owner:false, employeeApp:false), isTrue);
+    expect(purchaseEditorShowsSalePrice(owner:false, employeeApp:true), isFalse);
+  });
   for (final width in [360.0, 564.0]) {
     testWidgets('purchase item modal has fourth editable sale price at $width', (tester) async {
       tester.view.physicalSize = Size(width, 760);
@@ -33,6 +38,7 @@ void main() {
       const priceKey = ValueKey('purchase-item-dialog-sale-price');
       expect(find.byKey(priceKey), findsOneWidget);
       expect(find.text('بيانات الصنف'), findsOneWidget);
+      expect(find.text('مشتريات المدير • 0.2.87'), findsOneWidget);
       expect(tester.takeException(), isNull);
       // Discarded edits must not update the product's price.
       await tester.enterText(find.byKey(priceKey), '9.00');
