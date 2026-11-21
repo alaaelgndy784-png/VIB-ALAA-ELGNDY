@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
   push:
     paths:
-      - '.github/workflows/build-vib-manager-0-2-82-safe.yml'
+      - '.github/workflows/build-vib-manager-0-2-82-actual-source.yml'
 
 jobs:
   verify-rules:
