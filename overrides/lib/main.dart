@@ -4545,9 +4545,11 @@ class ScannedLine {
   String? productId;
   final quantity = TextEditingController(text: '1');
   final cost = TextEditingController();
+  final sellingPrice = TextEditingController();
+  bool sellingPriceEdited = false;
   final discount = PurchaseDiscountDraft();
   ScannedLine({this.productId});
-  void dispose() { quantity.dispose(); cost.dispose(); }
+  void dispose() { quantity.dispose(); cost.dispose(); sellingPrice.dispose(); }
 }
 
 String _ocrKey(String value) => value.toLowerCase().replaceAll(RegExp(r'[^a-z0-9\u0621-\u064a]'), '');
@@ -5121,6 +5123,9 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
       final line = ScannedLine(productId: id);
       line.quantity.text = (item['quantity'] ?? '1').toString();
       line.cost.text = (item['cost'] ?? '').toString();
+      line.sellingPrice.text = (item['sellingPrice'] ??
+          productDocs.firstWhere((doc) => doc.id == id).data()?['price'] ?? '').toString();
+      line.sellingPriceEdited = item['sellingPriceEdited'] == true;
       line.discount.baseCost = (item['baseCost'] as num?)?.toDouble();
       line.discount.percent = (item['discountPercent'] as num?)?.toDouble() ?? 0;
       lines.add(line);
@@ -5140,6 +5145,8 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
         if (line.productId != null) {
           'id': line.productId,
           'quantity': line.quantity.text, 'cost': line.cost.text,
+          'sellingPrice': line.sellingPrice.text,
+          'sellingPriceEdited': line.sellingPriceEdited,
           'baseCost': line.discount.baseCost,
           'discountPercent': line.discount.percent,
         },
@@ -5175,6 +5182,8 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
         final product=productDocs.firstWhere((d)=>d.id == id);
         final row=ScannedLine(productId:id);
         row.cost.text=((product.data()!['purchasePrice'] as num?)?.toDouble() ?? 0).toStringAsFixed(2);
+        final currentSale = product.data()?['price'];
+        row.sellingPrice.text = currentSale is num ? currentSale.toStringAsFixed(2) : '';
         await editSelected(row,adding:true);
       }
       return PurchaseInvoiceExitGuard(
@@ -5182,7 +5191,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
         onDiscard: () => autosave.stop(clear: true),
         child:InvoiceEditorFrame(
         title:checkout ? 'حفظ فاتورة المشتريات' : 'فاتورة مشتريات',checkout:checkout,total:previewTotal,
-        tableMode:true,invoiceNumber:draftNumber,itemCount:lines.length,
+        tableMode:true,purchaseSellingPriceColumn:owner,invoiceNumber:draftNumber,itemCount:lines.length,
         quantityCount:lines.fold<int>(0,(sum,row)=>sum+(int.tryParse(row.quantity.text) ?? 0)),
         headerAction:IgnorePointer(ignoring:saving,child:ChatShortcut(owner:owner)),
         toolbar:Column(children:[
@@ -5197,11 +5206,6 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
           },
         ),
         if(owner) Wrap(alignment:WrapAlignment.end,spacing:8,children:[
-          if(lines.isNotEmpty) OutlinedButton.icon(
-            key:const ValueKey('edit-purchase-selling-price'),
-            onPressed:saving ? null : () => _editPurchaseSellingPrice(c,productDocs,lines),
-            icon:const Icon(Icons.sell_outlined),label:const Text('تعديل سعر البيع'),
-          ),
           TextButton.icon(
             key:const ValueKey('add-purchase-product'),
             onPressed:saving || lines.length >= 50 ? null : () async {
@@ -5243,7 +5247,11 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
         ]) : lines.isEmpty ? const Center(child:Text('اختر صنفًا من البحث أو القائمة')) : ListView(children:[
           for(var i=0;i<lines.length;i++) InvoiceCompactTableLine(
             key:ObjectKey(lines[i]),number:i+1,name:'${productDocs.firstWhere((d)=>d.id==lines[i].productId).data()?['name'] ?? ''}',
-            price:lines[i].cost,quantity:lines[i].quantity,onEdit:saving ? null : ()=>editSelected(lines[i]),
+            price:lines[i].cost,quantity:lines[i].quantity,
+            sellingPrice:owner ? lines[i].sellingPrice : null,
+            sellingPriceEditable:!saving,
+            onSellingPriceChanged:()=>setLocal(()=>lines[i].sellingPriceEdited=true),
+            onEdit:saving ? null : ()=>editSelected(lines[i]),
             onDelete:saving ? null : () => setLocal(() { final removed=lines.removeAt(i); removed.dispose(); }),
           ),
         ]),
@@ -5257,7 +5265,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
             }
             if (!checkout) {setLocal(() => checkout=true);return;}
             if(supplierId.isEmpty) {await showInvoiceSaveProblem(c,'اختر المورد لحفظ الفاتورة في حسابه');return;}
-            final entries = <({String id, int qty, double cost})>[];
+            final entries = <({String id, int qty, double cost, double sellingPrice, bool changeSellingPrice})>[];
             double total = 0;
             for (final row in lines) {
               final qty = int.tryParse(row.quantity.text.trim());
@@ -5266,7 +5274,16 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
                 await showInvoiceSaveProblem(c, 'راجع كل بند: المنتج والكمية والسعر، ولا تكرر نفس المنتج');
                 return;
               }
-              entries.add((id: row.productId!, qty: qty, cost: unitCost));
+              final salePrice = double.tryParse(row.sellingPrice.text.trim().replaceAll(',', '.'));
+              if (owner && row.sellingPriceEdited &&
+                  (salePrice == null || !salePrice.isFinite || salePrice < unitCost)) {
+                await showInvoiceSaveProblem(c,
+                  'سعر البيع المعدل لازم يكون رقم صحيح ومش أقل من سعر الشراء للصنف');
+                return;
+              }
+              entries.add((id: row.productId!, qty: qty, cost: unitCost,
+                sellingPrice: salePrice ?? 0,
+                changeSellingPrice: owner && row.sellingPriceEdited));
               total += qty * unitCost;
             }
             final payment = purchaseInvoicePayment(total, credit, paid.text);
@@ -5291,7 +5308,9 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
             if(!owner) {
               setLocal(()=>saving=true);
               try {
-                final saved=await saveEmployeePurchase(employeePurchaseRef.id,supplierId,entries,payment,invoice.text.trim(),note.text.trim());
+                final saved=await saveEmployeePurchase(employeePurchaseRef.id,supplierId,
+                  [for(final e in entries) (id:e.id,qty:e.qty,cost:e.cost)],
+                  payment,invoice.text.trim(),note.text.trim());
                 try { await autosave.stop(clear: true); } catch (_) {}
                 if(c.mounted)Navigator.pop(c);
                 if(context.mounted)await showInvoiceSavedActions(context,'purchases',employeePurchaseRef.id,saved);
@@ -5302,7 +5321,8 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
             final purchaseRef = managerPurchaseRef;
             final requestKey = jsonEncode({
               'supplierId':supplierId,
-              'items':entries.map((e)=>[e.id,e.qty,e.cost]).toList(),
+              'items':entries.map((e)=>[e.id,e.qty,e.cost,
+                if(e.changeSellingPrice) e.sellingPrice]).toList(),
               'paid':payment,'invoice':invoice.text.trim(),
               'note':note.text.trim(),'markup':increase,
             });
@@ -5353,6 +5373,9 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
                     'quantity': e.qty,
                     'unitCost': e.cost,
                     'lineTotal': lineTotal,
+                    'sellingPriceAtPurchase': e.changeSellingPrice ? e.sellingPrice :
+                      increase != null ? double.parse((e.cost * (1 + increase / 100)).toStringAsFixed(2)) :
+                      (product['price'] as num?)?.toDouble(),
                   });
 
                   tx.set(db.collection('stock').doc('main_${e.id}'), {
@@ -5365,7 +5388,8 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
                     'purchasePrice': e.cost,
                     'lastPurchaseId': purchaseRef.id,
                     'lastPurchaseAt': FieldValue.serverTimestamp(),
-                    if (increase != null) 'price': double.parse((e.cost * (1 + increase / 100)).toStringAsFixed(2)),
+                    if (e.changeSellingPrice) 'price': e.sellingPrice
+                    else if (increase != null) 'price': double.parse((e.cost * (1 + increase / 100)).toStringAsFixed(2)),
                     'updatedAt': FieldValue.serverTimestamp(),
                   });
 
