@@ -476,7 +476,13 @@ class _InvoiceLineEditorDialogState extends State<_InvoiceLineEditorDialog> {
     draftSellingPrice?.text,sellingPriceChanged));
   @override Widget build(BuildContext context)=>Directionality(textDirection:TextDirection.rtl,child:AlertDialog(
     insetPadding:const EdgeInsets.symmetric(horizontal:12,vertical:16),contentPadding:const EdgeInsets.all(10),
-    title:const Text('بيانات الصنف'),
+    title: Column(mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('بيانات الصنف'),
+      if (!widget.saleScreen && !staffApp)
+        const Text('مشتريات المدير • 0.2.87',
+          style: TextStyle(fontSize: 11, color: gold)),
+    ]),
     content:SizedBox(width:450,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
       PurchaseInvoiceLine(number:1,name:widget.name,cost:draftPrice,quantity:draftQuantity,enabled:true,
         sellingPrice:draftSellingPrice,
