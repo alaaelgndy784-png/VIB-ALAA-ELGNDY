@@ -4797,6 +4797,8 @@ class PurchaseInvoiceLine extends StatefulWidget {
   final int number;
   final String name;
   final TextEditingController cost, quantity;
+  final TextEditingController? sellingPrice;
+  final VoidCallback? onSellingPriceChanged;
   final bool enabled;
   final bool priceEditable;
   final bool totalEditable;
@@ -4805,7 +4807,7 @@ class PurchaseInvoiceLine extends StatefulWidget {
   final PurchaseDiscountDraft? discountDraft;
   final VoidCallback onChoose, onDelete, onChanged;
   const PurchaseInvoiceLine({super.key, required this.number, required this.name, required this.cost,
-    required this.quantity, required this.enabled, required this.onChoose, required this.onDelete, required this.onChanged,this.priceEditable = true,this.totalEditable = false,this.discountEditable=false,this.discountDraft,this.showProductActions=true});
+    required this.quantity, this.sellingPrice, this.onSellingPriceChanged, required this.enabled, required this.onChoose, required this.onDelete, required this.onChanged,this.priceEditable = true,this.totalEditable = false,this.discountEditable=false,this.discountDraft,this.showProductActions=true});
   @override
   State<PurchaseInvoiceLine> createState() => _PurchaseInvoiceLineState();
 }
@@ -4959,6 +4961,32 @@ class _PurchaseInvoiceLineState extends State<PurchaseInvoiceLine> {
             FittedBox(fit: BoxFit.scaleDown, child: Text(total.toStringAsFixed(2),
               style:TextStyle(fontSize:14,fontWeight:FontWeight.bold,color:staffApp ? Colors.white : gold))),
           ]))),
+          if (widget.sellingPrice != null) ...[
+            const SizedBox(width: 5),
+            Expanded(flex: 4, child: TextField(
+              key: const ValueKey('purchase-item-dialog-sale-price'),
+              controller: widget.sellingPrice,
+              enabled: enabled,
+              textAlign: TextAlign.center,
+              onTapAlwaysCalled: true,
+              onTap: () => selectInvoiceNumberText(widget.sellingPrice!),
+              keyboardType: const TextInputType.numberWithOptions(decimal:true),
+              style: const TextStyle(fontSize: 13, color: Colors.yellowAccent,
+                fontWeight: FontWeight.bold),
+              decoration: const InputDecoration(
+                labelText: 'سعر البيع',
+                floatingLabelBehavior: FloatingLabelBehavior.always,
+                labelStyle: TextStyle(fontSize: 11, color: Colors.yellowAccent),
+                isDense: true, filled: true, fillColor: Color(0xFF3B3317),
+                contentPadding: EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+                border: OutlineInputBorder(),
+              ),
+              onChanged: (_) {
+                widget.onSellingPriceChanged?.call();
+                onChanged();
+              },
+            )),
+          ],
         ]),
         if(widget.totalEditable || widget.discountEditable) Padding(padding:const EdgeInsets.only(top:6),child:Row(children:[
           IconButton(tooltip:'تقليل نسبة الخصم',onPressed:enabled && (priceEditable || widget.discountEditable) ? ()=>_stepDiscount(-1) : null,
@@ -5171,7 +5199,10 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
       Future<void> editSelected(ScannedLine row, {bool adding=false}) async {
         final product=productDocs.firstWhere((d)=>d.id==row.productId).data()!;
         final result=await showInvoiceLineEditor(c,name:'${product['name'] ?? ''}',price:row.cost,quantity:row.quantity,
-          discount:row.discount,allowDelete:!adding,unitCost:product['purchasePrice'] as num?,stockStream:invoiceMainStock(row.productId!));
+          discount:row.discount,allowDelete:!adding,unitCost:product['purchasePrice'] as num?,
+          stockStream:invoiceMainStock(row.productId!),
+          sellingPrice:owner ? row.sellingPrice : null,
+          onSellingPriceChanged:() => row.sellingPriceEdited=true);
         if(!c.mounted) {if(adding) row.dispose();return;}
         if(result==InvoiceLineEditAction.apply) setLocal(() {if(adding) lines.add(row);});
         else if(result==InvoiceLineEditAction.delete) {setLocal(()=>lines.remove(row));row.dispose();}
