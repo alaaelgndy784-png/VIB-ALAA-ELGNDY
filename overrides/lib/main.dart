@@ -4818,6 +4818,12 @@ Future<String?> pickPurchaseProduct(
 double purchaseInvoicePayment(double total, bool credit, String paid) => credit
     ? double.tryParse(paid.trim().replaceAll(',', '.')) ?? -1 : total;
 
+// The owner-facing purchase editor always includes the selling-price field.
+// Keep it visible in the manager APK even if a future navigation path
+// accidentally passes owner=false; employee app still hides the control.
+bool purchaseEditorShowsSalePrice({required bool owner, required bool employeeApp}) =>
+    owner || !employeeApp;
+
 class PurchaseInvoiceLine extends StatefulWidget {
   final int number;
   final String name;
@@ -5226,7 +5232,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
         final result=await showInvoiceLineEditor(c,name:'${product['name'] ?? ''}',price:row.cost,quantity:row.quantity,
           discount:row.discount,allowDelete:!adding,unitCost:product['purchasePrice'] as num?,
           stockStream:invoiceMainStock(row.productId!),
-          sellingPrice:owner ? row.sellingPrice : null,
+          sellingPrice:purchaseEditorShowsSalePrice(owner:owner,employeeApp:staffApp) ? row.sellingPrice : null,
           onSellingPriceChanged:() => row.sellingPriceEdited=true);
         if(!c.mounted) {if(adding) row.dispose();return;}
         if(result==InvoiceLineEditAction.apply) setLocal(() {if(adding) lines.add(row);});
@@ -5304,8 +5310,8 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
           for(var i=0;i<lines.length;i++) InvoiceCompactTableLine(
             key:ObjectKey(lines[i]),number:i+1,name:'${productDocs.firstWhere((d)=>d.id==lines[i].productId).data()?['name'] ?? ''}',
             price:lines[i].cost,quantity:lines[i].quantity,
-            sellingPrice:owner ? lines[i].sellingPrice : null,
-            sellingPriceEditable:!saving,
+            sellingPrice:purchaseEditorShowsSalePrice(owner:owner,employeeApp:staffApp) ? lines[i].sellingPrice : null,
+            sellingPriceEditable:!saving && owner,
             onSellingPriceChanged:()=>setLocal(()=>lines[i].sellingPriceEdited=true),
             onEdit:saving ? null : ()=>editSelected(lines[i]),
             onDelete:saving ? null : () => setLocal(() { final removed=lines.removeAt(i); removed.dispose(); }),
