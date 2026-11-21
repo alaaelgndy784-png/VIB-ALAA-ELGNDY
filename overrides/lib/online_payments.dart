@@ -117,7 +117,7 @@ class _GeideaPaymentsState extends State<GeideaPayments> {
       ])) );}),
       const Text('عمليات الدفع والرد — أحدث ٥٠ عملية',style:TextStyle(color:gold)),
       for(final raw in transactions)Builder(builder:(context){final row=Map<String,dynamic>.from(raw as Map);return Card(child:ListTile(title:Text('${row['customerName']} • ${geideaState(row['state'])}'),
-        subtitle:Text('فاتورة ${row['invoiceId']}\nسداد ${row['gross']} • رد ${row['refunded']} • صافي ${row['net']} ج.م${row['refundState']=='unknown'?'\nرد غير مؤكد — تحقق من السداد ولا تكرر الطلب':''}'),
+        subtitle:Text('فاتورة ${row['invoiceId']}\nسداد ${vibVoucherMoney(row['gross'])} • رد ${vibVoucherMoney(row['refunded'])} • صافي ${vibVoucherMoney(row['net'])} ج.م${row['refundState']=='unknown'?'\nرد غير مؤكد — تحقق من السداد ولا تكرر الطلب':''}'),
         trailing:enabled && ((row['net'] as num?)??0)>0 && !['unknown','requested'].contains(row['refundState'])?TextButton(onPressed:busy?null:()=>act(()=>refund(row)),child:const Text('رد للكارت')):null));}),
     ]);
   }
