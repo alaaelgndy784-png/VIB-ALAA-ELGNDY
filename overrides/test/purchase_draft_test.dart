@@ -9,6 +9,7 @@ Map<String, dynamic> example(int n) => {
   'invoice': 'supplier-12', 'note': 'طلبية كبيرة', 'markup': '2.5',
   'items': [for (var i = 0; i < n; i++)
     {'id': 'product'+i.toString(), 'quantity': '12', 'cost': '173.55',
+     'sellingPrice': '211.00', 'sellingPriceEdited': true,
      'discountPercent': 0.0, 'baseCost': 173.55}],
 };
 
@@ -27,6 +28,8 @@ void main() {
     expect(restored['markup'], '2.5');
     expect((restored['items'] as List).length, 50);
     expect((restored['items'] as List).last['cost'], '173.55');
+    expect((restored['items'] as List).last['sellingPrice'], '211.00');
+    expect((restored['items'] as List).last['sellingPriceEdited'], isTrue);
     final retry = PurchaseDraftAutosave(store);
     await retry.save(restored);
     expect(store.read()!['id'], restored['id']);
