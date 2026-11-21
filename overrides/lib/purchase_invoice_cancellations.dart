@@ -4,6 +4,12 @@ part of 'main.dart';
 // delete. The original document and its number are retained for the audit.
 bool purchaseInvoiceCanBeCancelled(Map<String, dynamic> invoice) {
   if (invoice['status'] != 'completed') return false;
+  // Legacy one-line imports lack a reliable grouped stock/payment snapshot.
+  // Keep them read-only rather than risking a partial reversal.
+  if (invoice['items'] is! List || (invoice['items'] as List).isEmpty ||
+      invoice['total'] is! num || invoice['paid'] is! num ||
+      invoice['due'] is! num ||
+      '${invoice['supplierId'] ?? ''}'.trim().isEmpty) return false;
   final partialTotal = invoice['partialReturnTotal'];
   if (partialTotal is num && partialTotal > 0) return false;
   final partial = invoice['partialReturnQuantities'];
