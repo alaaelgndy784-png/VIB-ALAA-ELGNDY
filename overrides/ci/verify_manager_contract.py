@@ -62,6 +62,13 @@ checks = [
      "manager purchase keeps selling price" in popup_test),
     ("money rounding tested against the reported value",
      "3499.9800000000005" in money_test and "3,499.98" in money_test),
+    ("receipt voucher UI, PDF and cancellation use one two-decimal renderer",
+     "String vibReceiptCurrency" in main and
+     "Text(vibReceiptCurrency(data['amount'])" in main and
+     "detail('المبلغ المدفوع',vibReceiptCurrency(paid)" in main and
+     "vibReceiptCurrency(displayed['amount'])" in load("overrides/lib/voucher_cancellations.dart") and
+     "vibReceiptCurrency(data['amount'])" in load("overrides/lib/pending_receipts.dart") and
+     "vibReceiptCurrency(data['paid'])" in load("overrides/lib/employee_collections.dart")),
     ("purchase deletion eligibility test retained",
      "purchaseInvoiceCancellationBlockReason" in delete_test),
     ("popup, money, and deletion widget tests run before APK build",
