@@ -1,0 +1,167 @@
+name: Build VIB Manager Update Compatibility Checker
+
+on:
+  push:
+    paths:
+      - '.github/workflows/build-vib-manager-checker.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-checker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Build offline Android package and signature checker
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p checker/src/com/alaa/vibsales/check checker/classes checker/dex
+          cat > checker/AndroidManifest.xml <<'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+              package="com.alaa.vibsales.checker"
+              android:versionCode="1"
+              android:versionName="1.0">
+            <uses-sdk android:minSdkVersion="26" android:targetSdkVersion="35"/>
+            <queries>
+              <package android:name="com.alaa.vibsales.managerscan"/>
+              <package android:name="com.alaa.vibsales.manager"/>
+              <package android:name="com.alaa.vibsales"/>
+              <package android:name="com.alaa.vibsales.managerlite"/>
+              <package android:name="com.alaa.vibsales.staff"/>
+            </queries>
+            <application android:label="VIB فحص التحديث" android:hasCode="true"
+                android:allowBackup="false" android:theme="@android:style/Theme.Material.Light.NoActionBar"
+                android:usesCleartextTraffic="false">
+              <activity android:name="com.alaa.vibsales.check.MainActivity"
+                  android:exported="true" android:screenOrientation="portrait">
+                <intent-filter>
+                  <action android:name="android.intent.action.MAIN"/>
+                  <category android:name="android.intent.category.LAUNCHER"/>
+                </intent-filter>
+              </activity>
+            </application>
+          </manifest>
+          XML
+          cat > checker/src/com/alaa/vibsales/check/MainActivity.java <<'JAVA'
+          package com.alaa.vibsales.check;
+          import android.app.Activity;
+          import android.os.Bundle;
+          import android.content.*;
+          import android.content.pm.*;
+          import android.graphics.Color;
+          import android.graphics.Typeface;
+          import android.view.*;
+          import android.widget.*;
+          import java.security.MessageDigest;
+          import java.util.Locale;
+
+          public class MainActivity extends Activity {
+            private TextView reportView;
+            private String report = "";
+            private final String[] known = {
+              "com.alaa.vibsales.managerscan",
+              "com.alaa.vibsales.manager",
+              "com.alaa.vibsales",
+              "com.alaa.vibsales.managerlite",
+              "com.alaa.vibsales.staff"
+            };
+            @Override public void onCreate(Bundle state) {
+              super.onCreate(state);
+              LinearLayout outer = new LinearLayout(this);
+              outer.setPadding(28, 32, 28, 25);
+              outer.setBackgroundColor(Color.rgb(18, 18, 18));
+              outer.setOrientation(LinearLayout.VERTICAL);
+              outer.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+              TextView title = new TextView(this);
+              title.setText("فحص تحديث VIB Manager");
+              title.setTextColor(Color.rgb(237, 192, 71));
+              title.setTextSize(24); title.setTypeface(null, Typeface.BOLD);
+              outer.addView(title);
+              TextView note = new TextView(this);
+              note.setText("الأداة لا تغيّر أي بيانات. صوّر الشاشة وابعتها في ChatGPT.");
+              note.setTextColor(Color.WHITE); note.setTextSize(16); note.setPadding(0, 16, 0, 20);
+              outer.addView(note);
+              ScrollView scroller = new ScrollView(this);
+              reportView = new TextView(this);
+              reportView.setTextColor(Color.WHITE);
+              reportView.setTextSize(17);
+              reportView.setTextIsSelectable(true);
+              reportView.setTextDirection(View.TEXT_DIRECTION_LTR);
+              scroller.addView(reportView);
+              outer.addView(scroller,new LinearLayout.LayoutParams(-1,0,1));
+              Button copy = new Button(this); copy.setText("نسخ التقرير");
+              copy.setOnClickListener(v -> {
+                ((android.content.ClipboardManager)getSystemService(CLIPBOARD_SERVICE))
+                 .setPrimaryClip(ClipData.newPlainText("VIB check",report));
+                Toast.makeText(this,"تم نسخ التقرير",Toast.LENGTH_LONG).show();
+              });
+              outer.addView(copy);
+              Button share = new Button(this); share.setText("مشاركة التقرير");
+              share.setOnClickListener(v -> {
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType("text/plain");
+                send.putExtra(Intent.EXTRA_TEXT,report);
+                startActivity(Intent.createChooser(send,"مشاركة تقرير VIB"));
+              });
+              outer.addView(share);
+              setContentView(outer);
+              report = inspect();
+              reportView.setText(report);
+            }
+            private String inspect() {
+              StringBuilder sb = new StringBuilder();
+              sb.append("VIB DIAG 1.0\n");
+              int found = 0;
+              PackageManager pm = getPackageManager();
+              for(String pkg: known) {
+                try {
+                  PackageInfo info = pm.getPackageInfo(pkg,PackageManager.GET_SIGNING_CERTIFICATES);
+                  found++;
+                  String label = pm.getApplicationLabel(info.applicationInfo).toString();
+                  sb.append("\nAPP: ").append(label).append("\n");
+                  sb.append("PACKAGE: ").append(pkg).append("\n");
+                  sb.append("VERSION: ").append(info.versionName).append("\n");
+                  sb.append("CODE: ").append(info.getLongVersionCode()).append("\n");
+                  if (info.signingInfo != null) {
+                    android.content.pm.Signature[] sigs=info.signingInfo.getApkContentsSigners();
+                    if(sigs != null && sigs.length > 0){
+                      byte[] digest=MessageDigest.getInstance("SHA-256").digest(sigs[0].toByteArray());
+                      StringBuilder hash=new StringBuilder();
+                      for(byte b:digest) hash.append(String.format(Locale.US,"%02x",b&0xff));
+                      sb.append("SIGNATURE SHA256:\n").append(hash).append("\n");
+                      sb.append("MATCH 0.2.77: ").append(hash.toString().equals("5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f")?"YES":"NO").append("\n");
+                    }
+                  }
+                } catch (PackageManager.NameNotFoundException e) { /* not installed */ }
+                  catch (Exception e){sb.append("ERROR ").append(pkg).append(": ").append(e.getClass().getSimpleName()).append("\n");}
+              }
+              if (found == 0) sb.append("\nNO KNOWN VIB PACKAGE DETECTED\nTake screenshot of app info page.\n");
+              sb.append("\nNEW APK: com.alaa.vibsales.managerscan\nNEW CODE: 12217\n");
+              return sb.toString();
+            }
+          }
+          JAVA
+          PLATFORM="$(find "$ANDROID_HOME/platforms" -type f -name android.jar | sort -V | tail -1)"
+          echo "Using $PLATFORM"
+          javac -source 8 -target 8 -Xlint:-options -classpath "$PLATFORM" -d checker/classes checker/src/com/alaa/vibsales/check/MainActivity.java
+          D8="$(find "$ANDROID_HOME/build-tools" -type f -name d8 | sort -V | tail -1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          ZIPALIGN="$(find "$ANDROID_HOME/build-tools" -type f -name zipalign | sort -V | tail -1)"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$D8" --lib "$PLATFORM" --min-api 26 --output checker/dex checker/classes/com/alaa/vibsales/check/MainActivity.class
+          "$AAPT" package -f -M checker/AndroidManifest.xml -I "$PLATFORM" -F checker/unsigned.apk
+          zip -j -q checker/unsigned.apk checker/dex/classes.dex
+          "$ZIPALIGN" -f 4 checker/unsigned.apk checker/aligned.apk
+          keytool -genkeypair -v -keystore checker/diagnostic.keystore -storepass android -alias diagkey -keypass android -dname "CN=VIB Diagnostic Checker,O=VIB" -keyalg RSA -keysize 2048 -validity 10000
+          "$APKSIGNER" sign --ks checker/diagnostic.keystore --ks-pass pass:android --key-pass pass:android --ks-key-alias diagkey --out VIB-CHECK-UPDATE.apk checker/aligned.apk
+          "$APKSIGNER" verify --verbose --print-certs VIB-CHECK-UPDATE.apk
+          "$AAPT" dump badging VIB-CHECK-UPDATE.apk | grep -m1 '^package:'
+          gh release create vib-manager-diagnostic-20261121 VIB-CHECK-UPDATE.apk --repo "$GITHUB_REPOSITORY" \
+            --title "VIB Manager - Android Update Diagnostic (No data changes)" \
+            --notes "Small offline Android diagnostic app in its own package. It displays installed VIB package, version code, and signing certificate SHA-256. No data access or changes." \
+            --latest=false
