@@ -3426,7 +3426,7 @@ class _SalesState extends State<Sales> {
           style: const TextStyle(color: gold, fontSize: 12, fontWeight: FontWeight.bold))),
       Expanded(child: rows.isEmpty ? const Center(child: Text('لا توجد فواتير في هذا التاريخ')) : ListView(children: rows.map((d) {
         final sale = d.data();
-        final paymentText = sale.containsKey('paid') ? ' • مدفوع ${sale['paid'] ?? 0} • باقي ${sale['due'] ?? 0}' : '';
+        final paymentText = sale.containsKey('paid') ? ' • مدفوع ${vibVoucherMoney(sale['paid'])} • باقي ${vibVoucherMoney(sale['due'])}' : '';
         return Card(child: ListTile(
           leading: const Icon(Icons.receipt_long_outlined, color: gold),
           title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -3435,12 +3435,12 @@ class _SalesState extends State<Sales> {
             Text('رقم الفاتورة: ${invoiceDisplayNumber('sales',d.id,sale)}'),
           ]),
           subtitle: Column(crossAxisAlignment:CrossAxisAlignment.start,mainAxisSize:MainAxisSize.min,children:[
-            Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'cancelled' ? ' • ملغاة بالخطأ' : sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${sale['partialReturnTotal']} ج.م' : ''}'),
+            Text('فرع: ${sale['branchId']} • ${formatDate(sale['createdAt'])}$paymentText${sale['status'] == 'cancelled' ? ' • ملغاة بالخطأ' : sale['status'] == 'returned' ? ' • مرتجعة بالكامل' : ((sale['partialReturnTotal'] as num?) ?? 0) > 0 ? ' • مرتجع جزئي ${vibVoucherMoney(sale['partialReturnTotal'])} ج.م' : ''}'),
             _sellerLabel(sale),
           ]),
           trailing: SizedBox(width: 94, child: Column(
             mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text('${sale['total'] ?? 0} ج.م', maxLines: 1, overflow: TextOverflow.ellipsis,
+            Text('${vibVoucherMoney(sale['total'])} ج.م', maxLines: 1, overflow: TextOverflow.ellipsis,
               style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 12)),
             if (owner && saleInvoiceCanBeCancelled(sale))
               SizedBox(height: 30, child: TextButton.icon(
@@ -4549,7 +4549,7 @@ class _PurchasesState extends State<Purchases>{
             subtitle: Text('${formatDate(p['createdAt'])}${p['status'] == 'returned' ? ' • مرتجع' : ''}${d.grouped ? ' • ${d.sources.length} أصناف أصلية مجمعة' : ''}'),
             trailing: SizedBox(width: 94, child: Column(
               mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
-                Text('${p['total'] ?? 0} ج.م', maxLines: 1,
+                Text('${vibVoucherMoney(p['total'])} ج.م', maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 12)),
                 if (owner)
@@ -7889,7 +7889,7 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
             if(replaceSale && selectedCustomerId!='${data['customerId'] ?? ''}')
               const Text('سيُنقل باقي الفاتورة للعميل الجديد عند الحفظ',
                 style: TextStyle(color:Colors.greenAccent,fontSize:11)),
-            Text('السابق: ${data['total'] ?? 0}  •  مدفوع: ${data['paid'] ?? 0}  •  باقي: ${data['due'] ?? 0}',
+            Text('السابق: ${vibVoucherMoney(data['total'])}  •  مدفوع: ${vibVoucherMoney(data['paid'])}  •  باقي: ${vibVoucherMoney(data['due'])}',
               style: const TextStyle(fontSize: 11)),
             const SizedBox(height: 3),
             for (var i = 0; i < lines.length; i++)
