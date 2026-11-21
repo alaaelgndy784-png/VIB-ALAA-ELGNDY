@@ -109,6 +109,11 @@ String vibVoucherMoney(Object? value, {String missing = '0.00'}) {
 }
 
 
+// One money-rendering entry point for receipt cards, confirmation dialogs,
+// staff collections and printed vouchers. Formatting does NOT write to Firestore.
+String vibReceiptCurrency(Object? value, {String missing = '0.00'}) =>
+    '${vibVoucherMoney(value, missing: missing)} ج.م';
+
 int nextSupplierPaymentVoucherNumber(Object? previous) {
   if (previous == null) return 1;
   if (previous is! int || previous < 0 || previous >= 999999999) {
@@ -5737,7 +5742,7 @@ class ReceiptVouchers extends StatelessWidget {
                     Expanded(child: Text('${data['customerName'] ?? 'عميل غير مسجل'}', maxLines: 1,
                       overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.lightBlueAccent,
                         fontWeight: FontWeight.bold, fontSize: 15))),
-                    const SizedBox(width: 8), Text('${vibVoucherMoney(data['amount'])} ج.م',
+                    const SizedBox(width: 8), Text(vibReceiptCurrency(data['amount']),
                       style: const TextStyle(color: gold, fontWeight: FontWeight.bold)),
                   ]),
                   Padding(padding: const EdgeInsetsDirectional.only(start: 29, top: 4),
@@ -5747,7 +5752,7 @@ class ReceiptVouchers extends StatelessWidget {
                     child: Text('الموظف: ${data['actorName'] ?? 'المدير'}', maxLines: 1,
                       overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 12, color: Colors.white70))),
                   Padding(padding: const EdgeInsetsDirectional.only(start: 29, top: 2),
-                    child: Text('الرصيد بعد القبض: ${vibVoucherMoney(data['balanceAfter'])} ج.م',
+                    child: Text('الرصيد بعد القبض: ${vibReceiptCurrency(data['balanceAfter'])}',
                       style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 13))),
                   Wrap(alignment: WrapAlignment.start, spacing: 2, runSpacing: 0, children: [
                     IconButton(visualDensity: VisualDensity.compact, tooltip: 'إرسال سند القبض PDF للعميل',
@@ -6543,9 +6548,9 @@ Future<Uint8List> createReceiptVoucherPdf(String id,Map<String,dynamic> data,pw.
         pw.Text('استلمنا من العميل /',style:pw.TextStyle(fontSize:14,fontWeight:pw.FontWeight.bold)),
         detail('اسم العميل','${data['customerName']??''}'),
         detail('رقم التليفون','${data['customerPhone']??'غير مسجل'}'),
-        detail('المبلغ المستحق قبل السداد','${vibVoucherMoney(before)} ج.م'),
-        detail('المبلغ المدفوع','${vibVoucherMoney(paid)} ج.م',strong:true),
-        detail('الرصيد المتبقي بعد الدفع','${vibVoucherMoney(after)} ج.م',strong:true),
+        detail('المبلغ المستحق قبل السداد',vibReceiptCurrency(before)),
+        detail('المبلغ المدفوع',vibReceiptCurrency(paid),strong:true),
+        detail('الرصيد المتبقي بعد الدفع',vibReceiptCurrency(after),strong:true),
         detail('طريقة الدفع','${data['paymentMethod']??'نقدي'}'),
         if('${data['note']??''}'.trim().isNotEmpty)detail('البيان','${data['note']}'),
         pw.SizedBox(height:20),
