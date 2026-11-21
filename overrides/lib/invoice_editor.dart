@@ -411,54 +411,73 @@ enum InvoiceLineEditAction { apply, delete }
 class _InvoiceLineEditorResult {
   final InvoiceLineEditAction action;
   final String price,quantity;
+  final String? sellingPrice;
+  final bool sellingPriceChanged;
   final double? baseCost;
   final double percent;
-  _InvoiceLineEditorResult(this.action,this.price,this.quantity,this.baseCost,this.percent);
+  _InvoiceLineEditorResult(this.action,this.price,this.quantity,this.baseCost,this.percent,
+    this.sellingPrice,this.sellingPriceChanged=false);
 }
 
 Future<InvoiceLineEditAction?> showInvoiceLineEditor(BuildContext context, {
   required String name,required TextEditingController price,required TextEditingController quantity,
   required PurchaseDiscountDraft discount, bool priceEditable=true,bool allowDelete=false,
   num? unitCost,Stream<int?>? stockStream,bool saleScreen=false,
+  TextEditingController? sellingPrice, VoidCallback? onSellingPriceChanged,
 }) async {
   final result=await showDialog<_InvoiceLineEditorResult>(context:context,barrierDismissible:false,
     builder:(_)=>_InvoiceLineEditorDialog(name:name,initialPrice:price.text,initialQuantity:quantity.text,
       baseCost:discount.baseCost,percent:discount.percent,priceEditable:priceEditable,
-      allowDelete:allowDelete,unitCost:unitCost,stockStream:stockStream,saleScreen:saleScreen));
+      allowDelete:allowDelete,unitCost:unitCost,stockStream:stockStream,saleScreen:saleScreen,
+      initialSellingPrice:sellingPrice?.text));
   if(result?.action==InvoiceLineEditAction.apply) {
     quantity.text=result!.quantity;price.text=result.price;
     discount.baseCost=result.baseCost;discount.percent=result.percent;
+    if (sellingPrice != null && result.sellingPriceChanged && result.sellingPrice != null) {
+      sellingPrice.text = result.sellingPrice!;
+      onSellingPriceChanged?.call();
+    }
   }
   return result?.action;
 }
 
 class _InvoiceLineEditorDialog extends StatefulWidget {
   final String name,initialPrice,initialQuantity;
+  final String? initialSellingPrice;
   final double? baseCost;
   final double percent;
   final bool priceEditable,allowDelete,saleScreen;
   final num? unitCost;
   final Stream<int?>? stockStream;
   const _InvoiceLineEditorDialog({required this.name,required this.initialPrice,required this.initialQuantity,
-    required this.baseCost,required this.percent,required this.priceEditable,required this.allowDelete,this.unitCost,this.stockStream,this.saleScreen=false});
+    required this.baseCost,required this.percent,required this.priceEditable,required this.allowDelete,this.unitCost,this.stockStream,
+    this.saleScreen=false,this.initialSellingPrice});
   @override State<_InvoiceLineEditorDialog> createState()=>_InvoiceLineEditorDialogState();
 }
 
 class _InvoiceLineEditorDialogState extends State<_InvoiceLineEditorDialog> {
   late final TextEditingController draftPrice,draftQuantity;
+  TextEditingController? draftSellingPrice;
   late final PurchaseDiscountDraft draftDiscount;
   @override void initState() {
     super.initState();draftPrice=TextEditingController(text:widget.initialPrice);draftQuantity=TextEditingController(text:widget.initialQuantity);
+    if (widget.initialSellingPrice != null) {
+      draftSellingPrice = TextEditingController(text:widget.initialSellingPrice);
+    }
     draftDiscount=PurchaseDiscountDraft()..baseCost=widget.baseCost..percent=widget.percent;
   }
-  @override void dispose() {draftPrice.dispose();draftQuantity.dispose();super.dispose();}
+  @override void dispose() {draftPrice.dispose();draftQuantity.dispose();draftSellingPrice?.dispose();super.dispose();}
+  bool get sellingPriceChanged => draftSellingPrice != null &&
+    draftSellingPrice!.text.trim() != widget.initialSellingPrice!.trim();
   void finish(InvoiceLineEditAction action)=>Navigator.pop(context,_InvoiceLineEditorResult(
-    action,draftPrice.text,draftQuantity.text,draftDiscount.baseCost,draftDiscount.percent));
+    action,draftPrice.text,draftQuantity.text,draftDiscount.baseCost,draftDiscount.percent,
+    draftSellingPrice?.text,sellingPriceChanged));
   @override Widget build(BuildContext context)=>Directionality(textDirection:TextDirection.rtl,child:AlertDialog(
     insetPadding:const EdgeInsets.symmetric(horizontal:12,vertical:16),contentPadding:const EdgeInsets.all(10),
     title:const Text('بيانات الصنف'),
     content:SizedBox(width:450,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
       PurchaseInvoiceLine(number:1,name:widget.name,cost:draftPrice,quantity:draftQuantity,enabled:true,
+        sellingPrice:draftSellingPrice,
         priceEditable:widget.priceEditable,totalEditable:widget.priceEditable,discountEditable:widget.saleScreen,discountDraft:draftDiscount,showProductActions:false,
         onChoose:() {},onDelete:() {},onChanged:()=>setState(() {})),
       if(widget.stockStream!=null) StreamBuilder<int?>(stream:widget.stockStream,builder:(context,snapshot)=>Text(
@@ -473,6 +492,15 @@ class _InvoiceLineEditorDialogState extends State<_InvoiceLineEditorDialog> {
         final q=int.tryParse(draftQuantity.text.trim()),p=double.tryParse(draftPrice.text.trim().replaceAll(',', '.'));
         if(q==null || q<=0 || p==null || !p.isFinite || p<0) {
           await showInvoiceSaveProblem(context,'أدخل عددًا أكبر من صفر وسعرًا صحيحًا',title:'بيانات الصنف',button:'رجوع للصنف');return;
+        }
+        if (sellingPriceChanged) {
+          final sale = double.tryParse(draftSellingPrice!.text.trim().replaceAll(',', '.'));
+          if (sale == null || !sale.isFinite || sale < p) {
+            await showInvoiceSaveProblem(context,
+              'سعر البيع الجديد لازم يكون رقم صحيح ومش أقل من سعر الشراء',
+              title:'سعر البيع',button:'رجوع للصنف');
+            return;
+          }
         }
         finish(InvoiceLineEditAction.apply);
       },child:const Text('متابعة')),
