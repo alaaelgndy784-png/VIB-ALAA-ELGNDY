@@ -5,6 +5,7 @@ class InvoiceEditorFrame extends StatelessWidget {
   final bool checkout;
   final double total;
   final bool tableMode;
+  final bool purchaseSellingPriceColumn;
   final int itemCount, quantityCount;
   final String invoiceNumber;
   final Widget body;
@@ -13,7 +14,7 @@ class InvoiceEditorFrame extends StatelessWidget {
   final Widget? entryStatus;
   final List<Widget> actions;
   const InvoiceEditorFrame({super.key,required this.title,required this.checkout,required this.total,
-    required this.body,required this.actions,this.toolbar,this.headerAction,this.entryStatus,this.tableMode=false,
+    required this.body,required this.actions,this.toolbar,this.headerAction,this.entryStatus,this.tableMode=false,this.purchaseSellingPriceColumn=false,
     this.itemCount=0,this.quantityCount=0,this.invoiceNumber='يُخصص عند الحفظ'});
   @override Widget build(BuildContext context) => tableMode ? _tableFrame(context) : Dialog(
     backgroundColor:const Color(0xFF080808),insetPadding:const EdgeInsets.symmetric(horizontal:6,vertical:10),
@@ -51,7 +52,7 @@ class InvoiceEditorFrame extends StatelessWidget {
             ])),
           if(toolbar != null) Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: toolbar!),
           if (entryStatus != null) entryStatus!,
-          const InvoiceCompactTableHeader(),
+          InvoiceCompactTableHeader(showSellingPrice:purchaseSellingPriceColumn),
         ],
         Expanded(child: checkout ? body : Container(color: Colors.white,
           child: DefaultTextStyle.merge(style: const TextStyle(color: Colors.black), child: body))),
@@ -296,15 +297,25 @@ class _InvoiceProductSearchListState extends State<InvoiceProductSearchList> {
 
 
 class InvoiceCompactTableHeader extends StatelessWidget {
-  const InvoiceCompactTableHeader({super.key});
-  @override Widget build(BuildContext context) => Container(color: gold, padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-    child: const Row(textDirection: TextDirection.rtl, children: [
-      SizedBox(width: 22, child: Text('م', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 11))),
-      Expanded(flex: 5, child: Text('المنتج', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold))),
-      Expanded(flex: 3, child: Text('السعر', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold))),
-      Expanded(flex: 2, child: Text('العدد', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold))),
-      Expanded(flex: 3, child: Text('الإجمالي', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 12, fontWeight: FontWeight.bold))),
-      SizedBox(width: 36, child: Text('مسح', textAlign: TextAlign.center, style: TextStyle(color: Colors.black, fontSize: 10, fontWeight: FontWeight.bold))),
+  final bool showSellingPrice;
+  const InvoiceCompactTableHeader({super.key, this.showSellingPrice=false});
+  @override Widget build(BuildContext context) => Container(
+    color: gold, padding: const EdgeInsets.symmetric(vertical:8,horizontal:4),
+    child: Row(textDirection:TextDirection.rtl,children:[
+      const SizedBox(width:22,child:Text('م',textAlign:TextAlign.center,
+        style:TextStyle(color:Colors.black,fontSize:11))),
+      const Expanded(flex:5,child:Text('المنتج',textAlign:TextAlign.center,
+        style:TextStyle(color:Colors.black,fontSize:12,fontWeight:FontWeight.bold))),
+      Expanded(flex:3,child:Text(showSellingPrice ? 'سعر الشراء' : 'السعر',
+        textAlign:TextAlign.center,style:const TextStyle(color:Colors.black,fontSize:11,fontWeight:FontWeight.bold))),
+      const Expanded(flex:2,child:Text('الكمية',textAlign:TextAlign.center,
+        style:TextStyle(color:Colors.black,fontSize:11,fontWeight:FontWeight.bold))),
+      const Expanded(flex:3,child:Text('الإجمالي',textAlign:TextAlign.center,
+        style:TextStyle(color:Colors.black,fontSize:11,fontWeight:FontWeight.bold))),
+      if(showSellingPrice) const Expanded(flex:3,child:Text('سعر البيع',textAlign:TextAlign.center,
+        style:TextStyle(color:Colors.black,fontSize:11,fontWeight:FontWeight.bold))),
+      const SizedBox(width:36,child:Text('مسح',textAlign:TextAlign.center,
+        style:TextStyle(color:Colors.black,fontSize:10,fontWeight:FontWeight.bold))),
     ]));
 }
 
@@ -312,12 +323,58 @@ class InvoiceCompactTableLine extends StatelessWidget {
   final int number;
   final String name;
   final TextEditingController price, quantity;
+  final TextEditingController? sellingPrice;
+  final bool sellingPriceEditable;
+  final VoidCallback? onSellingPriceChanged;
   final VoidCallback? onEdit, onDelete;
-  const InvoiceCompactTableLine({super.key,required this.number,required this.name,required this.price,required this.quantity,this.onEdit,this.onDelete});
+  const InvoiceCompactTableLine({super.key,required this.number,required this.name,
+    required this.price,required this.quantity,this.sellingPrice,
+    this.sellingPriceEditable=true,this.onSellingPriceChanged,this.onEdit,this.onDelete});
   @override Widget build(BuildContext context) {
     final p=double.tryParse(price.text.trim().replaceAll(',', '.')) ?? 0;
     final q=int.tryParse(quantity.text.trim()) ?? 0;
-    return InvoiceCompactReadOnlyLine(number:number,name:name,price:p,quantity:q,onTap:onEdit,onDelete:onDelete);
+    if(sellingPrice == null) {
+      return InvoiceCompactReadOnlyLine(number:number,name:name,price:p,quantity:q,
+        onTap:onEdit,onDelete:onDelete);
+    }
+    Widget value(String content, Color background) => Container(
+      margin:const EdgeInsets.all(2),padding:const EdgeInsets.symmetric(vertical:7,horizontal:2),
+      decoration:BoxDecoration(color:background,border:Border.all(color:const Color(0xFFD4D4D4))),
+      child:FittedBox(fit:BoxFit.scaleDown,child:Text(content,
+        style:const TextStyle(color:Colors.black,fontSize:12,fontWeight:FontWeight.w600))));
+    final sale=double.tryParse(sellingPrice!.text.trim().replaceAll(',', '.'));
+    final belowCost=sale != null && sale < p;
+    return Material(color:number.isOdd ? Colors.white : const Color(0xFFF5F4F0),
+      child:Container(padding:const EdgeInsets.symmetric(vertical:8,horizontal:4),
+        decoration:const BoxDecoration(border:Border(bottom:BorderSide(color:Color(0xFFDDDDDD)))),
+        child:Row(textDirection:TextDirection.rtl,children:[
+          SizedBox(width:22,child:Text('$number',textAlign:TextAlign.center,
+            style:const TextStyle(color:Colors.black54,fontSize:11))),
+          Expanded(flex:5,child:InkWell(onTap:onEdit,child:Text(name,
+            textDirection:TextDirection.rtl,style:const TextStyle(color:Color(0xFF0056B3),fontSize:12)))),
+          Expanded(flex:3,child:InkWell(onTap:onEdit,
+            child:value(p.toStringAsFixed(2),const Color(0xFFB9F6CA)))),
+          Expanded(flex:2,child:InkWell(onTap:onEdit,
+            child:value('$q',const Color(0xFFFFF59D)))),
+          Expanded(flex:3,child:InkWell(onTap:onEdit,
+            child:value((p*q).toStringAsFixed(2),const Color(0xFF90CAF9)))),
+          Expanded(flex:3,child:Padding(padding:const EdgeInsets.symmetric(horizontal:2),
+            child:TextField(key:ValueKey('purchase-sale-price-$number'),controller:sellingPrice,
+              enabled:sellingPriceEditable,textAlign:TextAlign.center,
+              style:const TextStyle(color:Colors.black,fontSize:12,fontWeight:FontWeight.bold),
+              keyboardType:const TextInputType.numberWithOptions(decimal:true),
+              onTap:()=>selectInvoiceNumberText(sellingPrice!),
+              onChanged:(_)=>onSellingPriceChanged?.call(),
+              decoration:InputDecoration(isDense:true,filled:true,
+                fillColor:belowCost ? const Color(0xFFFFCDD2) : const Color(0xFFFFF9C4),
+                contentPadding:const EdgeInsets.symmetric(horizontal:2,vertical:8),
+                border:const OutlineInputBorder())))),
+          SizedBox(width:36,child:onDelete == null ? const SizedBox.shrink() : IconButton(
+            key:ValueKey('remove-draft-invoice-line-$number'),
+            tooltip:'مسح البند قبل حفظ الفاتورة',padding:EdgeInsets.zero,
+            visualDensity:VisualDensity.compact,iconSize:21,
+            icon:const Icon(Icons.delete_outline,color:Colors.red),onPressed:onDelete)),
+        ])));
   }
 }
 
