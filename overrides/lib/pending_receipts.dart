@@ -197,7 +197,10 @@ Future<void> createPendingReceiptVoucher(BuildContext context,String branchId,{S
         TextButton(onPressed:saving?null:()=>Navigator.pop(dialog),child:const Text('إلغاء')),
         FilledButton(onPressed:saving?null:() async {
           final paid=parseReceiptAmount(amount.text),id=customerId;
-          if(id==null||paid==null||paid<=0){update(()=>error='اختر العميل واكتب مبلغًا صحيحًا أكبر من صفر.');return;}
+          if(id==null||paid==null||!paid.isFinite||paid<=0){update(()=>error='اختر العميل واكتب مبلغًا صحيحًا أكبر من صفر.');return;}
+          final paidCents=(paid*100).round();
+          if(paidCents<=0){update(()=>error='المبلغ أقل من قرش واحد');return;}
+          final roundedPaid=paidCents/100;
           update(() { saving=true; error=null; });
           try {
             final uid=FirebaseAuth.instance.currentUser!.uid,date=Timestamp.fromDate(receiptDate);
@@ -207,15 +210,15 @@ Future<void> createPendingReceiptVoucher(BuildContext context,String branchId,{S
               if(profile?['active']!=true||profile?['role']!='employee'||'${profile?['branchId']??''}'!=branchId)
                 throw StateError('حساب الموظف غير مفعل أو الفرع غير صحيح');
               if(customer==null||customer['active']==false)throw StateError('العميل غير موجود أو غير نشط');
-              final balance=(customer['balance'] as num?)?.toDouble()??0;
-              if(paid>balance)throw StateError('المبلغ أكبر من مديونية العميل الحالية');
+              final balanceCents=(((customer['balance'] as num?)??0)*100).round();
+              if(paidCents>balanceCents)throw StateError('المبلغ أكبر من مديونية العميل الحالية');
               tx.set(request,{
                 'id':request.id,'employeeId':uid,'actorName':'${profile?['name']??''}','branchId':branchId,
                 'customerId':id,'customerName':'${customer['name']??''}','customerPhone':'${customer['phone']??''}',
-                'amount':paid,'receiptDate':date,
+                'amount':roundedPaid,'receiptDate':date,
                 'receiptNumber':'بانتظار الاعتماد',
                 'paymentMethod':method,'note':note.text.trim(),'status':'pending','createdAt':FieldValue.serverTimestamp(),
-                'requestKey':jsonEncode({'customerId':id,'amount':paid,'date':date.millisecondsSinceEpoch,'method':method,'note':note.text.trim()}),
+                'requestKey':jsonEncode({'customerId':id,'amount':roundedPaid,'date':date.millisecondsSinceEpoch,'method':method,'note':note.text.trim()}),
               });
             });
             if(dialog.mounted)Navigator.pop(dialog);
@@ -249,22 +252,26 @@ Future<void> approvePendingReceiptVoucher(BuildContext context,DocumentReference
       if(employee?['active']!=true||employee?['role']!='employee'||employee?['branchId']!=pending['branchId'])
         throw StateError('حساب الموظف غير مفعل أو الفرع تغيّر');
       if(customer==null||customer['active']==false)throw StateError('العميل غير موجود أو غير نشط');
-      final amount=(pending['amount'] as num?)?.toDouble()??0,balance=(customer['balance'] as num?)?.toDouble()??0;
-      if(!amount.isFinite||amount<=0||amount>balance)throw StateError('المبلغ أكبر من مديونية العميل الحالية');
-      final cashBefore=(cash?['balance'] as num?)?.toDouble()??0,cashAfter=cashBefore+amount;
+      final rawAmount=(pending['amount'] as num?)?.toDouble()??0;
+      if(!rawAmount.isFinite||rawAmount<=0)throw StateError('قيمة السند غير صحيحة');
+      final amountCents=(rawAmount*100).round(), balanceCents=(((customer['balance'] as num?)??0)*100).round();
+      if(amountCents<=0||amountCents>balanceCents)throw StateError('المبلغ أكبر من مديونية العميل الحالية');
+      final cashBeforeCents=(((cash?['balance'] as num?)??0)*100).round();
+      final amount=amountCents/100,balance=balanceCents/100,remaining=(balanceCents-amountCents)/100;
+      final cashBefore=cashBeforeCents/100,cashAfter=(cashBeforeCents+amountCents)/100;
       final name='${employee?['name']??pending['actorName']??''}',customerName='${customer['name']??''}';
       final phone='${customer['phone']??''}',cm=db.collection('accountMovements').doc('${ref.id}_customer');
       final km=db.collection('accountMovements').doc('${ref.id}_cash'),now=FieldValue.serverTimestamp();
-      tx.update(customerRef,{'balance':balance-amount,'lastReceiptId':ref.id,'updatedAt':now});
+      tx.update(customerRef,{'balance':remaining,'lastReceiptId':ref.id,'updatedAt':now});
       tx.set(cashRef,{'balance':cashAfter,'lastReceiptId':ref.id,'updatedAt':now},SetOptions(merge:true));
       tx.set(receiptCounterRef,{'lastNumber':receiptNumber,'updatedAt':now},SetOptions(merge:true));
       tx.set(receiptRef,{'customerId':customerId,'customerName':customerName,'customerPhone':phone,
-        'receiptDate':pending['receiptDate'],'createdAt':now,'amount':amount,'balanceBefore':balance,'balanceAfter':balance-amount,
+        'receiptDate':pending['receiptDate'],'createdAt':now,'amount':amount,'balanceBefore':balance,'balanceAfter':remaining,
         'cashBefore':cashBefore,'cashAfter':cashAfter,'actorId':employeeId,'actorName':name,
         'branchId':pending['branchId'],'note':pending['note']??'','paymentMethod':pending['paymentMethod']??'نقدي',
         'receiptNumber':'$receiptNumber','customerMovementId':cm.id,'cashMovementId':km.id});
       tx.set(cm,{'accountType':'customers','accountId':customerId,'accountName':customerName,'kind':'collection',
-        'amount':amount,'balanceBefore':balance,'balanceAfter':balance-amount,'referenceId':ref.id,
+        'amount':amount,'balanceBefore':balance,'balanceAfter':remaining,'referenceId':ref.id,
         'actorId':employeeId,'branchId':pending['branchId'],'createdAt':now,'receiptDate':pending['receiptDate']});
       tx.set(km,{'accountType':'cash','accountId':customerId,'accountName':customerName,'kind':'customerCollection',
         'amount':amount,'delta':amount,'balanceBefore':cashBefore,'balanceAfter':cashAfter,'referenceId':ref.id,
