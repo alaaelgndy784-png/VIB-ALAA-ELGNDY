@@ -9062,7 +9062,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
   }
 
   Widget _ledgerCell(String value,double width,{bool heading=false,Color? tint,bool bold=false}) =>
-    Container(width:width,minHeight:40,
+    Container(width:width,constraints:const BoxConstraints(minHeight:40),
       padding:const EdgeInsets.symmetric(horizontal:4,vertical:8),
       alignment:Alignment.center,
       decoration:BoxDecoration(
