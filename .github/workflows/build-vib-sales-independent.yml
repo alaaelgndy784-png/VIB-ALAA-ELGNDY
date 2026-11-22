@@ -171,10 +171,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 22089/; s/versionName = .*/versionName = "0.2.89"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 22089' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.89"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=22089 --build-name=0.2.89
+          sed -i -E 's/versionCode = .*/versionCode = 22090/; s/versionName = .*/versionName = "0.2.90"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 22090' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.90"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=22090 --build-name=0.2.90
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
           if [ "${{ matrix.app }}" = manager ]; then
@@ -183,8 +183,8 @@ jobs:
             BADGING="$($AAPT dump badging dist/VIB-SALES-MANAGER.apk | head -n 1)"
             echo "$BADGING"
             grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-            grep -F "versionCode='24089'" <<< "$BADGING"
-            grep -F "versionName='0.2.89'" <<< "$BADGING"
+            grep -F "versionCode='24090'" <<< "$BADGING"
+            grep -F "versionName='0.2.90'" <<< "$BADGING"
             SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             test -x "$SIGNER"
             "$SIGNER" verify --print-certs dist/VIB-SALES-MANAGER.apk > dist/signature-check.txt
@@ -1261,6 +1261,61 @@ jobs:
             Editing a selling price applies it to the product only if explicitly changed.
             Purchase costs, stocks, cancellation controls and invoice history are preserved.
             The automated build checks cannot replace validation on the user's actual phone.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
+
+  publish-manager-outer-purchase-sale-price-0-2-90:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/fix/manager-purchase-outer-sale-column-0-2-90-20261122'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tested Manager 0.2.90 APK
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+      - name: Confirm safe update over Manager 0.2.89
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.89-piastres-purchase-edits-20261122 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=previous/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          "$AAPT" dump badging "$NEW" | grep -m1 '^package:' | tee /tmp/new-manager-package
+          "$AAPT" dump badging "$OLD" | grep -m1 '^package:' | tee /tmp/old-manager-package
+          grep -F "name='com.alaa.vibsales.managerscan'" /tmp/new-manager-package
+          grep -F "name='com.alaa.vibsales.managerscan'" /tmp/old-manager-package
+          grep -F "versionCode='24090'" /tmp/new-manager-package
+          grep -F "versionName='0.2.90'" /tmp/new-manager-package
+          grep -F "versionCode='24089'" /tmp/old-manager-package
+          "$SIGNER" verify --print-certs "$NEW" | tee /tmp/new-manager-cert
+          "$SIGNER" verify --print-certs "$OLD" | tee /tmp/old-manager-cert
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-manager-cert | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-manager-cert | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA" && test "$NEW_SHA" = "$OLD_SHA"
+          test "$NEW_SHA" = "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+      - name: Release verified Manager 0.2.90
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.90-purchase-outer-sale-column-20261122
+          target_commitish: ${{ github.sha }}
+          name: VIB Manager 0.2.90 - Fourth Selling Price Column
+          body: |
+            In-place manager update above 0.2.89, same package and signing certificate.
+            Outer purchase invoice table shows selling-price column like the item dialog.
+            Manager purchase four-column display guarded against missing owner flag.
+            Preserves selling price floor validation, receipts, stocks, existing invoices
+            and financial data. User phone validation still required.
           files: |
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
