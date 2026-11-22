@@ -171,10 +171,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 22088/; s/versionName = .*/versionName = "0.2.88"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 22088' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.88"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=22088 --build-name=0.2.88
+          sed -i -E 's/versionCode = .*/versionCode = 22089/; s/versionName = .*/versionName = "0.2.89"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 22089' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.89"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=22089 --build-name=0.2.89
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
           if [ "${{ matrix.app }}" = manager ]; then
@@ -183,8 +183,8 @@ jobs:
             BADGING="$($AAPT dump badging dist/VIB-SALES-MANAGER.apk | head -n 1)"
             echo "$BADGING"
             grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-            grep -F "versionCode='24088'" <<< "$BADGING"
-            grep -F "versionName='0.2.88'" <<< "$BADGING"
+            grep -F "versionCode='24089'" <<< "$BADGING"
+            grep -F "versionName='0.2.89'" <<< "$BADGING"
             SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             test -x "$SIGNER"
             "$SIGNER" verify --print-certs dist/VIB-SALES-MANAGER.apk > dist/signature-check.txt
@@ -1209,23 +1209,23 @@ jobs:
             manager/SHA256SUMS.txt
           make_latest: false
 
-  publish-manager-receipt-piastres-0-2-88:
-    needs: build
-    if: github.ref == 'refs/heads/fix/manager-receipt-money-two-decimals-0-2-88-20261121'
+  publish-manager-receipt-cents-purchase-edit-0-2-89:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/fix/manager-receipt-cents-purchase-edit-0-2-89-20261122'
     runs-on: ubuntu-latest
     steps:
-      - name: Download tested manager 0.2.88
+      - name: Download tested manager 0.2.89
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
           path: manager
-      - name: Verify in-place update above Manager 0.2.87
+      - name: Verify update over Manager 0.2.88 without clearing data
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p previous
-          gh release download vib-manager-0.2.87-stable-purchase-sale-price-20261121 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          gh release download vib-manager-0.2.88-receipt-money-two-decimals-20261121 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
           NEW=manager/VIB-SALES-MANAGER.apk
           OLD=previous/VIB-SALES-MANAGER.apk
           test -s "$NEW" && test -s "$OLD"
@@ -1237,33 +1237,30 @@ jobs:
           "$AAPT" dump badging "$OLD" | grep -m1 '^package:' | tee /tmp/old-manager-package
           grep -F "name='com.alaa.vibsales.managerscan'" /tmp/new-manager-package
           grep -F "name='com.alaa.vibsales.managerscan'" /tmp/old-manager-package
-          grep -F "versionCode='24088'" /tmp/new-manager-package
-          grep -F "versionName='0.2.88'" /tmp/new-manager-package
-          grep -F "versionCode='22087'" /tmp/old-manager-package
+          grep -F "versionCode='24089'" /tmp/new-manager-package
+          grep -F "versionName='0.2.89'" /tmp/new-manager-package
+          grep -F "versionCode='24088'" /tmp/old-manager-package
           "$SIGNER" verify --print-certs "$NEW" | tee /tmp/new-manager-cert
           "$SIGNER" verify --print-certs "$OLD" | tee /tmp/old-manager-cert
           NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-manager-cert | head -1 | tr -d '[:space:]')"
           OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-manager-cert | head -1 | tr -d '[:space:]')"
-          test -n "$NEW_SHA"
-          test "$NEW_SHA" = "$OLD_SHA"
+          test -n "$NEW_SHA" && test "$NEW_SHA" = "$OLD_SHA"
           test "$NEW_SHA" = "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f"
           sha256sum "$NEW" > manager/SHA256SUMS.txt
-      - name: Release verified VIB Manager 0.2.88
+      - name: Publish manager 0.2.89 only after all safety checks pass
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: vib-manager-0.2.88-receipt-money-two-decimals-20261121
+          tag_name: vib-manager-0.2.89-piastres-purchase-edits-20261122
           target_commitish: ${{ github.sha }}
-          name: VIB Manager 0.2.88 - Receipt Voucher Money Display
+          name: VIB Manager 0.2.89 — Receipt Piastres and Purchase Edit Sale Price
           body: |
-            Manager update above 0.2.84 with the same Android app ID and signing key.
-            Show red Arabic delete on all purchase invoice rows, including full invoice history.\n            Every receipt voucher amount in cards, PDFs, pending approvals, cancellation\n            confirmation and employee collections uses consistent two-decimal formatting.
-            Cancellation asks for a reason, reverses stock and accounting atomically,
-            and hides cancelled invoices from everyday lists while preserving audit history.
-            Draft invoice item delete now uses visible Arabic text.
-            Preserve the 0.2.84 fourth purchase selling-price field and its behavior.
-            Retains purchase draft recovery, below-cost sales guard, and delete-line control.
-            Passed repository tests and Android APK compatibility checks.
-            Back up your data before installing; actual phone behavior is not yet verified.
+            Update on top of Manager 0.2.88; same package and Android signing certificate.
+            New manager receipts and staff approved receipts perform money arithmetic in piastres.
+            Old receipts keep their original Firestore data and display only two decimal places.
+            Both new purchases and edits of existing purchase invoices show a separate sale-price field.
+            Editing a selling price applies it to the product only if explicitly changed.
+            Purchase costs, stocks, cancellation controls and invoice history are preserved.
+            The automated build checks cannot replace validation on the user's actual phone.
           files: |
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
