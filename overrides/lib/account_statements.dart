@@ -149,110 +149,138 @@ ProductPeriodTotals summarizeProductPeriod(List<Map<String,dynamic>> rows,int cu
   final recorded=latest.values.fold<int>(0,(sum,row)=>sum+((row['balanceAfter'] as num?)?.toInt() ?? 0));
   return ProductPeriodTotals(opening,closing,current,incoming,outgoing,current-recorded);
 }
+
+// One chronological, read-only stock ledger for the on-screen report and A4.
+class VibProductLedgerLine {
+  final DateTime date;
+  final int incoming, outgoing, balance;
+  final String description, movementId;
+  const VibProductLedgerLine({required this.date,required this.incoming,
+    required this.outgoing,required this.balance,required this.description,
+    required this.movementId});
+}
+
+List<VibProductLedgerLine> buildVibProductLedger(
+    List<Map<String,dynamic>> movements, Map<String,String> parties, int opening) {
+  final sorted=List<Map<String,dynamic>>.from(movements);
+  DateTime dateOf(Map<String,dynamic> row) {
+    final timestamp=receiptEffectiveTimestamp(row);
+    if(timestamp is! Timestamp) throw StateError('تاريخ حركة المخزون غير معروف');
+    return timestamp.toDate();
+  }
+  int quantityOf(Map<String,dynamic> row) {
+    final q=row['quantity'];
+    if(q is! num || !q.isFinite || q!=q.round()) {
+      throw StateError('كمية غير صحيحة في حركة المخزون');
+    }
+    return q.toInt();
+  }
+  sorted.sort((a,b) {
+    final byDate=dateOf(a).compareTo(dateOf(b));
+    return byDate!=0?byDate:'${a['id'] ?? ''}'.compareTo('${b['id'] ?? ''}');
+  });
+  var balance=opening;
+  final result=<VibProductLedgerLine>[];
+  for(final row in sorted) {
+    final q=quantityOf(row);
+    balance+=q;
+    final kind='${row['kind'] ?? ''}';
+    final party=(parties['${row['id'] ?? ''}'] ?? '').trim();
+    final description=party.isEmpty?movementName(kind):'${movementName(kind)} - $party';
+    result.add(VibProductLedgerLine(
+      date:dateOf(row),incoming:q>0?q:0,outgoing:q<0?-q:0,
+      balance:balance,description:description,movementId:'${row['id'] ?? ''}'));
+  }
+  return List.unmodifiable(result);
+}
+
 Future<Uint8List> createProductTracePdf(
-    String name, List<Map<String,dynamic>> rows,
-    Map<String,String> parties, ProductPeriodTotals total, pw.Font font,
-    {DateTimeRange? range}) async {
-  final pdf = pw.Document();
-  const headerColor = PdfColor.fromInt(0xFF16263A);
-  const lineColor = PdfColor.fromInt(0xFFBEC7D3);
-  const lightBg = PdfColor.fromInt(0xFFF2F4F7);
-  pw.Widget cell(String value, {bool head = false}) => pw.Padding(
-    padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 5),
-    child: pw.Text(value,
-      textAlign: pw.TextAlign.center,
-      style: pw.TextStyle(font: font, fontSize: head ? 10.5 : 11,
-        color: head ? PdfColors.white : PdfColors.black,
-        fontWeight: head ? pw.FontWeight.bold : pw.FontWeight.normal)));
-  final incoming = rows.fold<int>(0, (sum, row) {
-    final qty = (row['quantity'] as num?)?.toInt() ?? 0;
-    return qty > 0 ? sum + qty : sum;
-  });
-  final outgoing = rows.fold<int>(0, (sum, row) {
-    final qty = (row['quantity'] as num?)?.toInt() ?? 0;
-    return qty < 0 ? sum - qty : sum;
-  });
+    String name,List<Map<String,dynamic>> rows,
+    Map<String,String> parties,ProductPeriodTotals total,pw.Font font,
+    {DateTimeRange? range,String productCode=''}) async {
+  final lines=buildVibProductLedger(rows,parties,total.opening);
+  final pdf=pw.Document();
+  const header=PdfColor.fromInt(0xFF283B46);
+  const border=PdfColor.fromInt(0xFF687985);
+  const greenBg=PdfColor.fromInt(0xFFD8F9D9);
+  const pinkBg=PdfColor.fromInt(0xFFFFE2D5);
+  const stripe=PdfColor.fromInt(0xFFF3F5F7);
+  pw.Widget cell(String value,{bool head=false,PdfColor? bg,bool bold=false})=>
+    pw.Container(color:bg,padding:const pw.EdgeInsets.symmetric(horizontal:5,vertical:6),
+      child:pw.Text(value,textAlign:pw.TextAlign.center,
+        style:pw.TextStyle(font:font,fontSize:head?10.5:9.4,
+          color:head?PdfColors.white:PdfColors.black,
+          fontWeight:head||bold?pw.FontWeight.bold:pw.FontWeight.normal)));
+  final fromLabel=range==null?'كل الفترات':DateFormat('dd/MM/yyyy').format(range.start);
+  final toLabel=range==null?'حتى الآن':DateFormat('dd/MM/yyyy').format(range.end);
   pdf.addPage(pw.MultiPage(
-    pageFormat: PdfPageFormat.a4,
-    maxPages: 1000,
-    margin: const pw.EdgeInsets.fromLTRB(26, 25, 26, 25),
-    theme: pw.ThemeData.withFont(base: font, bold: font),
-    textDirection: pw.TextDirection.rtl,
-    footer: (ctx) => pw.Center(child: pw.Text(
+    pageFormat:PdfPageFormat.a4,maxPages:1000,
+    margin:const pw.EdgeInsets.fromLTRB(22,24,22,24),
+    theme:pw.ThemeData.withFont(base:font,bold:font),
+    textDirection:pw.TextDirection.rtl,
+    footer:(ctx)=>pw.Align(alignment:pw.Alignment.center,child:pw.Text(
       'صفحة ${ctx.pageNumber} من ${ctx.pagesCount}',
-      style: pw.TextStyle(font: font, fontSize: 9, color: PdfColors.grey700))),
-    build: (_) => [
-      pw.Center(child: pw.Column(children: [
-        pw.Text('VIB للتجارة والتوزيع',
-          style: pw.TextStyle(font: font, fontSize: 19,
-            fontWeight: pw.FontWeight.bold, color: headerColor)),
-        pw.SizedBox(height: 8),
-        pw.Text('تقرير حركة المخزون - $name',
-          textAlign: pw.TextAlign.center,
-          style: pw.TextStyle(font: font, fontSize: 16,
-            fontWeight: pw.FontWeight.bold)),
-        pw.SizedBox(height: 5),
-        pw.Text(range == null ? 'جميع التواريخ'
-          : 'من ${DateFormat('dd/MM/yyyy').format(range.start)} إلى ${DateFormat('dd/MM/yyyy').format(range.end)}',
-          style: pw.TextStyle(font: font, fontSize: 11)),
-      ])),
-      pw.SizedBox(height: 12),
-      pw.Container(
-        padding: const pw.EdgeInsets.all(9),
-        decoration: pw.BoxDecoration(
-          color: lightBg, border: pw.Border.all(color: lineColor)),
-        child: pw.Column(children: [
-          pw.Text('الحركات المعروضة: ${rows.length} • الوارد: $incoming • الصادر: $outgoing',
-            style: pw.TextStyle(font: font, fontSize: 12,
-              fontWeight: pw.FontWeight.bold)),
-          pw.SizedBox(height: 4),
-          pw.Text('رصيد المخزون الحالي: ${total.current} • أول المدة: ${total.opening} • آخر المدة: ${total.closing}',
-            style: pw.TextStyle(font: font, fontSize: 11)),
-        ]),
-      ),
-      pw.SizedBox(height: 12),
-      if (rows.isEmpty)
-        pw.Text('لا توجد حركات في الفترة المختارة',
-          style: pw.TextStyle(font: font, fontSize: 12))
-      else pw.Table(
-        border: pw.TableBorder.all(color: lineColor, width: .6),
-        columnWidths: {
-          0: const pw.FlexColumnWidth(1),
-          1: const pw.FlexColumnWidth(1.1),
-          2: const pw.FlexColumnWidth(3.1),
-          3: const pw.FlexColumnWidth(1.3),
-          4: const pw.FlexColumnWidth(1.6),
-          5: const pw.FlexColumnWidth(.5),
+      style:pw.TextStyle(font:font,fontSize:9,color:PdfColors.grey700))),
+    build:(_)=>[
+      pw.Center(child:pw.Text('VIB للتجارة والتوزيع',
+        style:pw.TextStyle(font:font,fontSize:18,
+          fontWeight:pw.FontWeight.bold,color:header))),
+      pw.SizedBox(height:6),
+      pw.Center(child:pw.Text('تقرير حركة منتج',
+        style:pw.TextStyle(font:font,fontSize:15,fontWeight:pw.FontWeight.bold))),
+      pw.SizedBox(height:5),
+      pw.Center(child:pw.Text('للفترة من $fromLabel إلى $toLabel',
+        style:pw.TextStyle(font:font,fontSize:11))),
+      pw.SizedBox(height:4),
+      pw.Center(child:pw.Text('المنتج: $name'+
+        (productCode.isEmpty?'':'    رقم المنتج: $productCode'),
+        style:pw.TextStyle(font:font,fontSize:11))),
+      pw.SizedBox(height:12),
+      pw.Table(
+        border:pw.TableBorder.all(color:border,width:.6),
+        columnWidths:{
+          0:const pw.FlexColumnWidth(1.35),
+          1:const pw.FlexColumnWidth(.72),
+          2:const pw.FlexColumnWidth(.72),
+          3:const pw.FlexColumnWidth(.86),
+          4:const pw.FlexColumnWidth(2.65),
         },
-        children: [
-          pw.TableRow(
-            repeat: true,
-            decoration: const pw.BoxDecoration(color: headerColor),
-            children: [
-              cell('الرصيد', head: true),
-              cell('العدد', head: true),
-              cell('المورد أو العميل / الفاتورة', head: true),
-              cell('التاريخ', head: true),
-              cell('نوع الحركة', head: true),
-              cell('م', head: true),
+        children:[
+          pw.TableRow(repeat:true,decoration:const pw.BoxDecoration(color:header),
+            children:[
+              cell('التاريخ',head:true),cell('وارد',head:true),
+              cell('صادر',head:true),cell('الرصيد',head:true),
+              cell('البيان',head:true),
             ]),
-          for (var i = 0; i < rows.length; i++)
+          pw.TableRow(decoration:const pw.BoxDecoration(color:stripe),
+            children:[
+              cell(range==null?'بداية السجل':DateFormat('yyyy/MM/dd').format(range.start)),
+              cell(''),cell(''),cell('${total.opening}',bold:true),
+              cell('رصيد أول المدة'),
+            ]),
+          for(var i=0;i<lines.length;i++)
             pw.TableRow(
-              decoration: i.isOdd ? const pw.BoxDecoration(color: lightBg) : null,
-              children: [
-                cell('${rows[i]['balanceAfter'] ?? '-'}'),
-                cell('${rows[i]['quantity'] ?? 0}'),
-                cell(parties['${rows[i]['id']}'] ?? 'بيانات الفاتورة غير متاحة'),
-                cell(receiptReportStamp(rows[i], DateTime.now())),
-                cell(movementName('${rows[i]['kind']}')),
-                cell('${i + 1}'),
+              decoration:i.isOdd?const pw.BoxDecoration(color:stripe):null,
+              children:[
+                cell(DateFormat('yyyy/MM/dd').format(lines[i].date)),
+                cell(lines[i].incoming==0?'':'${lines[i].incoming}',
+                  bg:lines[i].incoming==0?null:greenBg),
+                cell(lines[i].outgoing==0?'':'${lines[i].outgoing}',
+                  bg:lines[i].outgoing==0?null:pinkBg),
+                cell('${lines[i].balance}',bold:true),
+                cell(lines[i].description),
               ]),
         ],
       ),
-      pw.SizedBox(height: 12),
-      pw.Text('هذا كشف حركة مخزون، وليس كشف أسعار مشتريات. لمعرفة المورد وسعر الشراء بدقة افتح تقرير فواتير مشتريات الصنف الأصلية.',
-        style: pw.TextStyle(font: font, fontSize: 10,
-          color: PdfColors.grey700)),
+      pw.SizedBox(height:12),
+      pw.Text('الوارد: ${total.incoming}    الصادر: ${total.outgoing}    أول المدة: ${total.opening}    آخر المدة: ${total.closing}',
+        style:pw.TextStyle(font:font,fontSize:10,fontWeight:pw.FontWeight.bold)),
+      if(total.gap!=0) pw.Text(
+        'تنبيه: فرق جرد ${total.gap} بين الرصيد الحالي وآخر الحركات. لم تُعدل البيانات.',
+        style:pw.TextStyle(font:font,fontSize:9,color:PdfColors.red)),
+      pw.SizedBox(height:6),
+      pw.Text('التقرير للعرض فقط من سجل حركة المخزون. لا يغير الفواتير أو الكميات أو الحسابات.',
+        style:pw.TextStyle(font:font,fontSize:8.5,color:PdfColors.grey700)),
     ],
   ));
   return pdf.save();
