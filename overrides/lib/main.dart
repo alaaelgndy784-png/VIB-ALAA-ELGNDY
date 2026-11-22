@@ -8980,7 +8980,6 @@ class ItemMovementReport extends StatefulWidget {
 class _ItemMovementReportState extends State<ItemMovementReport> {
   String? productId, branchId='main';
   DateTimeRange? range;
-  String movementView='purchases';
 
   Future<Map<String,String>> _movementCounterparties(
       List<QueryDocumentSnapshot<Map<String,dynamic>>> rows) async {
@@ -9053,13 +9052,38 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
     if (selected != null && mounted) setState(() => productId = selected);
   }
 
-  Future<void> _printMovementReport(BuildContext context,String productName,List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,
+  Future<void> _printMovementReport(BuildContext context,String productName,String productCode,List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,
       Map<String,String> parties,ProductPeriodTotals total) async {
     try {
       final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-      final bytes=await createProductTracePdf(productName,rows.map((r)=>{...r.data(),'id':r.id}).toList(),parties,total,font,range:range);
+      final bytes=await createProductTracePdf(productName,rows.map((r)=>{...r.data(),'id':r.id}).toList(),parties,total,font,range:range,productCode:productCode);
       await Printing.layoutPdf(name:'VIB-PRODUCT-MOVEMENT.pdf',onLayout:(_)async=>bytes);
     }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر طباعة حركة المنتج: $e');}
+  }
+
+  Widget _ledgerCell(String value,double width,{bool heading=false,Color? tint,bool bold=false}) =>
+    Container(width:width,minHeight:40,
+      padding:const EdgeInsets.symmetric(horizontal:4,vertical:8),
+      alignment:Alignment.center,
+      decoration:BoxDecoration(
+        color:tint,border:Border.all(color:heading?const Color(0xFF283B46):const Color(0xFFB8C3CE),width:.5)),
+      child:Text(value,textAlign:TextAlign.center,maxLines:3,
+        overflow:TextOverflow.ellipsis,
+        style:TextStyle(color:heading?Colors.white:Colors.black,
+          fontSize:heading?12:11,fontWeight:heading||bold?FontWeight.bold:FontWeight.normal)));
+  Widget _ledgerTableRow({required String date,required String incoming,
+      required String outgoing,required String balance,required String description,
+      bool heading=false,bool opening=false,bool alternate=false}) {
+    final base=heading?const Color(0xFF283B46):alternate?const Color(0xFFF1F4F7):Colors.white;
+    return Row(textDirection:TextDirection.rtl,children:[
+      _ledgerCell(date,116,heading:heading,tint:base),
+      _ledgerCell(incoming,74,heading:heading,
+        tint:heading?base:incoming.isNotEmpty?const Color(0xFFD8F9D9):base),
+      _ledgerCell(outgoing,74,heading:heading,
+        tint:heading?base:outgoing.isNotEmpty?const Color(0xFFFFE2D5):base),
+      _ledgerCell(balance,86,heading:heading,tint:base,bold:true),
+      _ledgerCell(description,400,heading:heading,tint:base,bold:opening),
+    ]);
   }
 
   @override
@@ -9156,14 +9180,6 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                   ..sort((a, b) => ((a.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0)
                       .compareTo((b.data()['createdAt'] as Timestamp?)?.millisecondsSinceEpoch ?? 0));
 
-                final reportRows = rows.where((d) {
-                  final kind='${d.data()['kind'] ?? ''}';
-                  final sales = kind=='sale' || kind=='saleCorrection' || kind=='correction_sale' ||
-                      kind=='correction_return' || kind=='sales_return';
-                  final purchases = kind=='purchase' || kind=='purchaseCorrection' || kind=='purchase_return';
-                  return movementView=='sales' ? sales : purchases;
-                }).toList();
-                final reportQuantity = reportRows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).abs()));
                 final incoming = rows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).clamp(0, 999999999)));
                 final outgoing = rows.fold<num>(0, (sum, d) => sum + ((-((d.data()['quantity'] as num?) ?? 0)).clamp(0, 999999999)));
 
@@ -9193,118 +9209,70 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
 
                     final ProductPeriodTotals totals;
                     try {totals=summarizeProductPeriod(snap.data!.docs.where((d)=>visibleAfterReset(d.data()) && (branchId==null || d.data()['branchId']==branchId)).map((d)=>d.data()).toList(),currentQty,range);}on StateError catch(e){return Center(child:Text('${e.message}'));}
+                    final productCode=(productSnap.data()?['code'] ??
+                      productSnap.data()?['sku'] ?? productSnap.data()?['barcode'] ?? productSnap.id).toString();
+                    final List<VibProductLedgerLine> ledger;
+                    try {
+                      ledger=buildVibProductLedger(
+                        rows.map((r)=><String,dynamic>{...r.data(),'id':r.id}).toList(),
+                        parties,totals.opening);
+                    } on StateError catch(e) {
+                      return Center(child:Text(e.message.toString()));
+                    }
                     return Column(children: [
                       Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        child: _vibInvoicePanel(
-                          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
-                          child: Column(children: [
-                            Row(children: [
-                              Expanded(child: Text(productName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
-                              Text('الموجود الآن: $currentQty', style: const TextStyle(color: gold, fontWeight: FontWeight.bold, fontSize: 17)),
+                        padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),
+                        child:_vibInvoicePanel(
+                          padding:const EdgeInsets.symmetric(horizontal:9,vertical:7),
+                          child:Column(children:[
+                            Text(productName,style:const TextStyle(fontSize:16,fontWeight:FontWeight.bold)),
+                            Text('كود المنتج: $productCode • الحركات: ${ledger.length}',
+                              style:const TextStyle(fontSize:12,color:vibNeonBlue)),
+                            Text('أول المدة: ${totals.opening} • آخر المدة: ${totals.closing} • الموجود الآن: $currentQty'),
+                            if(totals.gap!=0) Text(
+                              'تنبيه: فرق جرد ${totals.gap} بين الرصيد الحالي وآخر الحركات المسجلة',
+                              style:const TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold)),
+                            Row(children:[
+                              Expanded(child:Text('الوارد: ${totals.incoming}',
+                                style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold))),
+                              Expanded(child:Text('الصادر: ${totals.outgoing}',
+                                style:const TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold))),
+                              OutlinedButton.icon(
+                                onPressed:snap.data!.metadata.isFromCache || snap.data!.metadata.hasPendingWrites
+                                  ? null :()=>_printMovementReport(context,productName,productCode,rows,parties,totals),
+                                icon:const Icon(Icons.picture_as_pdf,size:18),
+                                label:const Text('PDF / طباعة')),
                             ]),
-                            Text('أول المدة: ${totals.opening} • آخر المدة: ${totals.closing}'),
-                            if(totals.gap!=0)Text('فرق غير مطابق لآخر حركة مسجلة: ${totals.gap}',style:const TextStyle(color:Colors.redAccent)),
-                            const SizedBox(height: 4),
-                            Row(children: [
-                              Expanded(child: Text('إجمالي الداخل: $incoming', style: const TextStyle(color: Colors.greenAccent))),
-                              Expanded(child: Text('إجمالي الخارج: $outgoing', style: const TextStyle(color: Colors.redAccent))),
-                              Text('الحركات: ${rows.length}'),
-                            ]),
-                            const SizedBox(height: 5),
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: OutlinedButton.icon(
-                                onPressed: reportRows.isEmpty || snap.data!.metadata.isFromCache || snap.data!.metadata.hasPendingWrites ? null : () => _printMovementReport(context, productName, reportRows, parties, totals),
-                                icon: const Icon(Icons.picture_as_pdf, size: 18),
-                                label: const Text('حركة المخزون PDF'),
-                              ),
-                            ),
                           ]),
                         ),
                       ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        child: Column(children: [
-                          Row(children: [
-                            Expanded(child: ChoiceChip(
-                              label: const Text('العملاء اللي اشتروا'),
-                              selected: movementView=='sales',
-                              onSelected: (_) => setState(() => movementView='sales'),
-                            )),
-                            const SizedBox(width: 6),
-                            Expanded(child: ChoiceChip(
-                              label: const Text('الموردين اللي اشتريت منهم'),
-                              selected: movementView=='purchases',
-                              onSelected: (_) => setState(() => movementView='purchases'),
-                            )),
-                          ]),
-                          Text('عدد الحركات: ${reportRows.length} • إجمالي الكمية: $reportQuantity'),
-                          const SizedBox(height: 5),
-                          SizedBox(width: double.infinity, child: OutlinedButton.icon(
-                            onPressed: productId == null ? null : () => openVibReport(
-                              context,
-                              movementView == 'purchases'
-                                  ? 'فواتير مشتريات الصنف' : 'فواتير مبيعات الصنف',
-                              ProductInvoiceMovementPage(
-                                type: movementView == 'purchases' ? 'purchases' : 'sales',
-                                initialProductId: productId,
-                                initialProductName: productName,
-                              )),
-                            icon: const Icon(Icons.receipt_long_outlined, size: 17),
-                            label: Text(movementView == 'purchases'
-                                ? 'افتح فواتير شراء الصنف الأصلية'
-                                : 'افتح فواتير بيع الصنف الأصلية'),
-                          )),
-                        ]),
-                      ),
-                      Expanded(
-                        child: reportRows.isEmpty
-                            ? Center(child: Text(movementView=='sales'
-                                ? 'لا توجد فواتير بيع لهذا الصنف في الفترة المختارة'
-                                : 'لا توجد فواتير شراء لهذا الصنف في الفترة المختارة'))
-                            : ListView.builder(
-                                padding: const EdgeInsets.symmetric(horizontal: 8),
-                                itemCount: reportRows.length,
-                                itemBuilder: (context, index) {
-                                  final row = reportRows[index];
-                                  final x = row.data();
-                                  final qty = (x['quantity'] as num?) ?? 0;
-                                  final positive = qty >= 0;
-                                  final party = parties[row.id] ?? '';
-                                  final kind = '${x['kind']}';
-                                  final action = movementName(kind);
-
-                                  return Card(
-                                    margin: const EdgeInsets.symmetric(vertical: 3),
-                                    child: ListTile(
-                                      dense: true,
-                                      visualDensity: const VisualDensity(vertical: -2),
-                                      leading: CircleAvatar(
-                                        radius: 18,
-                                        backgroundColor: positive ? const Color(0xFF123C25) : const Color(0xFF441B1B),
-                                        child: Icon(positive ? Icons.south : Icons.north, size: 18, color: positive ? vibNeon : Colors.redAccent),
-                                      ),
-                                      title: Text(action, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                      subtitle: Text([
-                                        if (party.isNotEmpty) party,
-                                        'التاريخ: ${receiptReportStamp(x,DateTime.now())}',
-                                        'الفرع: ${x['branchId'] == 'main' ? 'المخزون الرئيسي' : x['branchId']}',
-                                      ].join('\n')),
-                                      isThreeLine: true,
-                                      trailing: Column(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Text('${positive ? '+' : ''}$qty', style: TextStyle(color: positive ? vibNeon : Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 16)),
-                                          Text('الرصيد ${x['balanceAfter'] ?? '-'}', style: const TextStyle(fontSize: 11)),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
+                      Expanded(child:Scrollbar(child:SingleChildScrollView(
+                        scrollDirection:Axis.horizontal,
+                        child:SizedBox(width:750,child:ListView.builder(
+                          key:const ValueKey('product-ledger-all-movements'),
+                          itemCount:ledger.length+2,
+                          itemBuilder:(context,index) {
+                            if(index==0) return _ledgerTableRow(
+                              date:'التاريخ',incoming:'وارد',outgoing:'صادر',
+                              balance:'الرصيد',description:'البيان',heading:true);
+                            if(index==1) return _ledgerTableRow(
+                              date:range==null?'بداية السجل':
+                                DateFormat('yyyy/MM/dd').format(range!.start),
+                              incoming:'',outgoing:'',balance:'${totals.opening}',
+                              description:'رصيد أول المدة',opening:true,alternate:true);
+                            final line=ledger[index-2];
+                            return _ledgerTableRow(
+                              date:DateFormat('yyyy/MM/dd').format(line.date),
+                              incoming:line.incoming==0?'':'${line.incoming}',
+                              outgoing:line.outgoing==0?'':'${line.outgoing}',
+                              balance:'${line.balance}',description:line.description,
+                              alternate:index.isOdd);
+                          },
+                        )),
+                      ))),
+                      const Padding(padding:EdgeInsets.symmetric(horizontal:8,vertical:4),
+                        child:Text('يمكن سحب الجدول يمينًا وشمالًا. التقرير للعرض ولا يعدل أي فاتورة أو رصيد.',
+                          style:TextStyle(fontSize:11,color:Colors.white70))),
                     ]);
                   },
                 );
