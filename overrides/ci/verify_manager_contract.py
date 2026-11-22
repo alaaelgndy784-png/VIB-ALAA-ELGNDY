@@ -83,6 +83,11 @@ checks = [
      "final balanceCents=" in main and
      "'balanceAfter':remaining" in load("overrides/lib/pending_receipts.dart") and
      "final amountCents=(rawAmount*100).round()" in load("overrides/lib/pending_receipts.dart")),
+    ("outside manager purchase invoice displays fourth selling-price column even if owner flag dropped",
+     "purchaseSellingPriceColumn:purchaseEditorShowsSalePrice(owner:owner,employeeApp:staffApp)" in main and
+     "showSellingPrice:purchaseSellingPriceColumn || (!staffApp && title.contains('مشتريات'))" in editor and
+     "manager purchase outer invoice table always has sale-price column" in popup_test and
+     "purchaseSellingPriceColumn:false" in popup_test),
     ("purchase deletion eligibility test retained",
      "purchaseInvoiceCancellationBlockReason" in delete_test),
     ("popup, money, and deletion widget tests run before APK build",
