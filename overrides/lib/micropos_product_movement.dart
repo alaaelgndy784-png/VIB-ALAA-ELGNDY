@@ -122,7 +122,7 @@ class VibCompactProductLedger extends StatelessWidget {
               'الإجمالي / رصيد آخر المدة',background:const Color(0xFFE8F4FB)),
           ])),
         ),
-      ));
+      );
   }
 }
 
