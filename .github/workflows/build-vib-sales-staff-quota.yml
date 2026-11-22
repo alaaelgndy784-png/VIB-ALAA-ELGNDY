@@ -2,6 +2,7 @@ name: Build VIB Staff Quota-Safe APK
 
 permissions:
   contents: write
+  actions: read
 
 on:
   workflow_dispatch:
@@ -171,9 +172,26 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4083 --build-name=0.2.58
+          flutter build apk --release --split-per-abi --build-number=4084 --build-name=0.2.59
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
+
+      - name: Verify staff APK identity and signing before upload
+        if: matrix.app == 'staff'
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          set -euo pipefail
+          NEW=dist/VIB-SALES-STAFF.apk
+          test -s "$NEW"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          "$AAPT" dump badging "$NEW" | grep -m1 '^package:' | tee dist/VIB-STAFF-PACKAGE.txt
+          grep -F "name='com.alaa.vibsales.staffscan'" dist/VIB-STAFF-PACKAGE.txt
+          grep -F "versionCode='6084'" dist/VIB-STAFF-PACKAGE.txt
+          grep -F "versionName='0.2.59'" dist/VIB-STAFF-PACKAGE.txt
+          "$SIGNER" verify --print-certs "$NEW" > dist/VIB-STAFF-CERT.txt
+          grep -iF "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f" dist/VIB-STAFF-CERT.txt
 
       - name: Export Android signing fingerprints
         working-directory: VIB-SALES-INDEPENDENT
@@ -252,4 +270,60 @@ jobs:
           body: "نسخة موظف لتقليل استهلاك Firebase وحفظ الفواتير محليًا عند امتلاء الحصة لحين المزامنة. لا ترحل فاتورة دون تأكيد السيرفر."
           files: staff-files/VIB-SALES-STAFF.apk
           overwrite_files: true
+          make_latest: false
+
+  publish-staff-0-2-59-safe-update:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/fix/staff-update-0-2-59-from-manager-0-2-90-20261122'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tested VIB Staff 0.2.59
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-STAFF-APK
+          path: staff-new
+      - name: Compare installed 0.2.58 package and signing certificate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p staff-old
+          gh run download 45070800511 --repo "$GITHUB_REPOSITORY" --name VIB-SALES-STAFF-APK --dir staff-old
+          NEW=staff-new/VIB-SALES-STAFF.apk
+          OLD=staff-old/VIB-SALES-STAFF.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt -type f | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          test -x "$AAPT" && test -x "$SIGNER"
+          "$AAPT" dump badging "$NEW" | grep -m1 '^package:' | tee /tmp/new-staff-package
+          "$AAPT" dump badging "$OLD" | grep -m1 '^package:' | tee /tmp/old-staff-package
+          grep -F "name='com.alaa.vibsales.staffscan'" /tmp/new-staff-package
+          grep -F "name='com.alaa.vibsales.staffscan'" /tmp/old-staff-package
+          grep -F "versionCode='6084'" /tmp/new-staff-package
+          grep -F "versionName='0.2.59'" /tmp/new-staff-package
+          grep -F "versionCode='6083'" /tmp/old-staff-package
+          grep -F "versionName='0.2.58'" /tmp/old-staff-package
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/new-staff-cert
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/old-staff-cert
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/new-staff-cert | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/old-staff-cert | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA" && test "$NEW_SHA" = "$OLD_SHA"
+          test "$NEW_SHA" = "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f"
+          (cd staff-new && sha256sum VIB-SALES-STAFF.apk > SHA256SUMS.txt)
+      - name: Publish only verified VIB Staff update
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-staff-0.2.59-safe-update-20261122
+          target_commitish: ${{ github.sha }}
+          name: VIB Staff 0.2.59 - Update Over 0.2.58
+          body: |
+            Employee-only Android app version 0.2.59 built from the 0.2.90 manager code baseline.
+            Compatible in-place update over VIB Staff 0.2.58 with unchanged package ID
+            and signing certificate. Retains staff roles and permissions, item stock,
+            sales invoices, receipts, offline safeguards, and existing financial data.
+            The APK was tested in CI; phone behavior still needs validation.
+          files: |
+            staff-new/VIB-SALES-STAFF.apk
+            staff-new/SHA256SUMS.txt
           make_latest: false
