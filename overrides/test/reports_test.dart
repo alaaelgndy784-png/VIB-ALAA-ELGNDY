@@ -327,6 +327,20 @@ void main() {
     }
     final rows=List.generate(8,(i)=><String,dynamic>{'id':'m$i','kind':i.isEven?'purchase':'sale','quantity':i.isEven?10:-3,'balanceAfter':20+i,'branchId':'main','createdAt':Timestamp.fromDate(movementReportBoundary(DateTime(2026,10,i%3+1)))});
     File('dist/VIB-PRODUCT-TRACE.pdf').writeAsBytesSync(await createProductTracePdf('محول مسطرة فيردي',rows,{for(var i=0;i<8;i++)'m$i':'${i.isEven?'المورد':'العميل'}: اسم الاختبار\nفاتورة: 000${100+i}\nالمستخدم: موظف التحصيل'},summarizeProductPeriod(rows,27,null),font));
+    // User-reference table: compact dates, incoming/outgoing, balance and
+    // original invoice/actor notes. Generate a preview and empty movement PDF.
+    final counterparties={for(var i=0;i<8;i++)'m$i':'${i.isEven?'المورد':'العميل'}: اسم الاختبار\nفاتورة: 000${100+i}\nالمستخدم: موظف التحصيل'};
+    final pdf=await createVibClassicProductMovementPdf('محول مسطرة فيردي',
+      '250500044230', rows, counterparties,summarizeProductPeriod(rows,27,null),
+      font,currentQty:27);
+    expect(pdf.length,greaterThan(1000));
+    File('dist/VIB-PRODUCT-TRACE-COMPACT.pdf').writeAsBytesSync(pdf);
+    final empty=await createVibClassicProductMovementPdf('صنف بلا حركة','0044',
+      <Map<String,dynamic>>[],<String,String>{},
+      summarizeProductPeriod(<Map<String,dynamic>>[],0,DateTimeRange(start:from,end:to)),
+      font,range:DateTimeRange(start:from,end:to),currentQty:0);
+    expect(empty.length,greaterThan(1000));
+    File('dist/VIB-PRODUCT-TRACE-EMPTY.pdf').writeAsBytesSync(empty);
   });
   for(final size in [const Size(320,700),const Size(360,740),const Size(564,900)]) {
     for(final keyboard in [0.0,280.0]) {
