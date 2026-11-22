@@ -53,6 +53,41 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+
+  test('MicroPOS-style product ledger keeps chronological running stock balance', () {
+    final movements=<Map<String,dynamic>>[
+      {'id':'s2','kind':'sale','quantity':-20,
+        'createdAt':Timestamp.fromDate(DateTime(2026,7,12))},
+      {'id':'p1','kind':'purchase','quantity':160,
+        'createdAt':Timestamp.fromDate(DateTime(2026,7,4))},
+      {'id':'s1','kind':'sale','quantity':-24,
+        'createdAt':Timestamp.fromDate(DateTime(2026,7,6))},
+    ];
+    final originalOrder=movements.map((row)=>row['id']).toList();
+    final lines=buildVibProductLedger(movements,{
+      'p1':'المورد: أحمد\nفاتورة: 431',
+      's1':'العميل: محمود\nفاتورة: 1223',
+      's2':'العميل: طيبة\nفاتورة: 1224',
+    },-61);
+    expect(lines.map((x)=>x.movementId).toList(),['p1','s1','s2']);
+    expect(lines.map((x)=>x.incoming).toList(),[160,0,0]);
+    expect(lines.map((x)=>x.outgoing).toList(),[0,24,20]);
+    expect(lines.map((x)=>x.balance).toList(),[99,75,55]);
+    expect(lines[0].description,contains('431'));
+    expect(lines[1].description,contains('1223'));
+    expect(movements.map((row)=>row['id']).toList(),originalOrder);
+  });
+
+  test('product ledger rejects unknown or fractional stock movement instead of guessing', () {
+    expect(()=>buildVibProductLedger([
+      {'id':'x','kind':'purchase','quantity':1.5,
+       'createdAt':Timestamp.fromDate(DateTime(2026,7,4))}
+    ],const {},0),throwsStateError);
+    expect(()=>buildVibProductLedger([
+      {'id':'x','kind':'sale','quantity':-1}
+    ],const {},0),throwsStateError);
+  });
+
   test('purchase and sales PDFs generate readable invoice-based pages', () async {
     final font = pw.Font.ttf(
       await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
