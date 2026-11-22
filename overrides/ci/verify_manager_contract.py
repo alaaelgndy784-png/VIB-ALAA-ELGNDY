@@ -88,6 +88,19 @@ checks = [
      "showSellingPrice:purchaseSellingPriceColumn || (!staffApp && title.contains('مشتريات'))" in editor and
      "manager purchase outer invoice table always has sale-price column" in popup_test and
      "purchaseSellingPriceColumn:false" in popup_test),
+    ("product movement uses one chronological ledger on phone and PDF",
+     "buildVibProductLedger(" in main and
+     "'product-ledger-all-movements'" in main and
+     "movementView" not in main and
+     "createProductTracePdf(productName" in main and
+     "productCode:productCode" in main and
+     "cell('وارد',head:true)" in load("overrides/lib/account_statements.dart") and
+     "cell('صادر',head:true)" in load("overrides/lib/account_statements.dart") and
+     "cell('الرصيد',head:true)" in load("overrides/lib/account_statements.dart") and
+     "cell('البيان',head:true)" in load("overrides/lib/account_statements.dart")),
+    ("product ledger running-balance regression included in pre-build tests",
+     "product_movement_layout_test.dart" in workflow and
+     "MicroPOS-style product ledger keeps chronological running stock balance" in load("overrides/test/product_movement_layout_test.dart")),
     ("purchase deletion eligibility test retained",
      "purchaseInvoiceCancellationBlockReason" in delete_test),
     ("popup, money, and deletion widget tests run before APK build",
