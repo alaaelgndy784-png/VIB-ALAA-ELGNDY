@@ -9025,6 +9025,22 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
         labels[row.id] = 'تعذر قراءة الفاتورة الأصلية';
       }
     }
+    // Keep the person who performed the movement visible, as in the
+    // classic movement report. Failed user lookups must not hide movements.
+    final actors = <String,String>{};
+    for(final row in rows) {
+      final actor = (row.data()['actorId'] ?? '').toString();
+      if(actor.isEmpty) continue;
+      if(!actors.containsKey(actor)) {
+        try {
+          final user=(await db.collection('users').doc(actor)
+              .get(const GetOptions(source:Source.server))).data();
+          actors[actor]=(user?['name'] ?? actor).toString();
+        } catch (_) { actors[actor]=actor; }
+      }
+      final prev=(labels[row.id] ?? '').trim();
+      labels[row.id] = [if(prev.isNotEmpty)prev, 'المستخدم: ${actors[actor]}'].join('\n');
+    }
     return labels;
   }
 
@@ -9197,6 +9213,14 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
 
                     final ProductPeriodTotals totals;
                     try {totals=summarizeProductPeriod(snap.data!.docs.where((d)=>visibleAfterReset(d.data()) && (branchId==null || d.data()['branchId']==branchId)).map((d)=>d.data()).toList(),currentQty,range);}on StateError catch(e){return Center(child:Text('${e.message}'));}
+                    // Compute balances from every movement, even when the user
+                    // chooses a sales-only or purchases-only view.
+                    num runningBalance=totals.opening;
+                    final balanceByMovement=<String,num>{};
+                    for(final entry in rows){
+                      runningBalance+=(entry.data()['quantity'] as num?)??0;
+                      balanceByMovement[entry.id]=runningBalance;
+                    }
                     return Column(children: [
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -9264,10 +9288,11 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                       Expanded(child:VibCompactProductLedger(
                         rows:reportRows.map((r)=><String,dynamic>{...r.data(),'id':r.id}).toList(),
                         parties:parties,
-                        opening:movementView=='all' ? totals.opening :
-                          (reportRows.isEmpty ? totals.opening :
-                            totals.opening + rows.takeWhile((r)=>r.id!=reportRows.first.id)
-                              .fold<num>(0,(sum,r)=>sum+((r.data()['quantity'] as num?)??0))),
+                        rowBalances:balanceByMovement,
+                        opening:movementView=='all' || reportRows.isEmpty
+                          ? totals.opening
+                          : (balanceByMovement[reportRows.first.id] ?? totals.opening) -
+                            ((reportRows.first.data()['quantity'] as num?) ?? 0),
                       )),
                     ]);
                   },
