@@ -62,6 +62,46 @@ void main() {
   }
 
 
+
+  for(final width in [360.0,564.0]) {
+    testWidgets('manager purchase outer invoice table always has sale-price column at $width', (tester) async {
+      tester.view.physicalSize=Size(width,760);
+      tester.view.devicePixelRatio=1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+      final cost=TextEditingController(text:'377.65');
+      final qty=TextEditingController(text:'1');
+      final sale=TextEditingController(text:'466.10');
+      var changed=0;
+      await tester.pumpWidget(MaterialApp(
+        theme:ThemeData(brightness:Brightness.dark),
+        home:Scaffold(body:InvoiceEditorFrame(
+          title:'فاتورة مشتريات',checkout:false,total:377.65,
+          tableMode:true,
+          purchaseSellingPriceColumn:purchaseEditorShowsSalePrice(owner:false,employeeApp:false),
+          invoiceNumber:'000473',itemCount:1,quantityCount:1,
+          body:ListView(children:[InvoiceCompactTableLine(
+            number:1,name:'خلاط شجرة هواي',price:cost,quantity:qty,
+            sellingPrice:sale,onSellingPriceChanged:()=>changed++,
+            onEdit:(){},onDelete:(){},
+          )]),actions:[const Text('إلغاء')],
+        )),
+      ));
+      await tester.pumpAndSettle();
+      expect(find.text('سعر البيع'),findsOneWidget);
+      final saleField=find.byKey(const ValueKey('purchase-sale-price-1'));
+      expect(saleField,findsOneWidget);
+      await tester.enterText(saleField,'500.00');
+      expect(sale.text,'500.00');
+      expect(changed,1);
+      expect(cost.text,'377.65');
+      expect(tester.takeException(),isNull);
+      cost.dispose();qty.dispose();sale.dispose();
+    });
+  }
+
   testWidgets('editing an existing purchase shows a fourth sale price independently', (tester) async {
     final cost=TextEditingController(text:'6.50');
     final quantity=TextEditingController(text:'1');
