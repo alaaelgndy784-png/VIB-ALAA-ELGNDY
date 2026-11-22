@@ -55,6 +55,7 @@ part 'pending_sales.dart';
 part 'pending_receipts.dart';
 part 'product_import.dart';
 part 'inventory_tools.dart';
+part 'micropos_product_movement.dart';
 part 'data_maintenance.dart';
 part 'manager_ringtone.dart';
 part 'online_payments.dart';
@@ -8980,7 +8981,7 @@ class ItemMovementReport extends StatefulWidget {
 class _ItemMovementReportState extends State<ItemMovementReport> {
   String? productId, branchId='main';
   DateTimeRange? range;
-  String movementView='purchases';
+  String movementView='all';
 
   Future<Map<String,String>> _movementCounterparties(
       List<QueryDocumentSnapshot<Map<String,dynamic>>> rows) async {
@@ -9054,10 +9055,13 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
   }
 
   Future<void> _printMovementReport(BuildContext context,String productName,List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,
-      Map<String,String> parties,ProductPeriodTotals total) async {
+      Map<String,String> parties,ProductPeriodTotals total,
+      {required String productCode, required int currentQty}) async {
     try {
       final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-      final bytes=await createProductTracePdf(productName,rows.map((r)=>{...r.data(),'id':r.id}).toList(),parties,total,font,range:range);
+      final bytes=await createVibClassicProductMovementPdf(productName,productCode,
+        rows.map((r)=>{...r.data(),'id':r.id}).toList(),parties,total,font,
+        range:range,currentQty:currentQty);
       await Printing.layoutPdf(name:'VIB-PRODUCT-MOVEMENT.pdf',onLayout:(_)async=>bytes);
     }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر طباعة حركة المنتج: $e');}
   }
@@ -9161,7 +9165,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                   final sales = kind=='sale' || kind=='saleCorrection' || kind=='correction_sale' ||
                       kind=='correction_return' || kind=='sales_return';
                   final purchases = kind=='purchase' || kind=='purchaseCorrection' || kind=='purchase_return';
-                  return movementView=='sales' ? sales : purchases;
+                  return movementView=='all' || (movementView=='sales' ? sales : purchases);
                 }).toList();
                 final reportQuantity = reportRows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).abs()));
                 final incoming = rows.fold<num>(0, (sum, d) => sum + (((d.data()['quantity'] as num?) ?? 0).clamp(0, 999999999)));
@@ -9215,7 +9219,9 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                             Align(
                               alignment: Alignment.centerLeft,
                               child: OutlinedButton.icon(
-                                onPressed: reportRows.isEmpty || snap.data!.metadata.isFromCache || snap.data!.metadata.hasPendingWrites ? null : () => _printMovementReport(context, productName, reportRows, parties, totals),
+                                onPressed: snap.data!.metadata.isFromCache || snap.data!.metadata.hasPendingWrites ? null : () => _printMovementReport(context, productName, rows, parties, totals,
+                                  productCode:'${productSnap.data()?['code'] ?? productSnap.data()?['sku'] ?? productSnap.data()?['barcode'] ?? productId}',
+                                  currentQty:currentQty),
                                 icon: const Icon(Icons.picture_as_pdf, size: 18),
                                 label: const Text('حركة المخزون PDF'),
                               ),
@@ -9226,22 +9232,19 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         child: Column(children: [
-                          Row(children: [
-                            Expanded(child: ChoiceChip(
-                              label: const Text('العملاء اللي اشتروا'),
-                              selected: movementView=='sales',
-                              onSelected: (_) => setState(() => movementView='sales'),
-                            )),
-                            const SizedBox(width: 6),
-                            Expanded(child: ChoiceChip(
-                              label: const Text('الموردين اللي اشتريت منهم'),
-                              selected: movementView=='purchases',
-                              onSelected: (_) => setState(() => movementView='purchases'),
-                            )),
-                          ]),
+                          SingleChildScrollView(scrollDirection:Axis.horizontal,child:Row(children: [
+                            ChoiceChip(label:const Text('كل الحركات'),selected:movementView=='all',
+                              onSelected:(_)=>setState(()=>movementView='all')),
+                            const SizedBox(width:6),
+                            ChoiceChip(label:const Text('المبيعات'),selected:movementView=='sales',
+                              onSelected:(_)=>setState(()=>movementView='sales')),
+                            const SizedBox(width:6),
+                            ChoiceChip(label:const Text('المشتريات'),selected:movementView=='purchases',
+                              onSelected:(_)=>setState(()=>movementView='purchases')),
+                          ])),
                           Text('عدد الحركات: ${reportRows.length} • إجمالي الكمية: $reportQuantity'),
                           const SizedBox(height: 5),
-                          SizedBox(width: double.infinity, child: OutlinedButton.icon(
+                          if (movementView != 'all') SizedBox(width: double.infinity, child: OutlinedButton.icon(
                             onPressed: productId == null ? null : () => openVibReport(
                               context,
                               movementView == 'purchases'
@@ -9258,53 +9261,14 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                           )),
                         ]),
                       ),
-                      Expanded(
-                        child: reportRows.isEmpty
-                            ? Center(child: Text(movementView=='sales'
-                                ? 'لا توجد فواتير بيع لهذا الصنف في الفترة المختارة'
-                                : 'لا توجد فواتير شراء لهذا الصنف في الفترة المختارة'))
-                            : ListView.builder(
-                                padding: const EdgeInsets.symmetric(horizontal: 8),
-                                itemCount: reportRows.length,
-                                itemBuilder: (context, index) {
-                                  final row = reportRows[index];
-                                  final x = row.data();
-                                  final qty = (x['quantity'] as num?) ?? 0;
-                                  final positive = qty >= 0;
-                                  final party = parties[row.id] ?? '';
-                                  final kind = '${x['kind']}';
-                                  final action = movementName(kind);
-
-                                  return Card(
-                                    margin: const EdgeInsets.symmetric(vertical: 3),
-                                    child: ListTile(
-                                      dense: true,
-                                      visualDensity: const VisualDensity(vertical: -2),
-                                      leading: CircleAvatar(
-                                        radius: 18,
-                                        backgroundColor: positive ? const Color(0xFF123C25) : const Color(0xFF441B1B),
-                                        child: Icon(positive ? Icons.south : Icons.north, size: 18, color: positive ? vibNeon : Colors.redAccent),
-                                      ),
-                                      title: Text(action, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                      subtitle: Text([
-                                        if (party.isNotEmpty) party,
-                                        'التاريخ: ${receiptReportStamp(x,DateTime.now())}',
-                                        'الفرع: ${x['branchId'] == 'main' ? 'المخزون الرئيسي' : x['branchId']}',
-                                      ].join('\n')),
-                                      isThreeLine: true,
-                                      trailing: Column(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        mainAxisSize: MainAxisSize.min,
-                                        children: [
-                                          Text('${positive ? '+' : ''}$qty', style: TextStyle(color: positive ? vibNeon : Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 16)),
-                                          Text('الرصيد ${x['balanceAfter'] ?? '-'}', style: const TextStyle(fontSize: 11)),
-                                        ],
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                      ),
+                      Expanded(child:VibCompactProductLedger(
+                        rows:reportRows.map((r)=><String,dynamic>{...r.data(),'id':r.id}).toList(),
+                        parties:parties,
+                        opening:movementView=='all' ? totals.opening :
+                          (reportRows.isEmpty ? totals.opening :
+                            totals.opening + rows.takeWhile((r)=>r.id!=reportRows.first.id)
+                              .fold<num>(0,(sum,r)=>sum+((r.data()['quantity'] as num?)??0))),
+                      )),
                     ]);
                   },
                 );
