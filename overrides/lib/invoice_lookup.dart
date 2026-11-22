@@ -382,15 +382,20 @@ Future<void> replacePurchaseLocally(String id, int revision, String requestId,
       products[p] = await tx.get(db.collection('products').doc(p));
     }
     final items = <Map<String, dynamic>>[], newQuantities = <String, int>{};
+    final editedSellingPrices = <String,double>{};
     var total = 0;
     for (final line in replacements) {
       final p = '${line['productId']}', product = products[p]!.data();
       final q = line['quantity'] as int;
       final price = (line['unitPrice'] as num).toDouble();
-      if (product == null || q <= 0 || q > 1000000 || !price.isFinite || price < 0 || newQuantities.containsKey(p)) throw Exception('راجع الأصناف والأسعار والكميات');
+      final sellingPrice=line['sellingPrice'] is num ? (line['sellingPrice'] as num).toDouble() : null;
+      if (product == null || q <= 0 || q > 1000000 || !price.isFinite || price < 0 || newQuantities.containsKey(p) ||
+          (sellingPrice!=null && (!sellingPrice.isFinite || sellingPrice<price))) throw Exception('راجع سعر الشراء وسعر البيع والكميات');
       if (product['active'] != true && !oldQuantities.containsKey(p)) throw Exception('الصنف غير نشط');
       newQuantities[p] = q;
+      if(sellingPrice!=null) editedSellingPrices[p]=sellingPrice;
       items.add({'productId': p, 'productName': product['name'], 'quantity': q, 'unitCost': price,
+        if(sellingPrice!=null) 'sellingPriceAtPurchase':sellingPrice,
         'lineTotal': q * price});
     }
     total = purchaseEditTotalCents(items);
@@ -456,11 +461,12 @@ Future<void> replacePurchaseLocally(String id, int revision, String requestId,
         'balanceBefore': cashBefore / 100, 'balanceAfter': (cashBefore + cashDelta) / 100,
         'referenceId': id, 'editId': requestId, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
     }
-    for (final entry in refreshedCosts.entries) {
-      tx.update(products[entry.key]!.reference, {
-        'purchasePrice': entry.value,
-        'lastPurchaseId': id,
-        if (lastSourceDate is Timestamp) 'lastPurchaseAt': lastSourceDate,
+    for (final productId in {...refreshedCosts.keys, ...editedSellingPrices.keys}) {
+      tx.update(products[productId]!.reference, {
+        if(refreshedCosts.containsKey(productId)) 'purchasePrice':refreshedCosts[productId],
+        if(refreshedCosts.containsKey(productId)) 'lastPurchaseId':id,
+        if(refreshedCosts.containsKey(productId) && lastSourceDate is Timestamp) 'lastPurchaseAt':lastSourceDate,
+        if(editedSellingPrices.containsKey(productId)) 'price':editedSellingPrices[productId],
         'updatedAt': FieldValue.serverTimestamp(),
       });
     }
@@ -470,7 +476,8 @@ Future<void> replacePurchaseLocally(String id, int revision, String requestId,
       'productId': items.length == 1 ? items.first['productId'] : '', 'productName': items.length == 1 ? items.first['productName'] : '',
       'quantity': items.length == 1 ? items.first['quantity'] : 0, 'unitCost': items.length == 1 ? items.first['unitCost'] : 0});
     tx.set(edit, {'invoiceId': id, 'invoiceType': 'purchases',
-      'updatedProductCosts': refreshedCosts, 'beforeItems': original, 'afterItems': items,
+      'updatedProductCosts': refreshedCosts, 'updatedProductSellingPrices':editedSellingPrices,
+      'beforeItems': original, 'afterItems': items,
       'totalBefore': old['total'], 'totalAfter': total / 100, 'paidBefore': old['paid'], 'paidAfter': paid / 100,
       'revision': revision + 1, 'requestKey': key, 'actorId': actor, 'createdAt': FieldValue.serverTimestamp()});
   });
