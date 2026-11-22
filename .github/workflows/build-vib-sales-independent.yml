@@ -183,7 +183,7 @@ jobs:
             BADGING="$($AAPT dump badging dist/VIB-SALES-MANAGER.apk | head -n 1)"
             echo "$BADGING"
             grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-            grep -F "versionCode='22088'" <<< "$BADGING"
+            grep -F "versionCode='24088'" <<< "$BADGING"
             grep -F "versionName='0.2.88'" <<< "$BADGING"
             SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             test -x "$SIGNER"
@@ -1237,7 +1237,7 @@ jobs:
           "$AAPT" dump badging "$OLD" | grep -m1 '^package:' | tee /tmp/old-manager-package
           grep -F "name='com.alaa.vibsales.managerscan'" /tmp/new-manager-package
           grep -F "name='com.alaa.vibsales.managerscan'" /tmp/old-manager-package
-          grep -F "versionCode='22088'" /tmp/new-manager-package
+          grep -F "versionCode='24088'" /tmp/new-manager-package
           grep -F "versionName='0.2.88'" /tmp/new-manager-package
           grep -F "versionCode='22087'" /tmp/old-manager-package
           "$SIGNER" verify --print-certs "$NEW" | tee /tmp/new-manager-cert
