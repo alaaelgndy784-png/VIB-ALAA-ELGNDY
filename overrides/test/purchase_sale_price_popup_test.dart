@@ -61,6 +61,31 @@ void main() {
     });
   }
 
+
+  testWidgets('editing an existing purchase shows a fourth sale price independently', (tester) async {
+    final cost=TextEditingController(text:'6.50');
+    final quantity=TextEditingController(text:'1');
+    final sale=TextEditingController(text:'9.00');
+    var changed=0;
+    await tester.pumpWidget(MaterialApp(home:Scaffold(body:SingleChildScrollView(
+      child:PurchaseInvoiceLine(
+        number:1,name:'صنف مشتريات',cost:cost,quantity:quantity,
+        sellingPrice:sale,onSellingPriceChanged:()=>changed++,
+        enabled:true,totalEditable:true,discountDraft:PurchaseDiscountDraft(),
+        onChanged:(){},onChoose:(){},onDelete:(){},
+      ),
+    ))));
+    final priceInput=find.byKey(const ValueKey('purchase-item-dialog-sale-price'));
+    expect(priceInput,findsOneWidget);
+    await tester.enterText(priceInput,'11.00');
+    expect(sale.text,'11.00');
+    expect(cost.text,'6.50');
+    expect(quantity.text,'1');
+    expect(changed,1);
+    expect(tester.takeException(),isNull);
+    cost.dispose(); quantity.dispose(); sale.dispose();
+  });
+
   testWidgets('sales invoice modal retains original three fields', (tester) async {
     final price = TextEditingController(text: '9.00');
     final quantity = TextEditingController(text: '1');
