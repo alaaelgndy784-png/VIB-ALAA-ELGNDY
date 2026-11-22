@@ -69,6 +69,20 @@ checks = [
      "vibReceiptCurrency(displayed['amount'])" in load("overrides/lib/voucher_cancellations.dart") and
      "vibReceiptCurrency(data['amount'])" in load("overrides/lib/pending_receipts.dart") and
      "vibReceiptCurrency(data['paid'])" in load("overrides/lib/employee_collections.dart")),
+    ("editing existing purchase invoices still exposes separate sale price",
+     "sellingPrice:lines[i].sellingPrice" in main and
+     "if(editedSalePrice!=null) 'sellingPrice':editedSalePrice" in main and
+     "editing an existing purchase shows a fourth sale price independently" in popup_test and
+     "onSellingPriceChanged:()=>lines[i].sellingPriceEdited=true" in main),
+    ("purchase edit transaction persists explicit sale price only",
+     "final editedSellingPrices = <String,double>{}" in load("overrides/lib/invoice_lookup.dart") and
+     "'updatedProductSellingPrices':editedSellingPrices" in load("overrides/lib/invoice_lookup.dart") and
+     "if(editedSellingPrices.containsKey(productId)) 'price':editedSellingPrices[productId]" in load("overrides/lib/invoice_lookup.dart")),
+    ("manager and employee receipt postings round money to piastres",
+     "final paidCents=(paid*100).round()" in main and
+     "final balanceCents=" in main and
+     "'balanceAfter':remaining" in load("overrides/lib/pending_receipts.dart") and
+     "final amountCents=(rawAmount*100).round()" in load("overrides/lib/pending_receipts.dart")),
     ("purchase deletion eligibility test retained",
      "purchaseInvoiceCancellationBlockReason" in delete_test),
     ("popup, money, and deletion widget tests run before APK build",
