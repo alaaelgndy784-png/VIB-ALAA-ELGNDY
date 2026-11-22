@@ -40,8 +40,10 @@ class VibCompactProductLedger extends StatelessWidget {
   final List<Map<String,dynamic>> rows;
   final Map<String,String> parties;
   final num opening;
+  final Map<String,num> rowBalances;
   const VibCompactProductLedger({
     super.key, required this.rows, required this.parties, required this.opening,
+    required this.rowBalances,
   });
 
   @override
@@ -82,7 +84,7 @@ class VibCompactProductLedger extends StatelessWidget {
     num running=opening;
     for(final row in rows){
       running+=(row['quantity'] as num?)??0;
-      ledger.add(running);
+      ledger.add(rowBalances[(row['id'] ?? '').toString()] ?? running);
     }
     final totalIn=rows.fold<num>(0,(s,r){final q=(r['quantity'] as num?)??0;return s+(q>0?q:0);});
     final totalOut=rows.fold<num>(0,(s,r){final q=(r['quantity'] as num?)??0;return s+(q<0?-q:0);});
@@ -116,7 +118,7 @@ class VibCompactProductLedger extends StatelessWidget {
                 );
               })),
             dataRow('',rows.isEmpty?'':_vibMovementDay(rows.last['createdAt']),
-              _vibQty(totalIn),_vibQty(totalOut),_vibQty(running),
+              _vibQty(totalIn),_vibQty(totalOut),_vibQty(ledger.isEmpty?opening:ledger.last),
               'الإجمالي / رصيد آخر المدة',background:const Color(0xFFE8F4FB)),
           ])),
         ),
