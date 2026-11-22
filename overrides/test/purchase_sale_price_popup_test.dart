@@ -38,7 +38,7 @@ void main() {
       const priceKey = ValueKey('purchase-item-dialog-sale-price');
       expect(find.byKey(priceKey), findsOneWidget);
       expect(find.text('بيانات الصنف'), findsOneWidget);
-      expect(find.text('مشتريات المدير • 0.2.87'), findsOneWidget);
+      expect(find.text('مشتريات المدير • 0.2.89'), findsOneWidget);
       expect(tester.takeException(), isNull);
       // Discarded edits must not update the product's price.
       await tester.enterText(find.byKey(priceKey), '9.00');
