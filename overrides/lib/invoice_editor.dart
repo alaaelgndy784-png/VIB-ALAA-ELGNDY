@@ -480,7 +480,7 @@ class _InvoiceLineEditorDialogState extends State<_InvoiceLineEditorDialog> {
       crossAxisAlignment: CrossAxisAlignment.start, children: [
       const Text('بيانات الصنف'),
       if (!widget.saleScreen && !staffApp)
-        const Text('مشتريات المدير • 0.2.87',
+        const Text('مشتريات المدير • 0.2.89',
           style: TextStyle(fontSize: 11, color: gold)),
     ]),
     content:SizedBox(width:450,child:SingleChildScrollView(child:Column(mainAxisSize:MainAxisSize.min,children:[
