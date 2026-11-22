@@ -2943,11 +2943,14 @@ class SaleLine {
   String? productId;
   final quantity = TextEditingController(text: '1');
   final price = TextEditingController();
+  // Purchase editing carries its own sale price; leave sale invoices unaffected.
+  final sellingPrice = TextEditingController();
+  bool sellingPriceEdited = false;
   final discount = PurchaseDiscountDraft();
   SaleLine({this.productId, double? unitPrice}) {
     if (unitPrice != null) price.text = unitPrice.toStringAsFixed(2);
   }
-  void dispose() { quantity.dispose(); price.dispose(); }
+  void dispose() { quantity.dispose(); price.dispose(); sellingPrice.dispose(); }
 }
 
 InputDecoration _vibInvoiceInput(String label, {IconData? icon}) => InputDecoration(
@@ -6399,6 +6402,8 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
             update(() => saveError = 'اختر العميل واكتب مبلغًا صحيحًا أكبر من صفر.');
             return;
           }
+          final paidCents=(paid*100).round();
+          if(paidCents<=0) {update(()=>saveError='المبلغ أقل من قرش واحد');return;}
           update(() { saving = true; saveError = null; });
           try {
             final actor = FirebaseAuth.instance.currentUser!.uid;
@@ -6416,37 +6421,42 @@ Future<void> createReceiptVoucher(BuildContext context, String branchId, {requir
               final receiptCounter = await tx.get(receiptCounterRef);
               final receiptNumber = ((receiptCounter.data()?['lastNumber'] as num?)?.toInt() ?? 0) + 1;
               if (!customer.exists || customer.data()?['active'] == false) throw Exception('العميل غير متاح');
-              final balance = (customer.data()?['balance'] as num?)?.toDouble() ?? 0;
-              if (paid > balance) throw Exception('المبلغ أكبر من المديونية الحالية للعميل');
-              final beforeCash = (cash.data()?['balance'] as num?)?.toDouble() ?? 0;
+              final balanceCents=(((customer.data()?['balance'] as num?) ?? 0)*100).round();
+              if(paidCents>balanceCents) throw Exception('المبلغ أكبر من المديونية الحالية للعميل');
+              final beforeCashCents=(((cash.data()?['balance'] as num?) ?? 0)*100).round();
+              final amountCents=paidCents/100;
+              final balance=balanceCents/100;
+              final remaining=(balanceCents-paidCents)/100;
+              final beforeCash=beforeCashCents/100;
+              final cashAfter=(beforeCashCents+paidCents)/100;
               final now = FieldValue.serverTimestamp();
               final customerName = '${customer.data()?['name'] ?? ''}';
               savedReceipt={
                 'customerId':id,'customerName':customerName,'customerPhone':'${customer.data()?['phone'] ?? ''}',
-                'receiptDate':receiptDate,'createdAt':receiptDate,'amount':paid,'balanceBefore':balance,
-                'balanceAfter':balance-paid,'actorId':actor,'actorName':'${profile?['name'] ?? ''}',
+                'receiptDate':receiptDate,'createdAt':receiptDate,'amount':amountCents,'balanceBefore':balance,
+                'balanceAfter':remaining,'actorId':actor,'actorName':'${profile?['name'] ?? ''}',
                 'branchId':branchId,'note':note.text.trim(),'paymentMethod':paymentMethod,'receiptNumber':'$receiptNumber',
               };
-              tx.update(customerRef, {'balance': balance - paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now});
-              tx.set(cashRef, {'balance': beforeCash + paid, 'lastReceiptId': receiptRef.id, 'updatedAt': now}, SetOptions(merge: true));
+              tx.update(customerRef, {'balance': remaining, 'lastReceiptId': receiptRef.id, 'updatedAt': now});
+              tx.set(cashRef, {'balance': cashAfter, 'lastReceiptId': receiptRef.id, 'updatedAt': now}, SetOptions(merge: true));
               tx.set(receiptCounterRef, {'lastNumber': receiptNumber, 'updatedAt': now}, SetOptions(merge: true));
               tx.set(receiptRef, {
                 'customerId': id, 'customerName': customerName, 'customerPhone': '${customer.data()?['phone'] ?? ''}',
                 'receiptDate':receiptDate,
-                'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
-                'cashBefore': beforeCash, 'cashAfter': beforeCash + paid,
+                'amount': amountCents, 'balanceBefore': balance, 'balanceAfter': remaining,
+                'cashBefore': beforeCash, 'cashAfter': cashAfter,
                 'actorId': actor, 'actorName': '${profile?['name'] ?? ''}', 'branchId': branchId,
                 'note': note.text.trim(), 'paymentMethod':paymentMethod,'receiptNumber':'$receiptNumber', 'createdAt': now,
                 'customerMovementId': customerMovement.id, 'cashMovementId': cashMovement.id,
               });
               tx.set(customerMovement, {
                 'accountType': 'customers', 'accountId': id, 'accountName': customerName, 'kind': 'collection',
-                'amount': paid, 'balanceBefore': balance, 'balanceAfter': balance - paid,
+                'amount': amountCents, 'balanceBefore': balance, 'balanceAfter': remaining,
                 'referenceId': receiptRef.id, 'actorId': actor, 'branchId': branchId, 'createdAt': now, 'receiptDate':receiptDate,
               });
               tx.set(cashMovement, {
                 'accountType': 'cash', 'accountId': id, 'accountName': customerName, 'kind': 'customerCollection',
-                'amount': paid, 'delta': paid, 'balanceBefore': beforeCash, 'balanceAfter': beforeCash + paid,
+                'amount': amountCents, 'delta': amountCents, 'balanceBefore': beforeCash, 'balanceAfter': cashAfter,
                 'referenceId': receiptRef.id, 'reason': 'سند قبض من عميل', 'actorId': actor, 'branchId': branchId, 'createdAt': now, 'receiptDate':receiptDate,
               });
             });
@@ -7728,7 +7738,9 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
       final row = additions[i], product = productSnaps[i].data();
       final quantity = row['quantity'] as int;
       final rawPrice = (row['unitPrice'] as num).toDouble();
-      if (!rawPrice.isFinite || rawPrice < 0) throw Exception('راجع سعر البند');
+      final changedSellingPrice=purchase && row['sellingPrice'] is num ? (row['sellingPrice'] as num).toDouble() : null;
+      if (!rawPrice.isFinite || rawPrice < 0 ||
+          (changedSellingPrice!=null && (!changedSellingPrice.isFinite || changedSellingPrice<rawPrice))) throw Exception('راجع سعر الشراء وسعر البيع');
       final price = cents(rawPrice);
       final lineCents = purchase ? cents(rawPrice * quantity) : price * quantity;
       if (product == null || product['active'] != true || quantity <= 0 || quantity > 1000000 || price < 0) {
@@ -7747,6 +7759,7 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
           : cents(existing[key] as num) != price)) throw Exception('الصنف موجود بسعر مختلف');
       final addition = <String, dynamic>{'productId': row['productId'], 'productName': product['name'],
         'quantity': quantity, key: purchase ? rawPrice : price / 100, 'lineTotal': lineCents / 100,
+        if (changedSellingPrice!=null) 'sellingPriceAtPurchase':changedSellingPrice,
         if (!purchase) 'purchasePriceAtSale': (product['purchasePrice'] as num?)?.toDouble() ?? 0};
       addedTotal += lineCents;
       if (existing == null) {
@@ -7783,6 +7796,7 @@ Future<void> appendInvoiceLocally(String type, String id, int revision,
         'createdAt': FieldValue.serverTimestamp()});
       if (purchase) tx.update(productSnaps[i].reference, {
         'purchasePrice': row['unitCost'],
+        if(row['sellingPriceAtPurchase']!=null) 'price':row['sellingPriceAtPurchase'],
         'lastPurchaseId': id,
         'lastPurchaseAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
@@ -7857,7 +7871,11 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
       for (final item in originalItems) {
         if (!products.any((p) => p.id == item['productId'])) throw Exception('صنف الفاتورة غير موجود');
         final line=SaleLine(productId: '${item['productId']}', unitPrice: (item[purchase ? 'unitCost' : 'unitPrice'] as num).toDouble())..quantity.text = '${item['quantity']}';
-        if(purchase) line.price.text='${item['unitCost']}';
+        if(purchase) {
+          line.price.text='${item['unitCost']}';
+          final current = products.firstWhere((p)=>p.id==line.productId).data()['price'];
+          line.sellingPrice.text=current is num ? current.toStringAsFixed(2) : '';
+        }
         lines.add(line);
       }
       paid.text = '${data['paid']}';
@@ -7907,6 +7925,8 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
               if (purchase) PurchaseInvoiceLine(
                 key: ObjectKey(lines[i]), number: i + 1, name: '${products.firstWhere((p) => p.id == lines[i].productId).data()['name']}',
                 cost: lines[i].price, quantity: lines[i].quantity, enabled: !saving, totalEditable: true, discountDraft: lines[i].discount,
+                sellingPrice:lines[i].sellingPrice,
+                onSellingPriceChanged:()=>lines[i].sellingPriceEdited=true,
                 onChanged: () => update(() {}),
                 onDelete: () => update(() { lines.removeAt(i).dispose(); }),
                 onChoose: () async {
@@ -7915,7 +7935,11 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
                   if (selected == null || !c.mounted) return;
                   update(() {
                     lines[i].productId = selected;
-                    lines[i].price.text = priceFor(products.firstWhere((p) => p.id == selected)).toStringAsFixed(2);
+                    final selectedProduct=products.firstWhere((p)=>p.id==selected);
+                    lines[i].price.text=priceFor(selectedProduct).toStringAsFixed(2);
+                    final sale=selectedProduct.data()['price'];
+                    lines[i].sellingPrice.text=sale is num ? sale.toStringAsFixed(2) : '';
+                    lines[i].sellingPriceEdited=false;
                   });
                 },
               ) else PurchaseInvoiceLine(
@@ -7936,8 +7960,13 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
               final selected = await pickPurchaseProduct(c, products.where((p) => p.data()['active'] == true).toList(),
                 lines.where((line) => line.productId != null).map((line) => line.productId!).toSet());
               if (selected == null || !c.mounted) return;
-              update(() => lines.add(SaleLine(productId: selected,
-                unitPrice: priceFor(products.firstWhere((p) => p.id == selected)))));
+              final product=products.firstWhere((p)=>p.id==selected);
+              final line=SaleLine(productId:selected,unitPrice:priceFor(product));
+              if(purchase) {
+                final sale=product.data()['price'];
+                line.sellingPrice.text=sale is num ? sale.toStringAsFixed(2) : '';
+              }
+              update(()=>lines.add(line));
             }, icon: const Icon(Icons.add), label: Text(purchase ? 'إضافة بند جديد' : 'إضافة بند')),
             SwitchListTile(title: Text(replacing ? 'نقدي — مدفوع بالكامل' : 'دفع قيمة البنود المضافة بالكامل'), value: cash,
               onChanged: saving ? null : (value) => update(() {
@@ -7965,7 +7994,16 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
                   ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('راجع الأصناف والأسعار والكميات ولا تكرر الصنف')));
                   return;
                 }
-                items.add({'productId': line.productId, 'quantity': quantity, 'unitPrice': price});
+                double? editedSalePrice;
+                if(purchase && line.sellingPriceEdited) {
+                  editedSalePrice=double.tryParse(line.sellingPrice.text.trim().replaceAll(',', '.'));
+                  if(editedSalePrice==null || !editedSalePrice.isFinite || editedSalePrice<price) {
+                    ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content:Text('سعر البيع المعدل لازم يكون صحيح ومش أقل من سعر الشراء')));
+                    return;
+                  }
+                }
+                items.add({'productId': line.productId, 'quantity': quantity, 'unitPrice': price,
+                  if(editedSalePrice!=null) 'sellingPrice':editedSalePrice});
               }
               if (items.isEmpty || !extraPaid.isFinite || extraPaid < 0 || extraPaid > addedTotal) {
                 ScaffoldMessenger.of(c).showSnackBar(const SnackBar(content: Text('راجع البنود وقيمة المدفوع')));
