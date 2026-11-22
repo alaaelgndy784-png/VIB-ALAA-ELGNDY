@@ -80,7 +80,7 @@ void main() {
         home:Scaffold(body:InvoiceEditorFrame(
           title:'فاتورة مشتريات',checkout:false,total:377.65,
           tableMode:true,
-          purchaseSellingPriceColumn:purchaseEditorShowsSalePrice(owner:false,employeeApp:false),
+          purchaseSellingPriceColumn:false, // Even if a navigation path drops it, manager purchase keeps the fourth column.
           invoiceNumber:'000473',itemCount:1,quantityCount:1,
           body:ListView(children:[InvoiceCompactTableLine(
             number:1,name:'خلاط شجرة هواي',price:cost,quantity:qty,
