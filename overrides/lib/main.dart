@@ -5261,7 +5261,7 @@ Future<void> purchaseDialog(BuildContext context,{bool owner=true}) async {
         onDiscard: () => autosave.stop(clear: true),
         child:InvoiceEditorFrame(
         title:checkout ? 'حفظ فاتورة المشتريات' : 'فاتورة مشتريات',checkout:checkout,total:previewTotal,
-        tableMode:true,purchaseSellingPriceColumn:owner,invoiceNumber:draftNumber,itemCount:lines.length,
+        tableMode:true,purchaseSellingPriceColumn:purchaseEditorShowsSalePrice(owner:owner,employeeApp:staffApp),invoiceNumber:draftNumber,itemCount:lines.length,
         quantityCount:lines.fold<int>(0,(sum,row)=>sum+(int.tryParse(row.quantity.text) ?? 0)),
         headerAction:IgnorePointer(ignoring:saving,child:ChatShortcut(owner:owner)),
         toolbar:Column(children:[
