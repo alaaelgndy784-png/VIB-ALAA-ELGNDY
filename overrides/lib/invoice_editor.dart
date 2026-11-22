@@ -52,7 +52,7 @@ class InvoiceEditorFrame extends StatelessWidget {
             ])),
           if(toolbar != null) Padding(padding: const EdgeInsets.symmetric(vertical: 6), child: toolbar!),
           if (entryStatus != null) entryStatus!,
-          InvoiceCompactTableHeader(showSellingPrice:purchaseSellingPriceColumn),
+          InvoiceCompactTableHeader(showSellingPrice:purchaseSellingPriceColumn || (!staffApp && title.contains('مشتريات'))),
         ],
         Expanded(child: checkout ? body : Container(color: Colors.white,
           child: DefaultTextStyle.merge(style: const TextStyle(color: Colors.black), child: body))),
