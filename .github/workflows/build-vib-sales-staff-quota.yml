@@ -4,6 +4,10 @@ permissions:
   contents: write
   actions: read
 
+concurrency:
+  group: vib-staff-visit-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
   workflow_dispatch:
   push:
@@ -326,10 +330,24 @@ jobs:
           test -n "$NEW_SHA" && test "$NEW_SHA" = "$OLD_SHA"
           test "$NEW_SHA" = "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f"
           (cd staff-new && sha256sum VIB-SALES-STAFF.apk > SHA256SUMS.txt)
+      - name: Ensure this is the most recent staff visit update before publishing
+        id: latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          HEAD="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/feature/staff-required-visit-0-2-60-20261123" --jq '.object.sha')"
+          if [ "$HEAD" = "$GITHUB_SHA" ]; then
+            echo 'publish=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'Older build, skipping release.'
+            echo 'publish=false' >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish only verified VIB Staff update
+        if: steps.latest.outputs.publish == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: vib-staff-0.2.60-required-visit-20261123
+          tag_name: vib-staff-0.2.60-required-visit-verified-20261123
           target_commitish: ${{ github.sha }}
           name: VIB Staff 0.2.60 - Mandatory Customer Visit On Launch
           body: |
