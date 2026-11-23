@@ -171,10 +171,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 22094/; s/versionName = .*/versionName = "0.2.94"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 22094' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.94"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=22094 --build-name=0.2.94
+          sed -i -E 's/versionCode = .*/versionCode = 22095/; s/versionName = .*/versionName = "0.2.95"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 22095' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.95"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=22095 --build-name=0.2.95
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
           if [ "${{ matrix.app }}" = manager ]; then
@@ -184,7 +184,7 @@ jobs:
             echo "$BADGING"
             grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
             grep -F "versionCode='24094'" <<< "$BADGING"
-            grep -F "versionName='0.2.94'" <<< "$BADGING"
+            grep -F "versionName='0.2.95'" <<< "$BADGING"
             SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             test -x "$SIGNER"
             "$SIGNER" verify --print-certs dist/VIB-SALES-MANAGER.apk > dist/signature-check.txt
@@ -1375,4 +1375,63 @@ jobs:
           files: |
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
+          make_latest: false
+
+
+  publish-manager-profit-five-0-2-95:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/feature/manager-profit-five-0-2-95-20261123'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tested manager update
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+
+      - name: Verify direct upgrade of existing VIB Manager
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p previous
+          gh release download vib-manager-0.2.91-product-ledger-micropos-20261123 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir previous
+          OLD=previous/VIB-SALES-MANAGER.apk
+          NEW=manager/VIB-SALES-MANAGER.apk
+          test -s "$OLD" && test -s "$NEW"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$AAPT" dump badging "$NEW" > manager/badging.txt
+          "$AAPT" dump badging "$OLD" > previous/badging.txt
+          grep -F "name='com.alaa.vibsales.managerscan'" manager/badging.txt
+          grep -F "versionCode='22095'" manager/badging.txt
+          grep -F "versionName='0.2.95'" manager/badging.txt
+          grep -F "versionCode='22091'" previous/badging.txt
+          "$SIGNER" verify --print-certs "$NEW" > manager/signature.txt
+          "$SIGNER" verify --print-certs "$OLD" > previous/signature.txt
+          NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' manager/signature.txt | head -1 | tr -d '[:space:]')"
+          OLD_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' previous/signature.txt | head -1 | tr -d '[:space:]')"
+          test -n "$NEW_SHA" && test "$NEW_SHA" = "$OLD_SHA"
+          test "$NEW_SHA" = "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f"
+          sha256sum "$NEW" > manager/SHA256SUMS.txt
+          echo 'Direct in-place update verified: package, signature, and version code'
+
+      - name: Publish signed Manager 0.2.95 profit reports APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.95-five-profit-reports-20261123
+          target_commitish: ${{ github.sha }}
+          name: VIB Manager 0.2.95 - Five Profit Report Views
+          body: |
+            تحديث مباشر فوق مانيجر 0.2.91 أو أقدم بنفس توقيع التثبيت.
+            تقارير الأرباح: مفصل، حسب الفاتورة، حسب الصنف، حسب العميل، إجمالي.
+            فترة من تاريخ إلى تاريخ، ومشاركة PDF/واتساب.
+            يحافظ على حساب تكاليف FIFO، المرتجعات، والمصروفات.
+            مبني على مصدر 0.2.94 الذي يتضمن تقرير حركة الصنف وزر PDF/واتساب.
+            تحقق البناء والاختبارات والتوقيع، لكن لم يتم فحص التطبيق على هاتف العميل.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          overwrite_files: true
           make_latest: false
