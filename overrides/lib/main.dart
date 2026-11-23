@@ -8993,6 +8993,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
   String? productId, branchId='main';
   DateTimeRange? range;
   bool showMovementInvoiceNumbers = false;
+  bool showMovementFilters = false;
 
   Future<Map<String,String>> _movementCounterparties(
       List<QueryDocumentSnapshot<Map<String,dynamic>>> rows) async {
@@ -9093,15 +9094,24 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
       required String outgoing,required String balance,required String description,
       bool heading=false,bool opening=false,bool alternate=false}) {
     final base=heading?const Color(0xFF283B46):alternate?const Color(0xFFF1F4F7):Colors.white;
-    return Row(textDirection:TextDirection.rtl,children:[
-      _ledgerCell(date,116,heading:heading,tint:base),
-      _ledgerCell(incoming,74,heading:heading,
-        tint:heading?base:incoming.isNotEmpty?const Color(0xFFD8F9D9):base),
-      _ledgerCell(outgoing,74,heading:heading,
-        tint:heading?base:outgoing.isNotEmpty?const Color(0xFFFFE2D5):base),
-      _ledgerCell(balance,86,heading:heading,tint:base,bold:true),
-      _ledgerCell(description,400,heading:heading,tint:base,bold:opening),
-    ]);
+    // Keep all five columns visible on a phone; don't bury half the report
+    // behind horizontal scrolling. The description stays wider than numbers.
+    return LayoutBuilder(builder:(context,constraints) {
+      final width=constraints.maxWidth;
+      final dateWidth=(width*.225).clamp(68.0,104.0);
+      final movementWidth=(width*.125).clamp(36.0,64.0);
+      final balanceWidth=(width*.14).clamp(42.0,70.0);
+      final descriptionWidth=width-dateWidth-movementWidth*2-balanceWidth;
+      return Row(textDirection:TextDirection.rtl,children:[
+        _ledgerCell(date,dateWidth,heading:heading,tint:base),
+        _ledgerCell(incoming,movementWidth,heading:heading,
+          tint:heading?base:incoming.isNotEmpty?const Color(0xFFD8F9D9):base),
+        _ledgerCell(outgoing,movementWidth,heading:heading,
+          tint:heading?base:outgoing.isNotEmpty?const Color(0xFFFFE2D5):base),
+        _ledgerCell(balance,balanceWidth,heading:heading,tint:base,bold:true),
+        _ledgerCell(description,descriptionWidth,heading:heading,tint:base,bold:opening),
+      ]);
+    });
   }
 
   @override
@@ -9137,53 +9147,62 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                 ),
               );
             }),
-            const SizedBox(height: 6),
-            Row(children: [
-              Expanded(child: DropdownButtonFormField<String>(
-                initialValue: branchId,
-                isExpanded: true,
-                decoration: _vibInvoiceInput('الفرع'),
-                items: [
-                  const DropdownMenuItem<String>(value: null, child: Text('كل الفروع')),
-                  const DropdownMenuItem(value: 'main', child: Text('المخزون الرئيسي')),
-                  ...branches.where((d)=>d.id!='main').map((d) => DropdownMenuItem(value: d.id, child: Text('${d.data()['name']}', overflow: TextOverflow.ellipsis))),
-                ],
-                onChanged: (v) => setState(() => branchId = v),
-              )),
-              const SizedBox(width: 6),
+            const SizedBox(height: 4),
+            Row(children:[
+              Expanded(child: OutlinedButton.icon(
+                style:OutlinedButton.styleFrom(
+                  visualDensity:VisualDensity.compact,
+                  minimumSize:const Size(0,32),
+                  padding:const EdgeInsets.symmetric(horizontal:6)),
+                icon:Icon(showMovementFilters ? Icons.expand_less : Icons.tune,size:17),
+                label:Text(showMovementFilters ? 'إخفاء خيارات التاريخ والفرع' : 'التاريخ والفرع',
+                  style:const TextStyle(fontSize:12),maxLines:1,overflow:TextOverflow.ellipsis),
+                onPressed:()=>setState(()=>showMovementFilters=!showMovementFilters))),
+              const SizedBox(width:4),
+              const Text('رقم الفاتورة',style:TextStyle(fontSize:12)),
+              Checkbox(
+                key: const ValueKey('product-ledger-optional-invoice-number'),
+                value:showMovementInvoiceNumbers,
+                visualDensity:VisualDensity.compact,
+                onChanged:(checked)=>setState(
+                  ()=>showMovementInvoiceNumbers=checked??false)),
             ]),
-            MovementPeriodControls(from:range?.start ?? DateTime(DateTime.now().year,DateTime.now().month,1),
-              to:range?.end ?? DateTime.now(),enabled:true,onConfirm:(a,b)=>setState(()=>range=DateTimeRange(start:a,end:b))),
-            TextButton(onPressed:()=>setState(()=>range=null),child:const Text('عرض كل الحركات')),
-            CheckboxListTile(
-              key: const ValueKey('product-ledger-optional-invoice-number'),
-              dense: true,
-              controlAffinity: ListTileControlAffinity.leading,
-              visualDensity: VisualDensity.compact,
-              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-              title: const Text('إظهار رقم الفاتورة (اختياري)',
-                style: TextStyle(fontSize: 13)),
-              subtitle: const Text('في جدول الحركة وملف PDF',
-                style: TextStyle(fontSize: 11)),
-              value: showMovementInvoiceNumbers,
-              onChanged: (checked) => setState(
-                () => showMovementInvoiceNumbers = checked ?? false),
-            ),
-            const SizedBox(height: 7),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton.icon(
-                onPressed: products.isEmpty ? null : () {
-                  if (productId == null) {
-                    _chooseMovementProduct(products);
-                  } else {
-                    setState(() {});
-                  }
-                },
-                icon: const Icon(Icons.manage_search_rounded),
-                label: Text(productId == null ? 'اختار صنف لعرض حركته' : 'تحديث تقرير المنتج'),
-              ),
-            ),
+            if (!showMovementFilters) Padding(
+              padding:const EdgeInsets.only(bottom:2),
+              child:Text(
+                range==null ? 'كل الحركات' :
+                  '${DateFormat('dd/MM/yyyy').format(range!.start)} - ${DateFormat('dd/MM/yyyy').format(range!.end)}',
+                style:const TextStyle(fontSize:10,color:Colors.white70))),
+            if (showMovementFilters) ...[
+              DropdownButtonFormField<String>(
+                initialValue:branchId,
+                isExpanded:true,
+                decoration:_vibInvoiceInput('الفرع'),
+                items:[
+                  const DropdownMenuItem<String>(value:null,child:Text('كل الفروع')),
+                  const DropdownMenuItem(value:'main',child:Text('المخزون الرئيسي')),
+                  ...branches.where((d)=>d.id!='main').map((d)=>
+                    DropdownMenuItem(value:d.id,
+                      child:Text('${d.data()['name']}',overflow:TextOverflow.ellipsis))),
+                ],
+                onChanged:(v)=>setState(()=>branchId=v)),
+              MovementPeriodControls(
+                from:range?.start??DateTime(DateTime.now().year,DateTime.now().month,1),
+                to:range?.end??DateTime.now(),enabled:true,
+                onConfirm:(a,b)=>setState(()=>range=DateTimeRange(start:a,end:b))),
+              Row(children:[
+                Expanded(child:TextButton(
+                  onPressed:()=>setState(()=>range=null),
+                  child:const Text('عرض كل الحركات'))),
+                Expanded(child:TextButton.icon(
+                  onPressed:products.isEmpty ? null : (){
+                    if(productId==null){_chooseMovementProduct(products);}
+                    else {setState((){});}
+                  },
+                  icon:const Icon(Icons.refresh,size:16),
+                  label:const Text('تحديث التقرير'))),
+              ]),
+            ],
           ]),
         );
       },
@@ -9253,34 +9272,42 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                     }
                     return Column(children: [
                       Padding(
-                        padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),
+                        padding:const EdgeInsets.symmetric(horizontal:8,vertical:2),
                         child:_vibInvoicePanel(
-                          padding:const EdgeInsets.symmetric(horizontal:9,vertical:7),
-                          child:Column(children:[
-                            Text(productName,style:const TextStyle(fontSize:16,fontWeight:FontWeight.bold)),
-                            Text('كود المنتج: $productCode • الحركات: ${ledger.length}',
-                              style:const TextStyle(fontSize:12,color:vibNeonBlue)),
-                            Text('أول المدة: ${totals.opening} • آخر المدة: ${totals.closing} • الموجود الآن: $currentQty'),
-                            if(totals.gap!=0) Text(
-                              'تنبيه: فرق جرد ${totals.gap} بين الرصيد الحالي وآخر الحركات المسجلة',
-                              style:const TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold)),
+                          padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),
+                          child:Column(crossAxisAlignment:CrossAxisAlignment.stretch,children:[
                             Row(children:[
-                              Expanded(child:Text('الوارد: ${totals.incoming}',
-                                style:const TextStyle(color:Colors.greenAccent,fontWeight:FontWeight.bold))),
-                              Expanded(child:Text('الصادر: ${totals.outgoing}',
-                                style:const TextStyle(color:Colors.redAccent,fontWeight:FontWeight.bold))),
+                              Expanded(child:Text(productName,
+                                style:const TextStyle(fontSize:13,fontWeight:FontWeight.bold),
+                                maxLines:1,overflow:TextOverflow.ellipsis)),
                               OutlinedButton.icon(
-                                onPressed:snap.data!.metadata.isFromCache || snap.data!.metadata.hasPendingWrites
-                                  ? null :()=>_printMovementReport(context,productName,productCode,rows,parties,totals),
-                                icon:const Icon(Icons.picture_as_pdf,size:18),
-                                label:const Text('PDF / طباعة')),
+                                style:OutlinedButton.styleFrom(
+                                  visualDensity:VisualDensity.compact,
+                                  minimumSize:const Size(0,30),
+                                  padding:const EdgeInsets.symmetric(horizontal:8)),
+                                onPressed:snap.data!.metadata.isFromCache ||
+                                    snap.data!.metadata.hasPendingWrites
+                                  ? null :()=>_printMovementReport(
+                                    context,productName,productCode,rows,parties,totals),
+                                icon:const Icon(Icons.picture_as_pdf,size:16),
+                                label:const Text('PDF',style:TextStyle(fontSize:12))),
                             ]),
+                            Text('كود: $productCode • الحركات: ${ledger.length}',
+                              style:const TextStyle(fontSize:10,color:vibNeonBlue),
+                              maxLines:1,overflow:TextOverflow.ellipsis),
+                            Text('وارد: ${totals.incoming}  •  صادر: ${totals.outgoing}  •  آخر الرصيد: ${totals.closing}',
+                              style:const TextStyle(fontSize:11,fontWeight:FontWeight.w600),
+                              maxLines:1,overflow:TextOverflow.ellipsis),
+                            Text('أول المدة: ${totals.opening} • الموجود الآن: $currentQty',
+                              style:const TextStyle(fontSize:10),
+                              maxLines:1,overflow:TextOverflow.ellipsis),
+                            if(totals.gap!=0) Text(
+                              'تنبيه: فرق جرد ${totals.gap} بين الموجود وآخر الحركات',
+                              style:const TextStyle(fontSize:10,color:Colors.redAccent)),
                           ]),
                         ),
                       ),
-                      Expanded(child:Scrollbar(child:SingleChildScrollView(
-                        scrollDirection:Axis.horizontal,
-                        child:SizedBox(width:750,child:ListView.builder(
+                      Expanded(child:ListView.builder(
                           key:const ValueKey('product-ledger-all-movements'),
                           itemCount:ledger.length+2,
                           itemBuilder:(context,index) {
@@ -9300,11 +9327,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                               balance:'${line.balance}',description:line.description,
                               alternate:index.isOdd);
                           },
-                        )),
-                      ))),
-                      const Padding(padding:EdgeInsets.symmetric(horizontal:8,vertical:4),
-                        child:Text('يمكن سحب الجدول يمينًا وشمالًا. التقرير للعرض ولا يعدل أي فاتورة أو رصيد.',
-                          style:TextStyle(fontSize:11,color:Colors.white70))),
+                        }),
                     ]);
                   },
                 );
