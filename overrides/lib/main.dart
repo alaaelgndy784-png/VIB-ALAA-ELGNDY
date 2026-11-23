@@ -9327,7 +9327,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                               balance:'${line.balance}',description:line.description,
                               alternate:index.isOdd);
                           },
-                        }),
+                        )),
                     ]);
                   },
                 );
