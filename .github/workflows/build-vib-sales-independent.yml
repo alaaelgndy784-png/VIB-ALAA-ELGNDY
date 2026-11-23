@@ -183,7 +183,7 @@ jobs:
             BADGING="$($AAPT dump badging dist/VIB-SALES-MANAGER.apk | head -n 1)"
             echo "$BADGING"
             grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-            grep -F "versionCode='24094'" <<< "$BADGING"
+            grep -F "versionCode='24095'" <<< "$BADGING"
             grep -F "versionName='0.2.95'" <<< "$BADGING"
             SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             test -x "$SIGNER"
@@ -1405,9 +1405,9 @@ jobs:
           "$AAPT" dump badging "$NEW" > manager/badging.txt
           "$AAPT" dump badging "$OLD" > previous/badging.txt
           grep -F "name='com.alaa.vibsales.managerscan'" manager/badging.txt
-          grep -F "versionCode='22095'" manager/badging.txt
+          grep -F "versionCode='24095'" manager/badging.txt
           grep -F "versionName='0.2.95'" manager/badging.txt
-          grep -F "versionCode='22091'" previous/badging.txt
+          grep -F "versionCode='24091'" previous/badging.txt
           "$SIGNER" verify --print-certs "$NEW" > manager/signature.txt
           "$SIGNER" verify --print-certs "$OLD" > previous/signature.txt
           NEW_SHA="$(sed -n 's/.*certificate SHA-256 digest: //p' manager/signature.txt | head -1 | tr -d '[:space:]')"
