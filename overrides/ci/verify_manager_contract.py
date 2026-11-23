@@ -98,6 +98,13 @@ checks = [
      "cell('صادر',head:true)" in load("overrides/lib/account_statements.dart") and
      "cell('الرصيد',head:true)" in load("overrides/lib/account_statements.dart") and
      "cell('البيان',head:true)" in load("overrides/lib/account_statements.dart")),
+    ("product movement WhatsApp button shares same read-only PDF as print",
+     "product-ledger-share-whatsapp-pdf" in main and
+     "Future<void> _shareMovementReportWhatsApp(" in main and
+     "await Printing.sharePdf(" in main and
+     "Future<Uint8List> _createMovementReportPdf(" in main and
+     main.count("await _createMovementReportPdf(productName,productCode,rows,parties,total)") >= 2 and
+     "context,productName,productCode,rows,parties,totals" in main),
     ("product ledger running-balance regression included in pre-build tests",
      "product_movement_layout_test.dart" in workflow and
      "MicroPOS-style product ledger keeps chronological running stock balance" in load("overrides/test/product_movement_layout_test.dart")),
