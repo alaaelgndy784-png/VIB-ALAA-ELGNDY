@@ -120,6 +120,7 @@ jobs:
           permissions = '''    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
               <uses-permission android:name="android.permission.RECORD_AUDIO" />
               <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
               <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
               <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
               <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
@@ -171,10 +172,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 22095/; s/versionName = .*/versionName = "0.2.95"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 22095' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.95"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=22095 --build-name=0.2.95
+          sed -i -E 's/versionCode = .*/versionCode = 22096/; s/versionName = .*/versionName = "0.2.96"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 22096' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.96"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=22096 --build-name=0.2.96
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
           if [ "${{ matrix.app }}" = manager ]; then
@@ -183,8 +184,8 @@ jobs:
             BADGING="$($AAPT dump badging dist/VIB-SALES-MANAGER.apk | head -n 1)"
             echo "$BADGING"
             grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-            grep -F "versionCode='24095'" <<< "$BADGING"
-            grep -F "versionName='0.2.95'" <<< "$BADGING"
+            grep -F "versionCode='24096'" <<< "$BADGING"
+            grep -F "versionName='0.2.96'" <<< "$BADGING"
             SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             test -x "$SIGNER"
             "$SIGNER" verify --print-certs dist/VIB-SALES-MANAGER.apk > dist/signature-check.txt
@@ -1434,4 +1435,57 @@ jobs:
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
           overwrite_files: true
+          make_latest: false
+
+  publish-manager-background-visits-0-2-96:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/feature/manager-background-visit-push-0-2-96-20261123'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tested manager 0.2.96
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+      - name: Verify install-over update and matching Android signing certificate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p prior
+          gh release download vib-manager-0.2.95-profit-five-reports-20261123 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir prior
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=prior/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$AAPT" dump badging "$NEW" | grep -m1 '^package:' > /tmp/manager-new
+          "$AAPT" dump badging "$OLD" | grep -m1 '^package:' > /tmp/manager-old
+          grep -F "name='com.alaa.vibsales.managerscan'" /tmp/manager-new
+          grep -F "name='com.alaa.vibsales.managerscan'" /tmp/manager-old
+          grep -F "versionCode='24096'" /tmp/manager-new
+          grep -F "versionName='0.2.96'" /tmp/manager-new
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/cert-new
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/cert-old
+          SHA_NEW="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/cert-new | head -1 | tr -d '[:space:]')"
+          SHA_OLD="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/cert-old | head -1 | tr -d '[:space:]')"
+          test -n "$SHA_NEW" && test "$SHA_NEW" = "$SHA_OLD"
+          test "$SHA_NEW" = "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f"
+          (cd manager && sha256sum VIB-SALES-MANAGER.apk > SHA256SUMS.txt)
+      - name: Release manager background visit alerts update
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.96-background-visit-push-20261123
+          target_commitish: ${{ github.sha }}
+          name: VIB Manager 0.2.96 - Customer visit background notifications
+          body: |
+            Manager app update built from 0.2.95 including five profit report views.
+            Registers Firebase push token so employee check-in notifications can
+            be shown by Android when Manager is in the background. A separate
+            Firebase Functions deployment is required before remote messages
+            actually arrive. Keeps existing manager financial data and login.
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
           make_latest: false
