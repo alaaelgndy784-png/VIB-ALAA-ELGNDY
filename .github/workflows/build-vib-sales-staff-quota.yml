@@ -165,7 +165,7 @@ jobs:
 
       - name: Test staff quota safeguards
         working-directory: VIB-SALES-INDEPENDENT
-        run: flutter test test/accounting_test.dart test/pending_sale_data_test.dart test/staff_catalogue_sync_test.dart
+        run: flutter test test/accounting_test.dart test/pending_sale_data_test.dart test/staff_catalogue_sync_test.dart test/visit_alerts_test.dart
 
       - name: Verify mandatory visit gate is connected to successful visit save
         if: matrix.app == 'staff'
