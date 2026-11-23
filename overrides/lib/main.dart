@@ -46,6 +46,7 @@ import 'sale_price_floor.dart';
 part 'cheques.dart';
 part 'chat_alerts.dart';
 part 'approval_alerts.dart';
+part 'visit_alerts.dart';
 
 part 'invoice_editor.dart';
 part 'sale_cost_reconciliation.dart';
@@ -1153,6 +1154,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if(widget.role=='owner') {
       ChequeReminders.instance.watch(widget.uid);
       unawaited(ManagerApprovalAlerts.instance.watch());
+      unawaited(ManagerVisitAlerts.instance.watch());
       ManagerOfflineSaleSync.instance.start();
       ManagerOfflineVoucherSync.instance.start();
       unawaited(ManagerOfflineDraftStore.instance.syncPending());
@@ -1195,6 +1197,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if(widget.role=='owner') {
       ChequeReminders.instance.stop();
       unawaited(ManagerApprovalAlerts.instance.stop());
+      unawaited(ManagerVisitAlerts.instance.stop());
       ManagerOfflineSaleSync.instance.stop();
       ManagerOfflineVoucherSync.instance.stop();
     } else {
