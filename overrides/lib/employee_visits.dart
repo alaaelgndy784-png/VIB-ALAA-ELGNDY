@@ -4,7 +4,10 @@ class EmployeeVisitsPage extends StatefulWidget {
   final String uid;
   final String employeeName;
   final String branchId;
-  const EmployeeVisitsPage({super.key, required this.uid, required this.employeeName, required this.branchId});
+  /// Called only after the visit has actually been saved successfully.
+  final VoidCallback? onVisitRecorded;
+  const EmployeeVisitsPage({super.key, required this.uid, required this.employeeName,
+    required this.branchId, this.onVisitRecorded});
   @override State<EmployeeVisitsPage> createState() => _EmployeeVisitsPageState();
 }
 
@@ -161,6 +164,8 @@ class _EmployeeVisitsPageState extends State<EmployeeVisitsPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(hasShortage ? 'تم تسجيل الزيارة وطلب النواقص وميعاد الرجوع؛ هيظهروا للمدير' : 'تم تسجيل الزيارة وموقعك الحالي')),
       );
+      // A failed/cancelled visit never unlocks employee work.
+      widget.onVisitRecorded?.call();
     } catch (error) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(error.toString().replaceFirst('Bad state: ', ''))),
