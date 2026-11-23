@@ -101,3 +101,36 @@ exports.notifyCatalogProductCreated = onDocumentCreated(
     return null;
   }
 );
+
+
+const {visitNotification} = require('./visit-notifications');
+
+// A successful, consented employee check-in sends a real push notification.
+// The manager receives it in the Android notification shade even when the
+// app isn't in the foreground; this never polls or tracks staff GPS.
+exports.notifyEmployeeVisitCreated = onDocumentCreated(
+  {document: 'employeeVisits/{visitId}', region: 'us-central1'},
+  async (event) => {
+    const data = event.data?.data();
+    const payload = visitNotification(event.params.visitId, data);
+    if (!payload) return null;
+    const db = getFirestore();
+    const owners = await db.collection('users')
+      .where('role', '==', 'owner').where('active', '==', true).get();
+    const tokens = [...new Set(owners.docs
+      .map(doc => doc.data().managerFcmToken)
+      .filter(value => typeof value === 'string' && value.length > 20))];
+    if (!tokens.length) return null;
+    const messaging = getMessaging();
+    for (let i = 0; i < tokens.length; i += 500) {
+      const response = await messaging.sendEachForMulticast({
+        ...payload, tokens: tokens.slice(i, i + 500),
+      });
+      if (response.failureCount > 0) {
+        console.warn('Visit notification delivery failed for some manager devices',
+          response.failureCount);
+      }
+    }
+    return null;
+  }
+);
