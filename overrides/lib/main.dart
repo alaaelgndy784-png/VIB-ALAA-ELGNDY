@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle, MethodChannel;
 import 'package:geolocator/geolocator.dart';
@@ -46,6 +47,7 @@ import 'sale_price_floor.dart';
 part 'cheques.dart';
 part 'chat_alerts.dart';
 part 'approval_alerts.dart';
+part 'manager_visit_push.dart';
 
 part 'invoice_editor.dart';
 part 'sale_cost_reconciliation.dart';
@@ -1151,6 +1153,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     if(widget.role=='owner') {
       ChequeReminders.instance.watch(widget.uid);
       unawaited(ManagerApprovalAlerts.instance.watch());
+      unawaited(ManagerVisitPushNotifications.instance.watch(widget.uid));
       ManagerOfflineSaleSync.instance.start();
       ManagerOfflineVoucherSync.instance.start();
       unawaited(ManagerOfflineDraftStore.instance.syncPending());
@@ -1186,13 +1189,18 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       if(widget.role=='owner')unawaited(retryManagerOfflineInvoices());
     }
   }
-  Future<void> _signOut() async { await _writePresence(false); await FirebaseAuth.instance.signOut(); }
+  Future<void> _signOut() async {
+    await _writePresence(false);
+    if (widget.role == 'owner') await ManagerVisitPushNotifications.instance.unregister(widget.uid);
+    await FirebaseAuth.instance.signOut();
+  }
   @override void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     ChatAlerts.instance.stop();
     if(widget.role=='owner') {
       ChequeReminders.instance.stop();
       unawaited(ManagerApprovalAlerts.instance.stop());
+      unawaited(ManagerVisitPushNotifications.instance.stop());
       ManagerOfflineSaleSync.instance.stop();
       ManagerOfflineVoucherSync.instance.stop();
     } else {
