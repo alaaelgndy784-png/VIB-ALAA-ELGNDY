@@ -9078,8 +9078,7 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
       List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,
       Map<String,String> parties,ProductPeriodTotals total) async {
     final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-    return createProductTracePdf(
-      productName,
+    return createProductTracePdf(productName,
       rows.map((r)=><String,dynamic>{...r.data(),'id':r.id}).toList(),
       parties,total,font,range:range,productCode:productCode);
   }
