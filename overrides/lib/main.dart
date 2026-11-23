@@ -1142,6 +1142,9 @@ class Home extends StatefulWidget {
 
 class _HomeState extends State<Home> with WidgetsBindingObserver {
   int page = 0;
+  // Employee must finish a real visit once on each fresh Home/login session.
+  // Deliberately not persisted: a new app launch asks for a new visit.
+  bool _requiredVisitRecorded = false;
   Timer? _presenceTimer;
   bool _presenceWriteInFlight = false;
   @override void initState() {
@@ -1213,6 +1216,34 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final owner = widget.role == 'owner';
+    if (!owner && !_requiredVisitRecorded) {
+      // Root-level gate: no menu, tabs, invoices or chat can be opened first.
+      // The Android back button cannot bypass it; signing out remains possible.
+      return PopScope(
+        canPop: false,
+        child: Scaffold(
+          appBar: AppBar(
+            automaticallyImplyLeading: false,
+            title: const Text('تسجيل زيارة قبل بدء العمل'),
+            actions: [
+              IconButton(
+                tooltip: 'تسجيل الخروج',
+                icon: const Icon(Icons.logout),
+                onPressed: () => unawaited(_signOut()),
+              ),
+            ],
+          ),
+          body: EmployeeVisitsPage(
+            uid: widget.uid,
+            employeeName: widget.name,
+            branchId: widget.branchId,
+            onVisitRecorded: () {
+              if (mounted) setState(() => _requiredVisitRecorded = true);
+            },
+          ),
+        ),
+      );
+    }
     if (owner) {
       return Theme(
         data: managerTheme(context),
