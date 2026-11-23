@@ -8972,6 +8972,18 @@ Future<void> returnInvoice(String type, String id,
 }
 
 
+// Presentation-only: invoice serials are optional; no inventory data is changed.
+String vibProductMovementPartyLabel({
+  required bool purchasing,
+  required String party,
+  required String invoiceNumber,
+  required bool showInvoiceNumber,
+}) {
+  final counterpart = '${purchasing ? 'المورد' : 'العميل'}: $party';
+  if (!showInvoiceNumber || invoiceNumber.trim().isEmpty) return counterpart;
+  return '$counterpart\nفاتورة: $invoiceNumber';
+}
+
 class ItemMovementReport extends StatefulWidget {
   const ItemMovementReport({super.key});
   @override State<ItemMovementReport> createState() => _ItemMovementReportState();
@@ -8980,6 +8992,7 @@ class ItemMovementReport extends StatefulWidget {
 class _ItemMovementReportState extends State<ItemMovementReport> {
   String? productId, branchId='main';
   DateTimeRange? range;
+  bool showMovementInvoiceNumbers = false;
 
   Future<Map<String,String>> _movementCounterparties(
       List<QueryDocumentSnapshot<Map<String,dynamic>>> rows) async {
@@ -9017,8 +9030,13 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
             'غير مسجل').toString();
         final invoiceType = purchasing ? 'purchases' : 'sales';
         final originalId = (invoice['sourceInvoiceId'] ?? invoiceId).toString();
-        labels[row.id] = '${purchasing ? 'المورد' : 'العميل'}: $party\n'
-            'فاتورة: ${vibReadableProductInvoiceNumber(invoiceType, originalId, invoice)}';
+        labels[row.id] = vibProductMovementPartyLabel(
+          purchasing: purchasing,
+          party: party,
+          invoiceNumber: vibReadableProductInvoiceNumber(
+            invoiceType, originalId, invoice),
+          showInvoiceNumber: showMovementInvoiceNumbers,
+        );
       } catch (_) {
         labels[row.id] = 'تعذر قراءة الفاتورة الأصلية';
       }
@@ -9137,6 +9155,20 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
             MovementPeriodControls(from:range?.start ?? DateTime(DateTime.now().year,DateTime.now().month,1),
               to:range?.end ?? DateTime.now(),enabled:true,onConfirm:(a,b)=>setState(()=>range=DateTimeRange(start:a,end:b))),
             TextButton(onPressed:()=>setState(()=>range=null),child:const Text('عرض كل الحركات')),
+            CheckboxListTile(
+              key: const ValueKey('product-ledger-optional-invoice-number'),
+              dense: true,
+              controlAffinity: ListTileControlAffinity.leading,
+              visualDensity: VisualDensity.compact,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              title: const Text('إظهار رقم الفاتورة (اختياري)',
+                style: TextStyle(fontSize: 13)),
+              subtitle: const Text('في جدول الحركة وملف PDF',
+                style: TextStyle(fontSize: 11)),
+              value: showMovementInvoiceNumbers,
+              onChanged: (checked) => setState(
+                () => showMovementInvoiceNumbers = checked ?? false),
+            ),
             const SizedBox(height: 7),
             SizedBox(
               width: double.infinity,
