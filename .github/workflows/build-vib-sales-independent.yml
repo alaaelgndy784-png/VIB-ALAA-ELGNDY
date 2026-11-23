@@ -2,6 +2,11 @@ name: Build Independent VIB Sales Apps
 
 permissions:
   contents: write
+  actions: read
+
+concurrency:
+  group: vib-manager-visit-push-${{ github.ref }}
+  cancel-in-progress: true
 
 on:
   workflow_dispatch:
@@ -1453,7 +1458,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p prior
-          gh release download vib-manager-0.2.95-profit-five-reports-20261123 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir prior
+          gh release download vib-manager-0.2.95-five-profit-reports-20261123 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir prior
           NEW=manager/VIB-SALES-MANAGER.apk
           OLD=prior/VIB-SALES-MANAGER.apk
           test -s "$NEW" && test -s "$OLD"
