@@ -167,12 +167,27 @@ jobs:
         working-directory: VIB-SALES-INDEPENDENT
         run: flutter test test/accounting_test.dart test/pending_sale_data_test.dart test/staff_catalogue_sync_test.dart
 
+      - name: Verify mandatory visit gate is connected to successful visit save
+        if: matrix.app == 'staff'
+        working-directory: VIB-SALES-INDEPENDENT
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          home = Path('lib/main.dart').read_text()
+          visits = Path('lib/employee_visits.dart').read_text()
+          assert "if (!owner && !_requiredVisitRecorded)" in home
+          assert "onVisitRecorded: ()" in home
+          assert "widget.onVisitRecorded?.call();" in visits
+          assert "canPop: false" in home
+          print('Mandatory visit gate is connected to successful visit save')
+          PY
+
       - name: Build ${{ matrix.app }} APK
         working-directory: VIB-SALES-INDEPENDENT
         run: |
           flutter clean
           flutter pub get
-          flutter build apk --release --split-per-abi --build-number=4084 --build-name=0.2.59
+          flutter build apk --release --split-per-abi --build-number=4085 --build-name=0.2.60
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
 
@@ -188,8 +203,8 @@ jobs:
           test -x "$AAPT" && test -x "$SIGNER"
           "$AAPT" dump badging "$NEW" | grep -m1 '^package:' | tee dist/VIB-STAFF-PACKAGE.txt
           grep -F "name='com.alaa.vibsales.staffscan'" dist/VIB-STAFF-PACKAGE.txt
-          grep -F "versionCode='6084'" dist/VIB-STAFF-PACKAGE.txt
-          grep -F "versionName='0.2.59'" dist/VIB-STAFF-PACKAGE.txt
+          grep -F "versionCode='6085'" dist/VIB-STAFF-PACKAGE.txt
+          grep -F "versionName='0.2.60'" dist/VIB-STAFF-PACKAGE.txt
           "$SIGNER" verify --print-certs "$NEW" > dist/VIB-STAFF-CERT.txt
           grep -iF "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f" dist/VIB-STAFF-CERT.txt
 
@@ -272,17 +287,17 @@ jobs:
           overwrite_files: true
           make_latest: false
 
-  publish-staff-0-2-59-safe-update:
+  publish-staff-0-2-60-required-visit:
     needs: [verify-rules, build]
-    if: github.ref == 'refs/heads/fix/staff-update-0-2-59-from-manager-0-2-90-20261122'
+    if: github.ref == 'refs/heads/feature/staff-required-visit-0-2-60-20261123'
     runs-on: ubuntu-latest
     steps:
-      - name: Download tested VIB Staff 0.2.59
+      - name: Download tested VIB Staff 0.2.60
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-STAFF-APK
           path: staff-new
-      - name: Compare installed 0.2.58 package and signing certificate
+      - name: Verify update compatibility against prior signed 0.2.58 build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -300,8 +315,8 @@ jobs:
           "$AAPT" dump badging "$OLD" | grep -m1 '^package:' | tee /tmp/old-staff-package
           grep -F "name='com.alaa.vibsales.staffscan'" /tmp/new-staff-package
           grep -F "name='com.alaa.vibsales.staffscan'" /tmp/old-staff-package
-          grep -F "versionCode='6084'" /tmp/new-staff-package
-          grep -F "versionName='0.2.59'" /tmp/new-staff-package
+          grep -F "versionCode='6085'" /tmp/new-staff-package
+          grep -F "versionName='0.2.60'" /tmp/new-staff-package
           grep -F "versionCode='6083'" /tmp/old-staff-package
           grep -F "versionName='0.2.58'" /tmp/old-staff-package
           "$SIGNER" verify --print-certs "$NEW" > /tmp/new-staff-cert
@@ -314,12 +329,12 @@ jobs:
       - name: Publish only verified VIB Staff update
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: vib-staff-0.2.59-safe-update-20261122
+          tag_name: vib-staff-0.2.60-required-visit-20261123
           target_commitish: ${{ github.sha }}
-          name: VIB Staff 0.2.59 - Update Over 0.2.58
+          name: VIB Staff 0.2.60 - Mandatory Customer Visit On Launch
           body: |
-            Employee-only Android app version 0.2.59 built from the 0.2.90 manager code baseline.
-            Compatible in-place update over VIB Staff 0.2.58 with unchanged package ID
+            Employee-only Android app 0.2.60 based on the current staff 0.2.59 source. Every fresh employee session requires successful customer visit registration before any work.
+            In-place update with a version code above installed 0.2.59 and unchanged package ID
             and signing certificate. Retains staff roles and permissions, item stock,
             sales invoices, receipts, offline safeguards, and existing financial data.
             The APK was tested in CI; phone behavior still needs validation.
