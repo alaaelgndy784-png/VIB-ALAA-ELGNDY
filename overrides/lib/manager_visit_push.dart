@@ -99,6 +99,13 @@ class ManagerVisitPushNotifications {
         debugPrint('Unable to clear manager token on sign out: $error');
       }
     }
+    try {
+      // Revokes this phone's push token even if Firestore was offline.
+      await FirebaseMessaging.instance.deleteToken();
+    } catch (error) {
+      debugPrint('Unable to revoke manager push token: $error');
+    }
+    _lastToken = null;
     await stop();
   }
 
