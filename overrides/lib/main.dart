@@ -9071,13 +9071,42 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
     if (selected != null && mounted) setState(() => productId = selected);
   }
 
+  // Both buttons export the exact same stock movement report and date range.
+  // This is read-only; sending never creates an invoice or changes stock.
+  Future<Uint8List> _createMovementReportPdf(
+      String productName,String productCode,
+      List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,
+      Map<String,String> parties,ProductPeriodTotals total) async {
+    final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
+    return createProductTracePdf(
+      productName,
+      rows.map((r)=><String,dynamic>{...r.data(),'id':r.id}).toList(),
+      parties,total,font,range:range,productCode:productCode);
+  }
+
   Future<void> _printMovementReport(BuildContext context,String productName,String productCode,List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,
       Map<String,String> parties,ProductPeriodTotals total) async {
     try {
-      final font=pw.Font.ttf(await rootBundle.load('assets/fonts/DejaVuSans.ttf'));
-      final bytes=await createProductTracePdf(productName,rows.map((r)=>{...r.data(),'id':r.id}).toList(),parties,total,font,range:range,productCode:productCode);
+      final bytes=await _createMovementReportPdf(productName,productCode,rows,parties,total);
       await Printing.layoutPdf(name:'VIB-PRODUCT-MOVEMENT.pdf',onLayout:(_)async=>bytes);
     }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,'تعذر طباعة حركة المنتج: $e');}
+  }
+
+  Future<void> _shareMovementReportWhatsApp(
+      BuildContext context,String productName,String productCode,
+      List<QueryDocumentSnapshot<Map<String,dynamic>>> rows,
+      Map<String,String> parties,ProductPeriodTotals total) async {
+    try {
+      final bytes=await _createMovementReportPdf(productName,productCode,rows,parties,total);
+      // Native share sheet: select WhatsApp / WhatsApp Business and recipient.
+      await Printing.sharePdf(
+        bytes:bytes,
+        filename:'VIB-PRODUCT-MOVEMENT.pdf',
+      );
+    }catch(e){
+      if(context.mounted)await showInvoiceSaveProblem(
+        context,'تعذر مشاركة تقرير حركة الصنف PDF: $e');
+    }
   }
 
   Widget _ledgerCell(String value,double width,{bool heading=false,Color? tint,bool bold=false}) =>
@@ -9291,6 +9320,24 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
                                     context,productName,productCode,rows,parties,totals),
                                 icon:const Icon(Icons.picture_as_pdf,size:16),
                                 label:const Text('PDF',style:TextStyle(fontSize:12))),
+                              const SizedBox(width:4),
+                              Tooltip(
+                                message:'إرسال تقرير حركة الصنف PDF على واتساب',
+                                child:OutlinedButton.icon(
+                                  key:const ValueKey('product-ledger-share-whatsapp-pdf'),
+                                  style:OutlinedButton.styleFrom(
+                                    visualDensity:VisualDensity.compact,
+                                    minimumSize:const Size(0,30),
+                                    padding:const EdgeInsets.symmetric(horizontal:6)),
+                                  onPressed:snap.data!.metadata.isFromCache ||
+                                      snap.data!.metadata.hasPendingWrites
+                                    ? null :()=>_shareMovementReportWhatsApp(
+                                      context,productName,productCode,rows,parties,totals),
+                                  icon:const Icon(Icons.chat,size:16,color:Colors.greenAccent),
+                                  label:const Text('واتساب PDF',
+                                    style:TextStyle(fontSize:11)),
+                                ),
+                              ),
                             ]),
                             Text('كود: $productCode • الحركات: ${ledger.length}',
                               style:const TextStyle(fontSize:10,color:vibNeonBlue),
