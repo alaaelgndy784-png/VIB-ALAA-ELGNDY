@@ -171,10 +171,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 22092/; s/versionName = .*/versionName = "0.2.92"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 22092' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.92"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=22092 --build-name=0.2.92
+          sed -i -E 's/versionCode = .*/versionCode = 22093/; s/versionName = .*/versionName = "0.2.93"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 22093' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.93"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=22093 --build-name=0.2.93
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
           if [ "${{ matrix.app }}" = manager ]; then
@@ -183,8 +183,8 @@ jobs:
             BADGING="$($AAPT dump badging dist/VIB-SALES-MANAGER.apk | head -n 1)"
             echo "$BADGING"
             grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-            grep -F "versionCode='24092'" <<< "$BADGING"
-            grep -F "versionName='0.2.92'" <<< "$BADGING"
+            grep -F "versionCode='24093'" <<< "$BADGING"
+            grep -F "versionName='0.2.93'" <<< "$BADGING"
             SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             test -x "$SIGNER"
             "$SIGNER" verify --print-certs dist/VIB-SALES-MANAGER.apk > dist/signature-check.txt
