@@ -51,8 +51,9 @@ class ManagerVisitPushNotifications {
         final notice = message.notification;
         if (notice == null) return;
         var id = 19;
-        for (final unit in (message.messageId ??
-            message.data['visitId'] ?? '').codeUnits) {
+        final messageKey = (message.messageId ??
+            message.data['visitId'] ?? '').toString();
+        for (final unit in messageKey.codeUnits) {
           id = (id * 31 + unit) % 100000000;
         }
         unawaited(plugin.show(1600000000 + id, notice.title, notice.body,
