@@ -64,6 +64,7 @@ part 'invoice_serials.dart';
 part 'invoice_a4.dart';
 part 'invoice_parties.dart';
 part 'business_reports.dart';
+part 'profit_reports.dart';
 part 'customer_sales_report.dart';
 part 'product_invoice_movement.dart';
 part 'product_invoice_pdf.dart';
@@ -1229,7 +1230,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
           bottomNavigationBar: NavigationBar(
             selectedIndex: 0,
             onDestinationSelected: (index) {
-              if (index == 1) openPage('التقارير', const ProfitReport());
+              if (index == 1) openPage('التقارير', const ProfitBreakdownReport());
               if (index == 2) openPage('اعتماد الموظفين', const Staff());
               if (index == 3) openPage('الضبط', const Management());
               if (index == 4) openPage('حسابي', ManagerProfilePage(name: widget.name, onSignOut: _signOut));
@@ -3588,7 +3589,7 @@ class Management extends StatelessWidget {
     option(context, 'جيديا — روابط الدفع بالكارت', Icons.credit_card, const GeideaPayments()),
     option(context, 'الصندوق', Icons.account_balance_wallet_outlined, const CashBox()),
     option(context, 'المصروفات', Icons.receipt_long_outlined, const Expenses()),
-    option(context, 'تقرير الأرباح', Icons.bar_chart_outlined, const ProfitReport()),
+    option(context, 'تقرير الأرباح', Icons.bar_chart_outlined, const ProfitBreakdownReport()),
     option(context, 'تقرير بيع وشراء المنتج', Icons.swap_vert, const ItemMovementReport()),
     option(context, 'سجل حركات الحسابات', Icons.history, const AccountMovements()),
     option(context, 'الإعدادات والطباعة', Icons.settings_outlined, const AppSettings()),
