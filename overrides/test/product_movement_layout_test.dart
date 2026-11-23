@@ -92,7 +92,7 @@ void main() {
       party: 'مؤسسة أدوات صحية',
       invoiceNumber: '431',
       showInvoiceNumber: true,
-    ), 'المورد: مؤسسة أدوات صحية\\nفاتورة: 431');
+    ), 'المورد: مؤسسة أدوات صحية\nفاتورة: 431');
     expect(vibProductMovementPartyLabel(
       purchasing: false,
       party: 'محمود',
