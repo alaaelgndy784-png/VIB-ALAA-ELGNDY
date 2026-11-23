@@ -78,6 +78,29 @@ void main() {
     expect(movements.map((row)=>row['id']).toList(),originalOrder);
   });
 
+  test('invoice number is optional in product movement screen and PDF data', () {
+    final withoutNumber = vibProductMovementPartyLabel(
+      purchasing: false,
+      party: 'محمود',
+      invoiceNumber: '1223',
+      showInvoiceNumber: false,
+    );
+    expect(withoutNumber, 'العميل: محمود');
+    expect(withoutNumber, isNot(contains('فاتورة')));
+    expect(vibProductMovementPartyLabel(
+      purchasing: true,
+      party: 'مؤسسة أدوات صحية',
+      invoiceNumber: '431',
+      showInvoiceNumber: true,
+    ), 'المورد: مؤسسة أدوات صحية\\nفاتورة: 431');
+    expect(vibProductMovementPartyLabel(
+      purchasing: false,
+      party: 'محمود',
+      invoiceNumber: '',
+      showInvoiceNumber: true,
+    ), 'العميل: محمود');
+  });
+
   test('product ledger rejects unknown or fractional stock movement instead of guessing', () {
     expect(()=>buildVibProductLedger([
       {'id':'x','kind':'purchase','quantity':1.5,
