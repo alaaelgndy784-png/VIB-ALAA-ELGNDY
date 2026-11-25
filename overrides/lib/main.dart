@@ -3050,6 +3050,16 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
   bool allowBelowCost = false;
   bool saving = false, checkout = false;
   final paid = TextEditingController(text: '0');
+  final invoiceDiscount = TextEditingController();
+  bool discountAsPercent = false;
+  double discountAmount(double gross) {
+    if (!owner || invoiceDiscount.text.trim().isEmpty) return 0;
+    final value = double.tryParse(invoiceDiscount.text.trim().replaceAll(',', '.'));
+    if (value == null || !value.isFinite || value < 0 ||
+        (discountAsPercent && value > 100)) return double.nan;
+    final amount = ((discountAsPercent ? gross * value / 100 : value) * 100).round() / 100;
+    return amount <= gross + 0.000001 ? amount : double.nan;
+  }
   final instaPay = TextEditingController(text: '0');
   final vodafoneCash = TextEditingController(text: '0');
   final reason = TextEditingController();
@@ -3067,6 +3077,30 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
         final p = double.tryParse(row.price.text.trim().replaceAll(',', '.')) ?? 0;
         previewTotal += q * p;
       }
+      final grossPreview = previewTotal;
+      final previewDiscount = discountAmount(grossPreview);
+      if (owner && previewDiscount.isFinite && previewDiscount > 0) {
+        previewTotal = ((grossPreview - previewDiscount) * 100).round() / 100;
+      }
+      Widget managerDiscountPanel() => _vibInvoicePanel(child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          _vibMoneyRow('الإجمالي قبل الخصم', grossPreview.toStringAsFixed(2)),
+          Row(children: [
+            Expanded(child: ChoiceChip(label: const Text('خصم بالجنيه'), selected: !discountAsPercent,
+              onSelected: saving ? null : (_) => update(() {discountAsPercent = false; invoiceDiscount.clear();}))),
+            const SizedBox(width: 6),
+            Expanded(child: ChoiceChip(label: const Text('خصم %'), selected: discountAsPercent,
+              onSelected: saving ? null : (_) => update(() {discountAsPercent = true; invoiceDiscount.clear();}))),
+          ]),
+          TextField(controller: invoiceDiscount, enabled: !saving,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: _vibInvoiceInput(discountAsPercent ? 'نسبة الخصم %' : 'قيمة الخصم بالجنيه'),
+            onChanged: (_) => update(() {})),
+          if (!previewDiscount.isFinite) const Text('راجع قيمة الخصم', style: TextStyle(color: Colors.redAccent)),
+          if (previewDiscount.isFinite) _vibMoneyRow('قيمة الخصم', previewDiscount.toStringAsFixed(2)),
+          _vibMoneyRow('الصافي بعد الخصم', previewTotal.toStringAsFixed(2), bold: true),
+        ],
+      ));
       final selectedCustomer = customerId.isEmpty ? null : addedCustomers[customerId] ?? customersSnap.docs.firstWhere((d) => d.id == customerId).data();
 
       final previousBalance = (selectedCustomer?['balance'] as num?)?.toDouble() ?? 0;
@@ -3133,6 +3167,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                unitPrice:double.tryParse(row.price.text.trim().replaceAll(',','.')) ?? 0)],
             customerName:'${selectedCustomer?['name'] ?? ''}',
             previousBalance:previousBalance,total:previewTotal,paid:checkoutPaid),
+          if(owner) managerDiscountPanel(),
           PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
             paid:paid,enabled:!saving,partyLabel:'العميل',salesMode:true,
             onModeChanged:(value)=>update(() => credit=value),onChanged:()=>update(() {})),
@@ -3182,6 +3217,12 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               ),
             ],
           ),
+          if(owner) ...[
+            managerDiscountPanel(),
+            PurchaseSettlementPanel(total:previewTotal,previousBalance:previousBalance,credit:credit,
+              paid:paid,enabled:!saving,partyLabel:'العميل',salesMode:true,
+              onModeChanged:(value)=>update(() => credit=value),onChanged:()=>update(() {})),
+          ],
         ]),
         actions: [
           if(owner && MediaQuery.viewInsetsOf(c).bottom==0) TextButton.icon(icon:const Icon(Icons.edit_note),label:const Text('تعديل فاتورة مبيعات'),
@@ -3217,8 +3258,44 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               total += qty * price;
             }
 
+            final grossTotal = total;
+            final appliedDiscount = discountAmount(grossTotal);
+            if (!appliedDiscount.isFinite) {
+              await showInvoiceSaveProblem(c, 'راجع قيمة الخصم: لا يجوز أن تزيد عن إجمالي الفاتورة');
+              return;
+            }
+            // Draft: use effective net line prices so the current stock, debt,
+            // cash and profit transaction consumes the same net values.
+            if (owner && appliedDiscount > 0 && grossTotal > 0) {
+              final targetCents = ((grossTotal - appliedDiscount) * 100).round();
+              var cumulative = 0.0;
+              var allocated = 0;
+              for (var i = 0; i < entries.length; i++) {
+                final e = entries[i];
+                cumulative += e.qty * e.price;
+                final next = i == entries.length - 1 ? targetCents :
+                  (targetCents * cumulative / grossTotal).round();
+                final lineCents = next - allocated;
+                allocated = next;
+                final netPrice = lineCents / 100 / e.qty;
+                final costError = belowCostSaleMessage(productName:e.name, unitPrice:netPrice, unitCost:e.cost);
+                if (costError != null) {
+                  await showInvoiceSaveProblem(c, costError);
+                  return;
+                }
+                final combinedDiscount = e.basePrice > 0 ?
+                  ((1 - netPrice / e.basePrice) * 100).clamp(0, 100).toDouble() : 0.0;
+                entries[i] = (id:e.id,name:e.name,qty:e.qty,price:netPrice,cost:e.cost,
+                  discount:combinedDiscount,basePrice:e.basePrice);
+              }
+              total = entries.fold<double>(0, (sum, e) => sum + e.qty * e.price);
+            }
+            final discountNote = appliedDiscount > 0
+              ? 'خصم إجمالي: ${appliedDiscount.toStringAsFixed(2)} ج.م — قبل الخصم: ${grossTotal.toStringAsFixed(2)} ج.م'
+              : '';
+            final savedNote = [note.text.trim(), discountNote].where((v)=>v.isNotEmpty).join('\n');
             final payment = credit ? (double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? -1) : total;
-            if (payment < 0 || payment > total) {
+            if (!payment.isFinite || payment < 0 || payment - total > 0.000001) {
               await showInvoiceSaveProblem(c, 'قيمة المدفوع غير صحيحة');
               return;
             }
@@ -3268,12 +3345,12 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 }
                 final commit=commitGroupedSale(owner:owner,branchId:branchId,entries:entries,
                   total:total,payment:payment,paymentBreakdown:paymentBreakdown,credit:credit,customerId:customerId,saleRef:saleRef,
-                  invoiceNote:note.text.trim(),allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
+                  invoiceNote:savedNote,allowShortage:allowShortage,allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
                 savedInvoice=await commit.timeout(Duration(seconds: owner ? 12 : 8));
               } catch(e) {
                 if(!owner||(!isTemporaryFirestoreOffline(e) && !isFirestoreQuotaExhausted(e))) rethrow;
                 await submitManagerOfflineSale(id:saleRef.id,branchId:branchId,entries:entries,customerId:customerId,
-                  credit:credit,paid:payment,total:total,note:note.text.trim(),allowShortage:allowShortage,
+                  credit:credit,paid:payment,total:total,note:savedNote,allowShortage:allowShortage,
                   allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
                 if(c.mounted)Navigator.pop(c);
                 if(context.mounted)await showInvoiceSaveProblem(context,
@@ -3314,6 +3391,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
 
   for (final row in lines) { row.dispose(); }
   paid.dispose();
+  invoiceDiscount.dispose();
   instaPay.dispose();
   vodafoneCash.dispose();
   reason.dispose(); note.dispose();
