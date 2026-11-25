@@ -1494,3 +1494,58 @@ jobs:
             manager/VIB-SALES-MANAGER.apk
             manager/SHA256SUMS.txt
           make_latest: false
+
+  publish-manager-sale-discount-0-2-97:
+    needs: [verify-rules, build]
+    if: github.ref == 'refs/heads/draft/manager-sale-discount-partial-20261125'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download tested manager 0.2.97
+        uses: actions/download-artifact@v4
+        with:
+          name: VIB-SALES-MANAGER-APK
+          path: manager
+      - name: Verify install-over update and matching Android signing certificate
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p prior
+          gh release download vib-manager-0.2.96-background-visit-push-20261123 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir prior
+          NEW=manager/VIB-SALES-MANAGER.apk
+          OLD=prior/VIB-SALES-MANAGER.apk
+          test -s "$NEW" && test -s "$OLD"
+          unzip -t "$NEW" >/dev/null
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -1)"
+          SIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -1)"
+          "$AAPT" dump badging "$NEW" | grep -m1 '^package:' > /tmp/manager-new
+          "$AAPT" dump badging "$OLD" | grep -m1 '^package:' > /tmp/manager-old
+          grep -F "name='com.alaa.vibsales.managerscan'" /tmp/manager-new
+          grep -F "name='com.alaa.vibsales.managerscan'" /tmp/manager-old
+          grep -F "versionCode='24096'" /tmp/manager-old
+          grep -F "versionCode='24097'" /tmp/manager-new
+          grep -F "versionName='0.2.97'" /tmp/manager-new
+          "$SIGNER" verify --print-certs "$NEW" > /tmp/cert-new
+          "$SIGNER" verify --print-certs "$OLD" > /tmp/cert-old
+          SHA_NEW="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/cert-new | head -1 | tr -d '[:space:]')"
+          SHA_OLD="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/cert-old | head -1 | tr -d '[:space:]')"
+          test -n "$SHA_NEW" && test "$SHA_NEW" = "$SHA_OLD"
+          test "$SHA_NEW" = "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f"
+          (cd manager && sha256sum VIB-SALES-MANAGER.apk > SHA256SUMS.txt)
+      - name: Release manager invoice discount candidate
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: vib-manager-0.2.97-invoice-discount-20261125
+          target_commitish: ${{ github.sha }}
+          name: VIB Manager 0.2.97 - Invoice discount and partial payment (test release)
+          body: |
+            تحديث تجريبي للمدير فقط مبني على 0.2.96.
+            خصم إجمالي بالجنيه أو بالنسبة، ومدفوع ومتبقي.
+            ينشر فقط بعد اختبارات المصدر والبناء والتحقق من توقيع التثبيت.
+            لم يتم اختباره على هاتف العميل أو على بياناته الفعلية.
+            يجب أخذ نسخة احتياطية واختبار فاتورة قبل الاستخدام الفعلي.
+          prerelease: true
+          files: |
+            manager/VIB-SALES-MANAGER.apk
+            manager/SHA256SUMS.txt
+          make_latest: false
