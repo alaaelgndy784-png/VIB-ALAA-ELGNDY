@@ -43,6 +43,7 @@ import 'sales_invoice_exit_guard.dart';
 import 'purchase_invoice_exit_guard.dart';
 import 'purchase_draft.dart';
 import 'sale_price_floor.dart';
+import 'manager_invoice_discount.dart';
 
 part 'cheques.dart';
 part 'chat_alerts.dart';
@@ -3053,12 +3054,8 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
   final invoiceDiscount = TextEditingController();
   bool discountAsPercent = false;
   double discountAmount(double gross) {
-    if (!owner || invoiceDiscount.text.trim().isEmpty) return 0;
-    final value = double.tryParse(invoiceDiscount.text.trim().replaceAll(',', '.'));
-    if (value == null || !value.isFinite || value < 0 ||
-        (discountAsPercent && value > 100)) return double.nan;
-    final amount = ((discountAsPercent ? gross * value / 100 : value) * 100).round() / 100;
-    return amount <= gross + 0.000001 ? amount : double.nan;
+    if (!owner) return 0;
+    return managerInvoiceDiscount(gross, invoiceDiscount.text, discountAsPercent);
   }
   final instaPay = TextEditingController(text: '0');
   final vodafoneCash = TextEditingController(text: '0');
@@ -3080,7 +3077,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
       final grossPreview = previewTotal;
       final previewDiscount = discountAmount(grossPreview);
       if (owner && previewDiscount.isFinite && previewDiscount > 0) {
-        previewTotal = ((grossPreview - previewDiscount) * 100).round() / 100;
+        previewTotal = ((grossPreview * 100).round() - (previewDiscount * 100).round()) / 100;
       }
       Widget managerDiscountPanel() => _vibInvoicePanel(child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -3264,20 +3261,14 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               await showInvoiceSaveProblem(c, 'راجع قيمة الخصم: لا يجوز أن تزيد عن إجمالي الفاتورة');
               return;
             }
-            // Draft: use effective net line prices so the current stock, debt,
-            // cash and profit transaction consumes the same net values.
+            // Allocate the invoice-wide discount into net line prices for
+            // the existing stock, debt, cash and profit transaction.
             if (owner && appliedDiscount > 0 && grossTotal > 0) {
-              final targetCents = ((grossTotal - appliedDiscount) * 100).round();
-              var cumulative = 0.0;
-              var allocated = 0;
+              final netCents = managerNetLineCents(
+                entries.map((e) => e.qty * e.price).toList(), appliedDiscount);
               for (var i = 0; i < entries.length; i++) {
                 final e = entries[i];
-                cumulative += e.qty * e.price;
-                final next = i == entries.length - 1 ? targetCents :
-                  (targetCents * cumulative / grossTotal).round();
-                final lineCents = next - allocated;
-                allocated = next;
-                final netPrice = lineCents / 100 / e.qty;
+                final netPrice = netCents[i] / 100 / e.qty;
                 final costError = belowCostSaleMessage(productName:e.name, unitPrice:netPrice, unitCost:e.cost);
                 if (costError != null) {
                   await showInvoiceSaveProblem(c, costError);
@@ -3294,8 +3285,9 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               ? 'خصم إجمالي: ${appliedDiscount.toStringAsFixed(2)} ج.م — قبل الخصم: ${grossTotal.toStringAsFixed(2)} ج.م'
               : '';
             final savedNote = [note.text.trim(), discountNote].where((v)=>v.isNotEmpty).join('\n');
-            final payment = credit ? (double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? -1) : total;
-            if (!payment.isFinite || payment < 0 || payment - total > 0.000001) {
+            final payment = owner ? managerInvoicePayment(total, credit, paid.text) :
+                (credit ? (double.tryParse(paid.text.trim().replaceAll(',', '.')) ?? -1) : total);
+            if (!payment.isFinite || payment < 0 || payment > total) {
               await showInvoiceSaveProblem(c, 'قيمة المدفوع غير صحيحة');
               return;
             }
@@ -3312,7 +3304,7 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
               'vodafoneCash':double.tryParse(vodafoneCash.text.trim().replaceAll(',', '.')) ?? 0,
             },payment);
             final due = total - payment;
-            if ((!owner || due > 0) && customerId.isEmpty) {
+            if ((!owner || credit || due > 0) && customerId.isEmpty) {
               await showInvoiceSaveProblem(c, 'اختر عميلًا مسجلًا لربط الفاتورة ورصيد المديونية بحسابه');
               return;
             }

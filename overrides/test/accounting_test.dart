@@ -2,8 +2,37 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../lib/main.dart';
+import '../lib/manager_invoice_discount.dart';
 
 void main() {
+  test('manager invoice fixed or percent discount and partial payment', () {
+    expect(managerInvoiceDiscount(1000, '50', false), 50);
+    expect(managerInvoiceDiscount(1000, '5', true), 50);
+    expect(managerInvoiceDiscount(1000, '', false), 0);
+    final net = managerNetLineCents([600, 400], 50);
+    expect(net, [57000, 38000]);
+    final total = net.reduce((a,b) => a+b) / 100;
+    final paid = managerInvoicePayment(total, true, '500');
+    expect(total, 950);
+    expect(paid, 500);
+    expect(total-paid, 450);
+  });
+  test('manager invoice discount allocation retains every piastre', () {
+    final net = managerNetLineCents([10, 20, 30], .01);
+    expect(net.reduce((a,b) => a+b), 5999);
+    expect(managerNetLineCents([0, 20, 0], 1), [0, 1900, 0]);
+    expect(managerInvoicePayment(0.1 + 0.2, true, '.30'), 0.1 + 0.2);
+    expect(managerInvoicePayment(950, false, ''), 950);
+  });
+  test('manager invoice rejects invalid discounts or payments', () {
+    expect(managerInvoiceDiscount(1000, '101', true).isNaN, isTrue);
+    expect(managerInvoiceDiscount(1000, '1000.01', false).isNaN, isTrue);
+    expect(managerInvoiceDiscount(1000, '-1', false).isNaN, isTrue);
+    expect(managerInvoiceDiscount(1000, 'NaN', false).isNaN, isTrue);
+    expect(managerInvoicePayment(950, true, '951').isNaN, isTrue);
+    expect(managerInvoicePayment(950, true, '10.001').isNaN, isTrue);
+  });
+
   test('customer payment search filters visible customers and totals consistently', () {
     final report = ReceiptDayReport([
       const ReceiptCustomerTotal('a','حمادة قر قش', [{'amount':600}],60000),
