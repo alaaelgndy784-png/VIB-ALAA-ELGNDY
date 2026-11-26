@@ -93,6 +93,12 @@ class ManagerOfflineDraftStore {
     });
   }
 
+  Future<List<Map<String,dynamic>>> localRows() async {
+    final uid=FirebaseAuth.instance.currentUser?.uid;
+    if(uid==null)return [];
+    return _locked(()=>_read(uid));
+  }
+
   Future<void> loadPendingCount() async {
     final uid=FirebaseAuth.instance.currentUser?.uid;
     if(uid==null)return;
@@ -192,7 +198,7 @@ class ManagerOfflineDraftStore {
   }
 }
 
-Future<void> submitManagerOfflineSale({required String id,required String branchId,required List<SaleEntry> entries,
+Future<Map<String,dynamic>> submitManagerOfflineSale({required String id,required String branchId,required List<SaleEntry> entries,
   required String customerId,required bool credit,required double paid,required double total,required String note,
   required bool allowShortage,required bool allowBelowCost,required String overrideReason}) async {
   final uid=FirebaseAuth.instance.currentUser!.uid;
@@ -212,13 +218,15 @@ Future<void> submitManagerOfflineSale({required String id,required String branch
     'requestKey':jsonEncode({'customerId':customerId,'credit':credit,'paid':paid,'items':items})};
   // A server quota rejection can roll back the Firestore cache. Preserve the
   // invoice on local device storage before asking Firestore to upload it.
+  payload['draftStoredAtMs']=DateTime.now().millisecondsSinceEpoch;
   await ManagerOfflineDraftStore.instance.preserve(id,payload);
-  final write=db.collection('pendingSales').doc(id).set(payload);
+  final write=db.collection('pendingSales').doc(id).set(Map<String,dynamic>.from(payload)..remove('draftStoredAtMs'));
   // Firestore persists this local write immediately; its future may remain
   // pending until the server acknowledges it after reconnection.
   unawaited(write.then<void>((_) {},onError:(Object error,StackTrace _) {
     debugPrint('VIB offline sale sync failed for $id: $error');
   }));
+  return payload;
 }
 
 class ManagerOfflineSaleSync {
