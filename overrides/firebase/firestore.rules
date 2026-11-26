@@ -692,7 +692,8 @@ service cloud.firestore {
         && request.resource.data.managerPriceAdjusted == true
         && request.resource.data.managerAdjustedBy == request.auth.uid
         && request.resource.data.managerAdjustedAt == request.time
-        && request.resource.data.items is list && request.resource.data.items.size() == resource.data.items.size()
+        && request.resource.data.items is list && request.resource.data.items.size() > 0 && request.resource.data.items.size() <= 50
+        && (resource.data.get('managerOffline', false) == false || request.resource.data.items.size() == resource.data.items.size())
         && request.resource.data.total is number && request.resource.data.total >= 0
         && request.resource.data.paid is number && request.resource.data.paid >= 0
         && request.resource.data.paid <= request.resource.data.total
