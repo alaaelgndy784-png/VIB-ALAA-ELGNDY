@@ -110,4 +110,21 @@ void main() {
     draft['credit']=true;
     expect(()=>PendingSaleData.parse(draft),throwsFormatException);
   });
+  test('pending manager revision adds, removes and changes quantity without posting',(){
+    final draft=request(5)..['paymentBreakdown']={'cash':4.0,'instapay':6.0};
+    final rows=<Map<String,dynamic>>[
+      {'productId':'p0','productName':'First','quantity':3,'unitPrice':20.0},
+      {'productId':'new','productName':'New','quantity':2,'unitPrice':30.0},
+    ];
+    final patch=revisePendingSale(draft,rows,paid:20);
+    expect(patch['total'],120);
+    expect(patch['paid'],20);
+    expect(patch['paymentBreakdown'],{'cash':14.0,'instapay':6.0,'vodafoneCash':0.0});
+    expect((patch['items'] as List).length,2);
+    expect((patch['managerOriginalItems'] as List).length,5);
+    expect(patch.containsKey('status'),false);
+    expect(()=>revisePendingSale(draft,[],paid:10),throwsFormatException);
+    expect(()=>revisePendingSale(draft,rows,paid:5),throwsFormatException);
+    expect(()=>revisePendingSale(draft,[rows.first,rows.first],paid:20),throwsFormatException);
+  });
 }
