@@ -3346,15 +3346,11 @@ Future<void> _groupedSaleDialog(BuildContext context, {required bool owner, requ
                 savedInvoice=await commit.timeout(Duration(seconds: owner ? 12 : 8));
               } catch(e) {
                 if(!owner||(!isTemporaryFirestoreOffline(e) && !isFirestoreQuotaExhausted(e))) rethrow;
-                await submitManagerOfflineSale(id:saleRef.id,branchId:branchId,entries:entries,customerId:customerId,
+                final localInvoice=await submitManagerOfflineSale(id:saleRef.id,branchId:branchId,entries:entries,customerId:customerId,
                   credit:credit,paid:payment,total:total,note:savedNote,allowShortage:allowShortage,
                   allowBelowCost:allowBelowCost,overrideReason:reason.text.trim());
                 if(c.mounted)Navigator.pop(c);
-                if(context.mounted)await showInvoiceSaveProblem(context,
-                  isFirestoreQuotaExhausted(e)
-                    ? 'الخادم رفض العملية بسبب حصة الاستخدام أو ضغط الخدمة. احتفظنا بنسخة محلية من الفاتورة، وستبقى معلقة دون خصم المخزون أو تسجيل الدين حتى عودة الخدمة والمزامنة. راجع استهلاك Firestore في Firebase.'
-                    : 'حُفظت نسخة من الفاتورة على الجهاز في قائمة المزامنة. لن يتغير المخزون أو الحساب أو الصندوق إلا بعد تأكيد الخادم.',
-                  title:'الفاتورة تنتظر المزامنة',button:'تمام',success:true);
+                if(context.mounted)await showLocalSaleOutputActions(context,saleRef.id,localInvoice);
                 return;
               }
 
@@ -8116,12 +8112,15 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
                     await replaceSaleLocally(id, revision, requestId, items, extraPaid, correctedCustomerId:selectedCustomerId).timeout(const Duration(seconds:15));
                   } catch(e) {
                     if(!shouldQueueEmployeeSaleFailure(e)) rethrow;
+                    final preview=<String,dynamic>{'invoiceNumber':invoiceDisplayNumber(type,id,data),
+                      'customerName':selectedCustomerName,'createdAtMs':(data['createdAt'] is Timestamp ? (data['createdAt'] as Timestamp).millisecondsSinceEpoch : DateTime.now().millisecondsSinceEpoch),
+                      'items':[for(final item in items) {...item,'productName':'${products.firstWhere((p)=>p.id==item['productId']).data()['name'] ?? ''}',
+                        'lineTotal':(item['quantity'] as num)*(item['unitPrice'] as num)}],
+                      'total':addedTotal,'paid':extraPaid,'due':addedTotal-extraPaid};
                     await ManagerSaleEditQueue.instance.preserve(id:id,revision:revision,requestId:requestId,
-                      items:items,paid:extraPaid,customerId:selectedCustomerId,number:'${invoiceDisplayNumber(type,id,data)}',customerName:selectedCustomerName);
+                      items:items,paid:extraPaid,customerId:selectedCustomerId,number:'${invoiceDisplayNumber(type,id,data)}',customerName:selectedCustomerName,preview:preview);
                     if(c.mounted) Navigator.pop(c);
-                    if(context.mounted) await showInvoiceSaveProblem(context,
-                      'تم حفظ تعديل نفس الفاتورة على الجهاز. سيُرحّل عند عودة Firebase بدون اعتماد يدوي، بعد فحص المخزون والسندات. لم يتم تأكيد تغيير المخزون أو الحسابات بعد.',
-                      title:'تعديل محفوظ محليًا',button:'تمام',success:true);
+                    if(context.mounted) await showLocalSaleOutputActions(context,id,preview);
                     return;
                   }
                 } else if (replacePurchase) {
@@ -8307,7 +8306,7 @@ Future<Uint8List> createInvoicePdf(String type, String id, Map<String, dynamic> 
   final address = configured('address', '');
   final taxNumber = configured('taxNumber', ''), commercialRegister = configured('commercialRegister', '');
   final phones = ['phone', 'phone2', 'whatsapp'].map((key) => configured(key, '')).where((x) => x.isNotEmpty).toSet().toList();
-  final footer = configured('invoiceFooter', 'شكراً لتعاملكم معنا');
+  final footer = data['localUnconfirmed']==true ? 'نسخة مؤقتة — في انتظار تأكيد المزامنة؛ ليست تأكيدًا نهائيًا للحسابات. ${configured('invoiceFooter', 'شكراً لتعاملكم معنا')}' : configured('invoiceFooter', 'شكراً لتعاملكم معنا');
   final number=invoiceDisplayNumber(type,id,data);
   final barcode='${data['invoiceBarcode'] ?? invoiceSerialCache[serialKey(type,id)]?['invoiceBarcode'] ?? ''}';
   final items = <Map<String, dynamic>>[];
@@ -10127,7 +10126,7 @@ class ManagerSaleEditQueue {
   Future<bool> hasPending(String id) async => (await rows()).any((row)=>row['id']==id);
   Future<void> preserve({required String id,required int revision,required String requestId,
     required List<Map<String,dynamic>> items,required double paid,required String customerId,
-    required String number,required String customerName}) async {
+    required String number,required String customerName,Map<String,dynamic>? preview}) async {
     final uid=FirebaseAuth.instance.currentUser?.uid;
     if(uid==null) throw StateError('لا يوجد حساب مدير مسجل');
     final key=jsonEncode({'id':id,'revision':revision,'items':items,'paid':paid,'customerId':customerId});
@@ -10141,7 +10140,7 @@ class ManagerSaleEditQueue {
         return;
       }
       pending.add({'id':id,'revision':revision,'requestId':requestId,'requestKey':key,
-        'items':items,'paid':paid,'customerId':customerId,'number':number,'customerName':customerName,
+        'items':items,'paid':paid,'customerId':customerId,'number':number,'customerName':customerName,'preview':preview,
         'storedAtMs':DateTime.now().millisecondsSinceEpoch});
       await _write(uid,pending);
       status.value='التعديلات محفوظة على هذا الجهاز ولم تُرحّل ماليًا بعد.';
@@ -10221,7 +10220,11 @@ class ManagerSaleEditQueueNotice extends StatelessWidget {
                     content:SizedBox(width:double.maxFinite,child:SingleChildScrollView(child:Column(
                       mainAxisSize:MainAxisSize.min,children:[
                         for(final row in rows) ListTile(title:Text('فاتورة ${row['number']} — ${row['customerName']}'),
-                          subtitle:Text('${(row['items'] as List).length} بند • مدفوع ${vibVoucherMoney(row['paid'])} ج.م')),
+                          subtitle:Text('${(row['items'] as List).length} بند • مدفوع ${vibVoucherMoney(row['paid'])} ج.م'),
+                          trailing:row['preview'] is Map ? IconButton(icon:const Icon(Icons.share),tooltip:'إرسال PDF',onPressed:() async {
+                            Navigator.pop(dialog);
+                            if(context.mounted)await showLocalSaleOutputActions(context,'${row['id']}',Map<String,dynamic>.from(row['preview'] as Map));
+                          }):null),
                       ]))),
                     actions:[TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('رجوع'))]));
                 } catch(e) {
@@ -10231,4 +10234,37 @@ class ManagerSaleEditQueueNotice extends StatelessWidget {
             ])
           ]));
       }));
+}
+
+ 
+// Output uses a locally stored invoice snapshot, not a Firestore write or read.
+Map<String,dynamic> localSalePdfData(String id,Map<String,dynamic> source) {
+  final data=Map<String,dynamic>.from(source);
+  data['localUnconfirmed']=true;
+  data['invoiceNumber'] ??= 'L-$id';
+  final timestamp=data['createdAtMs'] ?? data['draftStoredAtMs'];
+  data['createdAt']=Timestamp.fromMillisecondsSinceEpoch(
+    timestamp is num ? timestamp.toInt() : DateTime.now().millisecondsSinceEpoch);
+  data['due']=(data['total'] as num)-(data['paid'] as num);
+  data['status']='pending';
+  data.remove('customerPreviousBalance');
+  data.remove('customerBalanceAfter');
+  data.remove('receiptPaid');
+  return data;
+}
+
+Future<void> showLocalSaleOutputActions(BuildContext context,String id,Map<String,dynamic> source) async {
+  if(!context.mounted)return;
+  final data=localSalePdfData(id,source);
+  final action=await showDialog<String>(context:context,builder:(dialog)=>AlertDialog(
+    title:const Text('الفاتورة محفوظة على الجهاز'),
+    content:const Text('يمكن إرسالها للزبون أو طباعتها الآن. هذه نسخة مؤقتة لحين تأكيد Firebase. لن تُرحّل الحسابات والمخزون إلا بعد نجاح المزامنة.'),
+    actions:[
+      TextButton(onPressed:()=>Navigator.pop(dialog,'print'),child:const Text('طباعة')),
+      FilledButton.icon(onPressed:()=>Navigator.pop(dialog,'share'),icon:const Icon(Icons.share),label:const Text('إرسال PDF واتساب')),
+      TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('تم')),
+    ]));
+  if(!context.mounted)return;
+  if(action=='share')await shareInvoicePdfForWhatsApp(context,'sales',id,data);
+  if(action=='print')await selectInvoicePaper(context,'sales',id,data);
 }
