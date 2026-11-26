@@ -7933,7 +7933,9 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
     final invoiceRef = db.collection(type).doc(id);
     DocumentSnapshot<Map<String,dynamic>> invoice;
     try {
-      invoice = await invoiceRef.get(const GetOptions(source:Source.server)).timeout(const Duration(seconds:6));
+      invoice = replaceSale
+        ? await invoiceRef.get(const GetOptions(source:Source.server)).timeout(const Duration(seconds:6))
+        : await invoiceRef.get();
     } catch(e) {
       if(!replaceSale || !shouldQueueEmployeeSaleFailure(e)) rethrow;
       invoice = await invoiceRef.get(const GetOptions(source:Source.cache));
