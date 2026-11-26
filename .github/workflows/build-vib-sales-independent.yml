@@ -177,10 +177,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 22100/; s/versionName = .*/versionName = "0.2.100"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 22100' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.100"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=22100 --build-name=0.2.100
+          sed -i -E 's/versionCode = .*/versionCode = 22101/; s/versionName = .*/versionName = "0.2.101"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 22101' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.101"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=22101 --build-name=0.2.101
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
           if [ "${{ matrix.app }}" = manager ]; then
@@ -189,8 +189,8 @@ jobs:
             BADGING="$($AAPT dump badging dist/VIB-SALES-MANAGER.apk | head -n 1)"
             echo "$BADGING"
             grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-            grep -F "versionCode='24100'" <<< "$BADGING"
-            grep -F "versionName='0.2.100'" <<< "$BADGING"
+            grep -F "versionCode='24101'" <<< "$BADGING"
+            grep -F "versionName='0.2.101'" <<< "$BADGING"
             SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             test -x "$SIGNER"
             "$SIGNER" verify --print-certs dist/VIB-SALES-MANAGER.apk > dist/signature-check.txt
@@ -1495,12 +1495,12 @@ jobs:
             manager/SHA256SUMS.txt
           make_latest: false
 
-  publish-manager-offline-sale-pdf-0-2-100:
+  publish-manager-pending-sale-edit-0-2-101:
     needs: [verify-rules, build]
-    if: github.ref == 'refs/heads/fix/manager-offline-sale-edit-0-2-99-20261126'
+    if: github.ref == 'refs/heads/fix/manager-pending-sale-edit-0-2-101-20261126'
     runs-on: ubuntu-latest
     steps:
-      - name: Download tested manager 0.2.100
+      - name: Download tested manager 0.2.101
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
@@ -1511,7 +1511,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p prior
-          gh release download vib-manager-0.2.97-invoice-discount-20261125 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir prior
+          gh release download vib-manager-0.2.100-offline-sale-pdf-20261126 --repo "$GITHUB_REPOSITORY" --pattern VIB-SALES-MANAGER.apk --dir prior
           NEW=manager/VIB-SALES-MANAGER.apk
           OLD=prior/VIB-SALES-MANAGER.apk
           test -s "$NEW" && test -s "$OLD"
@@ -1522,9 +1522,9 @@ jobs:
           "$AAPT" dump badging "$OLD" | grep -m1 '^package:' > /tmp/manager-old
           grep -F "name='com.alaa.vibsales.managerscan'" /tmp/manager-new
           grep -F "name='com.alaa.vibsales.managerscan'" /tmp/manager-old
-          grep -F "versionCode='24097'" /tmp/manager-old
-          grep -F "versionCode='24100'" /tmp/manager-new
-          grep -F "versionName='0.2.100'" /tmp/manager-new
+          grep -F "versionCode='24100'" /tmp/manager-old
+          grep -F "versionCode='24101'" /tmp/manager-new
+          grep -F "versionName='0.2.101'" /tmp/manager-new
           "$SIGNER" verify --print-certs "$NEW" > /tmp/cert-new
           "$SIGNER" verify --print-certs "$OLD" > /tmp/cert-old
           SHA_NEW="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/cert-new | head -1 | tr -d '[:space:]')"
@@ -1535,12 +1535,12 @@ jobs:
       - name: Release manager offline sale edit candidate
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: vib-manager-0.2.100-offline-sale-pdf-20261126
+          tag_name: vib-manager-0.2.101-pending-sale-edit-20261126
           target_commitish: ${{ github.sha }}
-          name: VIB Manager 0.2.100 - Offline sale PDF and corrections (test release)
+          name: VIB Manager 0.2.101 - Pending employee sale editor (test release)
           body: |
-            تحديث للمدير فقط مبني على فرع 0.2.98.
-            حفظ فاتورة المبيعات أو تعديلها محليًا عند توقف Firebase، وإتاحة PDF مؤقت وطباعته قبل المزامنة، ثم الترحيل مع فحص الحسابات والمخزون.
+            تحديث للمدير فقط مبني على الإصدار المنشور 0.2.100.
+            تعديل الكمية والسعر وإضافة وحذف الأصناف والمدفوع في طلبات الموظف قبل الاعتماد. يلزم نشر قواعد Firebase المحدثة لتمكين تغيير عدد البنود.
             ينشر فقط بعد اختبارات المصدر والبناء والتحقق من توقيع التثبيت.
             لم يتم اختباره على هاتف العميل أو على بياناته الفعلية.
             يجب أخذ نسخة احتياطية واختبار فاتورة قبل الاستخدام الفعلي.
