@@ -26,7 +26,9 @@ List<VibMovementProductChoice> vibFilterMovementProductChoices(
 }
 
 Future<String?> showVibMovementProductPicker(
-    BuildContext context, List<VibMovementProductChoice> products) {
+    BuildContext context, List<VibMovementProductChoice> products, {
+    Stream<QuerySnapshot<Map<String, dynamic>>>? stockStream,
+  }) {
   return showModalBottomSheet<String>(
     context: context,
     isScrollControlled: true,
@@ -44,7 +46,7 @@ Future<String?> showVibMovementProductPicker(
         padding: EdgeInsets.only(bottom: keyboard),
         child: SizedBox(
           height: sheetHeight,
-          child: _VibMovementProductPickerList(products: products),
+          child: _VibMovementProductPickerList(products: products, stockStream: stockStream),
         ),
       );
     },
@@ -53,7 +55,8 @@ Future<String?> showVibMovementProductPicker(
 
 class _VibMovementProductPickerList extends StatefulWidget {
   final List<VibMovementProductChoice> products;
-  const _VibMovementProductPickerList({required this.products});
+  final Stream<QuerySnapshot<Map<String, dynamic>>>? stockStream;
+  const _VibMovementProductPickerList({required this.products, this.stockStream});
 
   @override
   State<_VibMovementProductPickerList> createState() =>
@@ -128,7 +131,22 @@ class _VibMovementProductPickerListState
             style: const TextStyle(color: Colors.white70, fontSize: 12)),
         ),
         const Divider(height: 1, color: Colors.white24),
-        Expanded(child: matches.isEmpty
+        Expanded(child: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+          stream: widget.stockStream,
+          builder: (context, stock) {
+            final quantities = <String, num>{};
+            if (stock.hasData && !stock.hasError) {
+              for (final doc in stock.data!.docs) {
+                final data = doc.data();
+                final id = data['productId'];
+                final qty = data['quantity'];
+                if (id is String && qty is num && qty.isFinite) {
+                  quantities[id] = (quantities[id] ?? 0) + qty;
+                }
+              }
+            }
+            final confirmed = stock.hasData && !stock.hasError && !stock.data!.metadata.isFromCache;
+            return matches.isEmpty
           ? const Center(child: Padding(
               padding: EdgeInsets.all(20),
               child: Text('مفيش صنف بالاسم أو الكود ده',
@@ -157,12 +175,25 @@ class _VibMovementProductPickerListState
                   subtitle: Text('كود: ${product.code.isEmpty ? product.id : product.code}',
                     maxLines: 1, overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 11, color: Colors.white54)),
-                  trailing: const Icon(Icons.chevron_left,
-                    size: 19, color: gold),
+                  trailing: widget.stockStream == null
+                    ? const Icon(Icons.chevron_left, size: 19, color: gold)
+                    : Row(mainAxisSize: MainAxisSize.min, children: [
+                        Semantics(label: 'العدد المتاح في المخزون', child: Text(
+                          quantities.containsKey(product.id)
+                            ? NumberFormat('0.##', 'en_US').format(quantities[product.id]!)
+                            : confirmed ? '0' : '—',
+                          key: ValueKey('movement-stock-${product.id}'),
+                          style: const TextStyle(color: Color(0xFF39FF14),
+                            fontSize: 16, fontWeight: FontWeight.bold))),
+                        const SizedBox(width: 6),
+                        const Icon(Icons.chevron_left, size: 19, color: gold),
+                      ]),
                   onTap: () => Navigator.pop(context, product.id),
                 );
               },
-            )),
+            );
+          },
+        )),
       ]),
     );
   }
