@@ -189,3 +189,39 @@ Map<String,dynamic> repricePendingSale(Map<String,dynamic> data,List<double> pri
     'managerPriceAdjusted':true,'managerOriginalItems':data['managerOriginalItems'] ?? data['items'],
     'managerOriginalTotal':data['managerOriginalTotal'] ?? parsed.total};
 }
+
+ 
+// Edit only the unposted proposal. Keep seller, branch, customer, payment
+// type and the original audit snapshot intact. Recheck at final approval.
+Map<String,dynamic> revisePendingSale(Map<String,dynamic> data,
+    List<Map<String,dynamic>> rows,{required double paid}) {
+  final original=PendingSaleData.parse(data);
+  if(rows.isEmpty || rows.length>50)throw const FormatException('أدخل من بند واحد إلى 50 بندًا');
+  final items=<Map<String,dynamic>>[];
+  var total=0.0;
+  for(final row in rows) {
+    final id=row['productId'],qty=row['quantity'],price=row['unitPrice'];
+    if(id is! String||qty is! int||qty<=0||qty>1000000||
+        price is! num||!price.isFinite||price<0||price>1e9)throw const FormatException('راجع الصنف والكمية والسعر');
+    final previous=(data['items'] as List).whereType<Map>().where((x)=>x['productId']==id);
+    final previousRow=previous.isEmpty?null:previous.first;
+    final samePrice=previousRow!=null && previousRow['unitPrice']==price;
+    final effectivePrice=samePrice ? price.toDouble() : (price*100).round()/100;
+    items.add({'productId':id,'productName':'${row['productName']??''}',
+      'quantity':qty,'unitPrice':effectivePrice,
+      'basePrice':samePrice ? previousRow!['basePrice'] : effectivePrice,
+      'discountPercent':samePrice ? previousRow!['discountPercent'] : 0.0});
+    total+=qty*effectivePrice;
+  }
+  final nextPaid=original.credit ? paid : total;
+  final nonCash=(original.paymentBreakdown['instapay']??0)+(original.paymentBreakdown['vodafoneCash']??0);
+  if(!nextPaid.isFinite || nextPaid<0 || nextPaid>total || nextPaid<nonCash)
+    throw const FormatException('راجع المدفوع؛ لا يمكن إلغاء التحصيل الإلكتروني من تعديل الفاتورة');
+  final tender=normalizeSalePaymentBreakdown({...original.paymentBreakdown,'cash':nextPaid-nonCash},nextPaid);
+  final patch=<String,dynamic>{'items':items,'total':total,'paid':nextPaid,'paymentBreakdown':tender,
+    'requestKey':jsonEncode({'customerId':original.customerId,'credit':original.credit,'paid':nextPaid,'items':items}),
+    'managerPriceAdjusted':true,'managerOriginalItems':data['managerOriginalItems']??data['items'],
+    'managerOriginalTotal':data['managerOriginalTotal']??original.total};
+  PendingSaleData.parse({...data,...patch});
+  return patch;
+}
