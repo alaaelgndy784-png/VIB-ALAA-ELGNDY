@@ -482,6 +482,20 @@ test('purchase permission defaults denied, revocation and deleted employee are e
  await env.withSecurityRulesDisabled(ctx=>setDoc(doc(ctx.firestore(),'users/staff'),{role:'deleted',active:false,canPurchase:true},{merge:true}));
  await assertFails(employeePurchase(db));await assertFails(saleBatch(db));
 });
+test('owner can add or remove pending employee items but not empty or approve by edit',async()=>{
+  const staff=env.authenticatedContext('staff').firestore(),owner=env.authenticatedContext('owner').firestore();
+  await setDoc(doc(staff,'pendingSales/request'),pendingDraft());
+  const ref=doc(owner,'pendingSales/request'), original=(await getDoc(ref)).data();
+  const items=[{...original.items[0],quantity:3},{...original.items[1],productId:'new'}];
+  const patch={items,total:61.75,paid:10,requestKey:'revision',managerPriceAdjusted:true,
+    managerOriginalItems:original.items,managerOriginalTotal:original.total,managerAdjustedBy:'owner',managerAdjustedAt:serverTimestamp()};
+  await assertFails(setDoc(doc(staff,'pendingSales/request'),patch,{merge:true}));
+  await assertFails(setDoc(ref,{...patch,items:[]},{merge:true}));
+  await assertFails(setDoc(ref,{...patch,status:'approved'},{merge:true}));
+  await assertSucceeds(setDoc(ref,patch,{merge:true}));
+  assert.equal((await getDoc(ref)).data().items.length,2);
+  assert.equal((await getDoc(ref)).data().status,'pending');
+});
 for(const [name,mutate] of [['forged actor',s=>s.actorId='owner'],['forged supplier',s=>s.supplierName='fake'],['wrong total',s=>s.total=1],['duplicate item',s=>{s.items[1]={...s.items[0]};s.stockIndex={p0:0}}],['negative cost',s=>s.items[0].unitCost=-1]])test('employee purchase rejects '+name,async()=>{
  await enablePurchasing();await assertFails(employeePurchase(env.authenticatedContext('staff').firestore(),{n:2,mutate}));
 });
