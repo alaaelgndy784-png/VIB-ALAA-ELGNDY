@@ -598,6 +598,25 @@ class ManagerOfflineDraftBanner extends StatelessWidget {
             icon:const Icon(Icons.sync),
             label:const Text('إعادة المزامنة بعد عودة Firebase'),
           ),
+          TextButton.icon(icon:const Icon(Icons.share),label:const Text('عرض وإرسال الفواتير المحلية PDF'),
+            onPressed:() async {
+              try {
+                final rows=await ManagerOfflineDraftStore.instance.localRows();
+                if(!context.mounted)return;
+                final selected=await showDialog<Map<String,dynamic>>(context:context,builder:(dialog)=>AlertDialog(
+                  title:const Text('الفواتير المحلية'),
+                  content:SizedBox(width:double.maxFinite,child:SingleChildScrollView(child:Column(
+                    mainAxisSize:MainAxisSize.min,children:[
+                      for(final row in rows)ListTile(title:Text('${row['customerName'] ?? ''}'),
+                        subtitle:Text('${vibVoucherMoney(row['total'])} ج.م — ${(row['items'] as List).length} بند'),
+                        trailing:const Icon(Icons.share),onTap:()=>Navigator.pop(dialog,row)),
+                    ]))),
+                  actions:[TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('رجوع'))]));
+                if(selected!=null&&context.mounted)await showLocalSaleOutputActions(context,'${selected['id']}',selected);
+              } catch(e) {
+                if(context.mounted)await showInvoiceSaveProblem(context,'تعذر عرض الفواتير المحلية: $e');
+              }
+            }),
         ]),
       ));
     },
