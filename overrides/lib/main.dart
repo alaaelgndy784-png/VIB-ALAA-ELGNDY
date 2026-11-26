@@ -9146,7 +9146,11 @@ class _ItemMovementReportState extends State<ItemMovementReport> {
               product.data()['barcode'] ?? product.id).toString(),
         ),
     ];
-    final selected = await showVibMovementProductPicker(context, options);
+    final Query<Map<String, dynamic>> stockQuery = branchId == null
+        ? db.collection('stock')
+        : db.collection('stock').where('branchId', isEqualTo: branchId);
+    final selected = await showVibMovementProductPicker(context, options,
+      stockStream: stockQuery.snapshots(includeMetadataChanges: true));
     if (selected != null && mounted) setState(() => productId = selected);
   }
 
