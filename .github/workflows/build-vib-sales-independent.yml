@@ -177,10 +177,10 @@ jobs:
         run: |
           flutter clean
           flutter pub get
-          sed -i -E 's/versionCode = .*/versionCode = 22098/; s/versionName = .*/versionName = "0.2.98"/' android/app/build.gradle.kts
-          grep -q 'versionCode = 22098' android/app/build.gradle.kts
-          grep -q 'versionName = "0.2.98"' android/app/build.gradle.kts
-          flutter build apk --release --split-per-abi --build-number=22098 --build-name=0.2.98
+          sed -i -E 's/versionCode = .*/versionCode = 22099/; s/versionName = .*/versionName = "0.2.99"/' android/app/build.gradle.kts
+          grep -q 'versionCode = 22099' android/app/build.gradle.kts
+          grep -q 'versionName = "0.2.99"' android/app/build.gradle.kts
+          flutter build apk --release --split-per-abi --build-number=22099 --build-name=0.2.99
           mkdir -p dist
           if [ "${{ matrix.app }}" = manager ]; then cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-MANAGER.apk; else cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk dist/VIB-SALES-STAFF.apk; fi
           if [ "${{ matrix.app }}" = manager ]; then
@@ -189,8 +189,8 @@ jobs:
             BADGING="$($AAPT dump badging dist/VIB-SALES-MANAGER.apk | head -n 1)"
             echo "$BADGING"
             grep -F "name='com.alaa.vibsales.managerscan'" <<< "$BADGING"
-            grep -F "versionCode='24098'" <<< "$BADGING"
-            grep -F "versionName='0.2.98'" <<< "$BADGING"
+            grep -F "versionCode='24099'" <<< "$BADGING"
+            grep -F "versionName='0.2.99'" <<< "$BADGING"
             SIGNER="$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)"
             test -x "$SIGNER"
             "$SIGNER" verify --print-certs dist/VIB-SALES-MANAGER.apk > dist/signature-check.txt
@@ -1495,12 +1495,12 @@ jobs:
             manager/SHA256SUMS.txt
           make_latest: false
 
-  publish-manager-product-quantity-0-2-98:
+  publish-manager-offline-sale-edit-0-2-99:
     needs: [verify-rules, build]
-    if: github.ref == 'refs/heads/feature/manager-product-quantity-0-2-98-20261126'
+    if: github.ref == 'refs/heads/fix/manager-offline-sale-edit-0-2-99-20261126'
     runs-on: ubuntu-latest
     steps:
-      - name: Download tested manager 0.2.98
+      - name: Download tested manager 0.2.99
         uses: actions/download-artifact@v4
         with:
           name: VIB-SALES-MANAGER-APK
@@ -1523,8 +1523,8 @@ jobs:
           grep -F "name='com.alaa.vibsales.managerscan'" /tmp/manager-new
           grep -F "name='com.alaa.vibsales.managerscan'" /tmp/manager-old
           grep -F "versionCode='24097'" /tmp/manager-old
-          grep -F "versionCode='24098'" /tmp/manager-new
-          grep -F "versionName='0.2.98'" /tmp/manager-new
+          grep -F "versionCode='24099'" /tmp/manager-new
+          grep -F "versionName='0.2.99'" /tmp/manager-new
           "$SIGNER" verify --print-certs "$NEW" > /tmp/cert-new
           "$SIGNER" verify --print-certs "$OLD" > /tmp/cert-old
           SHA_NEW="$(sed -n 's/.*certificate SHA-256 digest: //p' /tmp/cert-new | head -1 | tr -d '[:space:]')"
@@ -1532,15 +1532,15 @@ jobs:
           test -n "$SHA_NEW" && test "$SHA_NEW" = "$SHA_OLD"
           test "$SHA_NEW" = "5b0b9b961fea105fd0ae225b7400046be9c98bad40f13ea13a8c1929811d2a2f"
           (cd manager && sha256sum VIB-SALES-MANAGER.apk > SHA256SUMS.txt)
-      - name: Release manager neon product quantity candidate
+      - name: Release manager offline sale edit candidate
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: vib-manager-0.2.98-product-quantity-20261126
+          tag_name: vib-manager-0.2.99-offline-sale-edit-20261126
           target_commitish: ${{ github.sha }}
-          name: VIB Manager 0.2.98 - Neon product stock quantities (test release)
+          name: VIB Manager 0.2.99 - Offline sale corrections (test release)
           body: |
-            تحديث للمدير فقط مبني على 0.2.97.
-            عرض رصيد المخزون باللون الأخضر الفسفوري بجوار اسم الصنف في حركة المنتجات.
+            تحديث للمدير فقط مبني على فرع 0.2.98.
+            حفظ تعديل فاتورة المبيعات محليًا عند توقف Firebase وإعادة ترحيله بنفس الرقم بعد عودة الخدمة، مع فحص الحسابات والمخزون.
             ينشر فقط بعد اختبارات المصدر والبناء والتحقق من توقيع التثبيت.
             لم يتم اختباره على هاتف العميل أو على بياناته الفعلية.
             يجب أخذ نسخة احتياطية واختبار فاتورة قبل الاستخدام الفعلي.
