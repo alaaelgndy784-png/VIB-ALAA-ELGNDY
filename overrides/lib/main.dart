@@ -1158,6 +1158,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
       ManagerOfflineSaleSync.instance.start();
       ManagerOfflineVoucherSync.instance.start();
       unawaited(ManagerOfflineDraftStore.instance.syncPending());
+      unawaited(ManagerSaleEditQueue.instance.syncPending());
       unawaited(_backupAtOwnerLogin());
     } else {
       _writePresence(true);
@@ -1187,7 +1188,10 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
     _writePresence(state==AppLifecycleState.resumed);
     if(state==AppLifecycleState.resumed) {
       if(widget.role=='employee')unawaited(EmployeeOfflineSaleSync.instance.syncPending());
-      if(widget.role=='owner')unawaited(retryManagerOfflineInvoices());
+      if(widget.role=='owner') {
+        unawaited(retryManagerOfflineInvoices());
+        unawaited(ManagerSaleEditQueue.instance.syncPending());
+      }
     }
   }
   Future<void> _signOut() async {
@@ -1229,6 +1233,7 @@ class _HomeState extends State<Home> with WidgetsBindingObserver {
         child: Scaffold(
           body: Column(children: [
             const OfflineCacheNotice(),
+            const ManagerSaleEditQueueNotice(),
             Expanded(child: OwnerDashboard(
               uid: widget.uid,
               branchId: widget.branchId,
@@ -7921,15 +7926,29 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
   final paid = TextEditingController(text: '0');
   final search = TextEditingController();
   try {
-    final invoice = await db.collection(type).doc(id).get();
+    if(replaceSale && await ManagerSaleEditQueue.instance.hasPending(id)) {
+      if(context.mounted) await showInvoiceSaveProblem(context,'يوجد تعديل محفوظ لهذا الرقم ينتظر المزامنة. راجعه من الرئيسية قبل تعديل الفاتورة مرة أخرى.');
+      return;
+    }
+    final invoiceRef = db.collection(type).doc(id);
+    DocumentSnapshot<Map<String,dynamic>> invoice;
+    try {
+      invoice = await invoiceRef.get(const GetOptions(source:Source.server)).timeout(const Duration(seconds:6));
+    } catch(e) {
+      if(!replaceSale || !shouldQueueEmployeeSaleFailure(e)) rethrow;
+      invoice = await invoiceRef.get(const GetOptions(source:Source.cache));
+    }
     final data = invoice.data();
-    final products = (await db.collection('products').get()).docs;
+    final products = replaceSale ? (await _getInvoiceDataWithCacheFallback(db.collection('products'))).docs : (await db.collection('products').get()).docs;
     if (!context.mounted) return;
     if (data == null || data['status'] != 'completed' || products.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('الفاتورة أو الأصناف غير متاحة للتعديل')));
       return;
     }
-    if (replaceSale) await assertSaleEditable({...data, 'id': id});
+    if (replaceSale) {
+      try { await assertSaleEditable({...data, 'id': id}); }
+      catch(e) { if(!shouldQueueEmployeeSaleFailure(e)) rethrow; }
+    }
     if (replacePurchase) await assertPurchaseEditable({...data, 'id': id});
     if (!context.mounted) return;
     final purchase = type == 'purchases';
@@ -8091,7 +8110,18 @@ Future<void> appendInvoiceDialog(BuildContext context, String type, String id, {
               update(() => saving = true);
               try {
                 if (replaceSale) {
-                  await replaceSaleLocally(id, revision, requestId, items, extraPaid, correctedCustomerId:selectedCustomerId);
+                  try {
+                    await replaceSaleLocally(id, revision, requestId, items, extraPaid, correctedCustomerId:selectedCustomerId).timeout(const Duration(seconds:15));
+                  } catch(e) {
+                    if(!shouldQueueEmployeeSaleFailure(e)) rethrow;
+                    await ManagerSaleEditQueue.instance.preserve(id:id,revision:revision,requestId:requestId,
+                      items:items,paid:extraPaid,customerId:selectedCustomerId,number:'${invoiceDisplayNumber(type,id,data)}',customerName:selectedCustomerName);
+                    if(c.mounted) Navigator.pop(c);
+                    if(context.mounted) await showInvoiceSaveProblem(context,
+                      'تم حفظ تعديل نفس الفاتورة على الجهاز. سيُرحّل عند عودة Firebase بدون اعتماد يدوي، بعد فحص المخزون والسندات. لم يتم تأكيد تغيير المخزون أو الحسابات بعد.',
+                      title:'تعديل محفوظ محليًا',button:'تمام',success:true);
+                    return;
+                  }
                 } else if (replacePurchase) {
                   await replacePurchaseLocally(id, revision, requestId, items, extraPaid);
                 } else {
@@ -10045,4 +10075,158 @@ Future<void> assertNoUnallocatedReceipt(Map<String, dynamic> invoice) async {
   if (receipts.docs.any((r) => !cancelledIds.contains(r.id) && unallocatedReceiptAfter(invoice, r.data()))) {
     throw Exception('يوجد سند قبض عام بعد الفاتورة؛ حدد الفواتير الخاصة به قبل المرتجع');
   }
+}
+
+ 
+// Durable, account-scoped outbox for corrections of existing manager sales.
+// Never create a replacement sale or change accounting outside the original transaction.
+class ManagerSaleEditQueue {
+  ManagerSaleEditQueue._();
+  static final instance=ManagerSaleEditQueue._();
+  final ValueNotifier<int> count=ValueNotifier<int>(0);
+  final ValueNotifier<String> status=ValueNotifier<String>('');
+  Future<void> _tail=Future<void>.value();
+  bool _syncing=false;
+
+  Future<T> _locked<T>(Future<T> Function() work) {
+    final previous=_tail;
+    final done=Completer<void>();
+    _tail=done.future;
+    return () async {
+      await previous;
+      try { return await work(); } finally { done.complete(); }
+    }();
+  }
+
+  Future<File> _file(String uid) async {
+    final directory=await getApplicationSupportDirectory();
+    final suffix=base64Url.encode(utf8.encode(uid));
+    return File('${directory.path}/vib_sale_edit_queue_v1_$suffix.json');
+  }
+  Future<List<Map<String,dynamic>>> _read(String uid) async {
+    final file=await _file(uid);
+    if(!await file.exists()) return <Map<String,dynamic>>[];
+    final value=jsonDecode(await file.readAsString());
+    if(value is! List) throw const FormatException('ملف التعديلات المحلية غير صحيح');
+    return value.map((row)=>Map<String,dynamic>.from(row as Map)).toList();
+  }
+  Future<void> _write(String uid,List<Map<String,dynamic>> rows) async {
+    final file=await _file(uid);
+    final temp=File('${file.path}.tmp');
+    await temp.writeAsString(jsonEncode(rows),flush:true);
+    await temp.rename(file.path);
+    if(FirebaseAuth.instance.currentUser?.uid==uid) count.value=rows.length;
+  }
+  Future<List<Map<String,dynamic>>> rows() async {
+    final uid=FirebaseAuth.instance.currentUser?.uid;
+    if(uid==null) return [];
+    return _locked(()=>_read(uid));
+  }
+  Future<bool> hasPending(String id) async => (await rows()).any((row)=>row['id']==id);
+  Future<void> preserve({required String id,required int revision,required String requestId,
+    required List<Map<String,dynamic>> items,required double paid,required String customerId,
+    required String number,required String customerName}) async {
+    final uid=FirebaseAuth.instance.currentUser?.uid;
+    if(uid==null) throw StateError('لا يوجد حساب مدير مسجل');
+    final key=jsonEncode({'id':id,'revision':revision,'items':items,'paid':paid,'customerId':customerId});
+    await _locked(() async {
+      final pending=await _read(uid);
+      final existing=pending.indexWhere((row)=>row['id']==id);
+      if(existing>=0) {
+        if(pending[existing]['requestId']!=requestId || pending[existing]['requestKey']!=key) {
+          throw StateError('يوجد تعديل آخر محفوظ لنفس الفاتورة');
+        }
+        return;
+      }
+      pending.add({'id':id,'revision':revision,'requestId':requestId,'requestKey':key,
+        'items':items,'paid':paid,'customerId':customerId,'number':number,'customerName':customerName,
+        'storedAtMs':DateTime.now().millisecondsSinceEpoch});
+      await _write(uid,pending);
+      status.value='التعديلات محفوظة على هذا الجهاز ولم تُرحّل ماليًا بعد.';
+    });
+  }
+
+  Future<void> syncPending() async {
+    final uid=FirebaseAuth.instance.currentUser?.uid;
+    if(uid==null||_syncing) return;
+    _syncing=true;
+    try {
+      final pending=await _locked(()=>_read(uid));
+      count.value=pending.length;
+      if(pending.isEmpty) {status.value='';return;}
+      status.value='جارٍ التحقق من التعديلات المعلقة…';
+      for(final row in pending) {
+        if(FirebaseAuth.instance.currentUser?.uid!=uid) return;
+        final requestId=row['requestId'] as String;
+        try {
+          // A timed-out transaction can have committed. Check the original
+          // immutable edit request before replaying it; never allocate a new ID.
+          final saved=await db.collection('invoiceEdits').doc(requestId)
+            .get(const GetOptions(source:Source.server)).timeout(const Duration(seconds:8));
+          if(saved.exists) {
+            if(saved.data()?['requestKey']!=row['requestKey']||saved.data()?['actorId']!=uid) {
+              throw StateError('تعارض في رقم طلب التعديل');
+            }
+          } else {
+            await replaceSaleLocally(row['id'] as String,row['revision'] as int,requestId,
+              (row['items'] as List).map((item)=>Map<String,dynamic>.from(item as Map)).toList(),
+              (row['paid'] as num).toDouble(),correctedCustomerId:row['customerId'] as String)
+              .timeout(const Duration(seconds:20));
+          }
+          await _locked(() async {
+            final latest=await _read(uid);
+            latest.removeWhere((item)=>item['requestId']==requestId);
+            await _write(uid,latest);
+          });
+        } catch(e) {
+          // Retain the draft even on a conflict/permission error for review.
+          status.value=shouldQueueEmployeeSaleFailure(e)
+            ? 'Firebase غير متاح الآن. التعديلات محفوظة على الجهاز.'
+            : 'التعديل رقم ${row['number']} يحتاج مراجعة: $e';
+          return;
+        }
+      }
+      status.value=count.value==0?'تم تأكيد كل التعديلات على السيرفر.':'توجد تعديلات أخرى محفوظة.';
+    } catch(e) {
+      status.value='تعذر فحص التعديلات المحفوظة: $e';
+    } finally {_syncing=false;}
+  }
+}
+
+class ManagerSaleEditQueueNotice extends StatelessWidget {
+  const ManagerSaleEditQueueNotice({super.key});
+  @override Widget build(BuildContext context)=>ValueListenableBuilder<int>(
+    valueListenable:ManagerSaleEditQueue.instance.count,
+    builder:(context,count,_)=>ValueListenableBuilder<String>(
+      valueListenable:ManagerSaleEditQueue.instance.status,
+      builder:(context,status,_) {
+        if(count==0&&status.isEmpty)return const SizedBox.shrink();
+        return Padding(padding:const EdgeInsets.symmetric(horizontal:8),
+          child:Column(mainAxisSize:MainAxisSize.min,children:[
+            if(count>0) Text('$count تعديل فاتورة محفوظ محليًا — لم يُرحّل بعد',
+              style:const TextStyle(color:Colors.orangeAccent,fontSize:12)),
+            if(status.isNotEmpty)Text(status,maxLines:3,overflow:TextOverflow.ellipsis,
+              style:const TextStyle(color:Colors.orangeAccent,fontSize:11)),
+            if(count>0)Row(mainAxisAlignment:MainAxisAlignment.center,children:[
+              TextButton.icon(onPressed:()=>unawaited(ManagerSaleEditQueue.instance.syncPending()),
+                icon:const Icon(Icons.sync),label:const Text('مزامنة التعديلات')),
+              TextButton(onPressed:() async {
+                try {
+                  final rows=await ManagerSaleEditQueue.instance.rows();
+                  if(!context.mounted)return;
+                  await showDialog<void>(context:context,builder:(dialog)=>AlertDialog(
+                    title:const Text('تعديلات المبيعات المحفوظة على الجهاز'),
+                    content:SizedBox(width:double.maxFinite,child:SingleChildScrollView(child:Column(
+                      mainAxisSize:MainAxisSize.min,children:[
+                        for(final row in rows) ListTile(title:Text('فاتورة ${row['number']} — ${row['customerName']}'),
+                          subtitle:Text('${(row['items'] as List).length} بند • مدفوع ${vibVoucherMoney(row['paid'])} ج.م')),
+                      ]))),
+                    actions:[TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('رجوع'))]));
+                } catch(e) {
+                  if(context.mounted) await showInvoiceSaveProblem(context,'تعذر عرض التعديلات: $e');
+                }
+              },child:const Text('عرض المحفوظ'))
+            ])
+          ]));
+      }));
 }
