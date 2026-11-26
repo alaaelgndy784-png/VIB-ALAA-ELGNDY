@@ -62,7 +62,7 @@ Future<Uint8List> createStyledA4InvoicePdf({
     );
   }
 
-  final title = isSale ? 'فاتورة مبيعات' : 'فاتورة مشتريات';
+  final title = isSale ? (data['localUnconfirmed']==true ? 'فاتورة مبيعات — مؤقتة' : 'فاتورة مبيعات') : 'فاتورة مشتريات';
   final partyName = '${data[isSale ? 'customerName' : 'supplierName'] ?? ''}'
       .trim();
   final partyPhone = '${data[isSale ? 'customerPhone' : 'supplierPhone'] ?? ''}'
