@@ -650,7 +650,7 @@ class PendingSalesPage extends StatelessWidget {
           Card(child:ListTile(leading:Icon(row.data()['status']=='approved'?Icons.check_circle:row.data()['status']=='rejected'?Icons.cancel:Icons.hourglass_top,color:gold),
             title:Text('${row.data()['customerName'] ?? ''} • ${row.data()['total'] ?? 0} ج.م',style:const TextStyle(color:vibNeon,fontWeight:FontWeight.bold)),
             subtitle:Text('${owner ? '${row.data()['employeeName'] ?? ''} • ' : ''}${row.data()['managerOffline']==true?'فاتورة مدير تنتظر المزامنة':'${pendingSaleStatus(row.data()['status'])}'} • ${formatDate(row.data()['createdAt'])}'),
-            trailing:owner && row.data()['status']=='rejected' ? IconButton(tooltip:'مسح الطلب من التطبيقين',icon:const Icon(Icons.delete_outline,color:Colors.redAccent),onPressed:()=>removeRejectedPendingSale(context,row.reference)) : null,
+            trailing:owner && row.data()['status']=='rejected' ? IconButton(tooltip:'مسح الطلب من التطبيقين',icon:const Icon(Icons.delete_outline,color:Colors.redAccent),onPressed:()=>removeRejectedPendingSale(context,row.reference)) : owner && row.data()['status']=='pending' && row.data()['managerOffline']!=true ? TextButton.icon(icon:const Icon(Icons.edit),label:const Text('تعديل'),onPressed:()=>editPendingSalePrices(context,row.reference)):null,
             onTap:()=>reviewPendingSale(context,row.reference,owner)))])),
       ]);
     });
@@ -767,13 +767,12 @@ class _PendingSaleInvoiceDialogState extends State<PendingSaleInvoiceDialog> {
           ],
           if(data['managerPriceAdjusted']==true) ...[
             Padding(padding:const EdgeInsets.symmetric(horizontal:8,vertical:4),child:Text(
-              'عدّل المدير الأسعار قبل الاعتماد • ${data['managerAdjustedBy'] ?? ''}',
+              'عدّل المدير الفاتورة قبل الاعتماد • ${data['managerAdjustedBy'] ?? ''}',
               style:const TextStyle(color:Colors.lightBlueAccent,fontWeight:FontWeight.bold))),
-            for(var i=0;i<items.length;i++)
-              if((data['managerOriginalItems'] as List? ?? const []).length>i)
-                Padding(padding:const EdgeInsets.symmetric(horizontal:12,vertical:2),child:Text(
-                  'السعر الأصلي للصنف ${i+1}: ${((data['managerOriginalItems'] as List)[i] as Map)['unitPrice'] ?? '—'} ج.م',
-                  style:const TextStyle(color:Colors.white70,fontSize:12))),
+            for(final old in (data['managerOriginalItems'] as List? ?? const []).whereType<Map>())
+                 Padding(padding:const EdgeInsets.symmetric(horizontal:12,vertical:2),child:Text(
+                   'البند الأصلي: ${old['productName'] ?? old['productId']} • الكمية ${old['quantity']} • السعر ${old['unitPrice']} ج.م',
+                   style:const TextStyle(color:Colors.white70,fontSize:12))),
           ],
           const SizedBox(height:8),
           if(data['status']=='pending')const Text('الكمية والأسعار تُراجع وقت الاعتماد. المخزون والحسابات لم تتغير بعد.'),
@@ -790,50 +789,106 @@ class _PendingSaleInvoiceDialogState extends State<PendingSaleInvoiceDialog> {
   }
 }
 
+class _PendingSaleEditLine {
+  final String id,name;
+  final TextEditingController quantity,price;
+  _PendingSaleEditLine(this.id,this.name,int qty,num amount):
+    quantity=TextEditingController(text:'$qty'),price=TextEditingController(text:'$amount');
+  void dispose(){quantity.dispose();price.dispose();}
+}
+
 Future<void> editPendingSalePrices(BuildContext context,DocumentReference<Map<String,dynamic>> ref) async {
+  final rows=<_PendingSaleEditLine>[], removed=<_PendingSaleEditLine>[];
+  TextEditingController? paid;
   try {
     final current=(await ref.get(const GetOptions(source:Source.server))).data();
-    if(current==null || current['status']!='pending')throw StateError('الفاتورة لم تعد في انتظار الاعتماد');
-    final items=(current['items'] as List).map((x)=>Map<String,dynamic>.from(x as Map)).toList();
-    final controllers=items.map((item)=>TextEditingController(text:'${item['unitPrice']}')).toList();
-    final result=await showDialog<List<double>>(context:context,builder:(dialog)=>AlertDialog(
-      title:const Text('تعديل أسعار الفاتورة قبل الاعتماد'),
-      content:SizedBox(width:520,height:460,child:ListView.builder(itemCount:items.length,itemBuilder:(c,i)=>Padding(
-        padding:const EdgeInsets.symmetric(vertical:5),child:TextField(controller:controllers[i],keyboardType:const TextInputType.numberWithOptions(decimal:true),
-          decoration:InputDecoration(labelText:'${i+1}. ${items[i]['productName'] ?? 'الصنف'} • السعر الحالي ${items[i]['unitPrice']} ج.م'))))),
-      actions:[TextButton(onPressed:()=>Navigator.pop(dialog),child:const Text('إلغاء')),
-        FilledButton(onPressed:(){
-          final parsed=<double>[];
-          for(var i=0;i<controllers.length;i++){
-            final value=double.tryParse(controllers[i].text.trim());
-            if(value==null || !value.isFinite || value<0){
-              ScaffoldMessenger.of(dialog).showSnackBar(const SnackBar(content:Text('اكتب سعرًا صحيحًا لكل صنف')));
-              return;
-            }
-            parsed.add(value);
-          }
-          Navigator.pop(dialog,parsed);
-        },child:const Text('مراجعة الإجمالي'))],
-    ));
-    for(final controller in controllers){controller.dispose();}
-    if(result==null || !context.mounted)return;
-    final edited=repricePendingSale(current,result);
-    final answer=await showDialog<String>(context:context,builder:(confirm)=>AlertDialog(
-      title:const Text('تأكيد تعديل الفاتورة'),
-      content:Text('الإجمالي بعد التعديل: ${(edited['total'] as double).toStringAsFixed(2)} ج.م\nالمدفوع: ${(edited['paid'] as double).toStringAsFixed(2)} ج.م\nالمتبقي: ${((edited['total'] as double)-(edited['paid'] as double)).toStringAsFixed(2)} ج.م\n\nسيظهر التعديل للموظف، وستظل الفاتورة معلقة حتى تعتمدها.'),
-      actions:[TextButton(onPressed:()=>Navigator.pop(confirm),child:const Text('رجوع')),
-        FilledButton(onPressed:()=>Navigator.pop(confirm,'save'),child:const Text('حفظ الأسعار'))],
-    ));
-    if(answer!='save' || !context.mounted)return;
+    if(current==null || current['status']!='pending' || current['managerOffline']==true)
+      throw StateError('التعديل متاح لطلب الموظف قبل الاعتماد فقط');
+    final original=PendingSaleData.parse(current);
+    final originalKey=current['requestKey'];
+    final originalItems=jsonEncode(current['items']);
+    final products=(await db.collection('products').get(const GetOptions(source:Source.server))).docs;
+    if(!context.mounted)return;
+    for(final raw in current['items'] as List) {
+      final row=Map<String,dynamic>.from(raw as Map);
+      rows.add(_PendingSaleEditLine('${row['productId']}','${row['productName']??''}',row['quantity'] as int,row['unitPrice'] as num));
+    }
+    final paidController=TextEditingController(text:original.paid.toStringAsFixed(2));
+    paid=paidController;
+    String error='';
+    final patch=await showDialog<Map<String,dynamic>>(context:context,barrierDismissible:false,builder:(dialog)=>StatefulBuilder(builder:(c,update){
+      double estimate=0;
+      for(final row in rows) {
+        final qty=int.tryParse(row.quantity.text)??0;
+        final price=double.tryParse(row.price.text.replaceAll(',','.'))??0;
+        if(price.isFinite)estimate+=qty*price;
+      }
+      return AlertDialog(
+        insetPadding:const EdgeInsets.symmetric(horizontal:6,vertical:12),
+        title:const Text('تعديل الفاتورة قبل الاعتماد'),
+        content:SizedBox(width:620,height:500,child:Column(children:[
+          Text('العميل: ${current['customerName']??''}'),
+          Expanded(child:ListView(children:[
+            for(final row in rows) Card(key:ObjectKey(row),child:Padding(padding:const EdgeInsets.all(6),child:Column(
+              crossAxisAlignment:CrossAxisAlignment.stretch,children:[
+                Row(children:[Expanded(child:Text(row.name,style:const TextStyle(color:gold,fontWeight:FontWeight.bold))),
+                  IconButton(tooltip:'حذف البند',icon:const Icon(Icons.delete_outline,color:Colors.redAccent),onPressed:()=>update((){
+                    rows.remove(row);removed.add(row);
+                  }))]),
+                Row(children:[
+                  Expanded(child:TextField(controller:row.quantity,keyboardType:TextInputType.number,
+                    decoration:const InputDecoration(labelText:'الكمية'),onChanged:(_)=>update((){}))),
+                  const SizedBox(width:8),
+                  Expanded(child:TextField(controller:row.price,keyboardType:const TextInputType.numberWithOptions(decimal:true),
+                    decoration:const InputDecoration(labelText:'السعر'),onChanged:(_)=>update((){}))),
+                ])
+              ]))),
+            TextButton.icon(icon:const Icon(Icons.add),label:const Text('إضافة صنف'),onPressed:rows.length>=50?null:()async {
+              final selected=await selectSaleProduct(c,products.where((p)=>p.data()['active']==true).toList(),rows.map((r)=>r.id).toSet());
+              if(selected==null||!c.mounted)return;
+              final product=products.firstWhere((p)=>p.id==selected);
+              if(rows.any((r)=>r.id==selected))return;
+              update(()=>rows.add(_PendingSaleEditLine(selected,'${product.data()['name']??''}',1,(product.data()['price'] as num?)??0)));
+            }),
+          ])),
+          if(original.credit)TextField(controller:paidController,keyboardType:const TextInputType.numberWithOptions(decimal:true),
+            decoration:const InputDecoration(labelText:'المدفوع'),onChanged:(_)=>update((){})),
+          Text('الإجمالي: ${estimate.toStringAsFixed(2)} ج.م',style:const TextStyle(color:gold,fontWeight:FontWeight.bold)),
+          if(original.credit)Text('الباقي: ${(estimate-(double.tryParse(paidController.text.replaceAll(',','.'))??0)).toStringAsFixed(2)} ج.م'),
+          if(error.isNotEmpty)Text(error,style:const TextStyle(color:Colors.redAccent)),
+          const Text('التعديل لا يخصم المخزون ولا يرحّل الحسابات قبل الاعتماد.',style:TextStyle(fontSize:12)),
+        ])),
+        actions:[
+          TextButton(onPressed:()=>Navigator.pop(c),child:const Text('إلغاء')),
+          FilledButton(onPressed:(){
+            try {
+              final items=<Map<String,dynamic>>[];
+              for(final row in rows) {
+                final q=int.tryParse(row.quantity.text.trim()),p=double.tryParse(row.price.text.trim().replaceAll(',','.'));
+                if(q==null||p==null)throw const FormatException('راجع الكميات والأسعار');
+                items.add({'productId':row.id,'productName':row.name,'quantity':q,'unitPrice':p});
+              }
+              final payment=original.credit?double.tryParse(paidController.text.trim().replaceAll(',','.')):0.0;
+              if(payment==null)throw const FormatException('راجع المدفوع');
+              Navigator.pop(c,revisePendingSale(current,items,paid:payment));
+            }catch(e){update(()=>error='$e');}
+          },child:const Text('حفظ التعديل')),
+        ]);
+    }));
+    if(patch==null||!context.mounted)return;
     await db.runTransaction((tx)async{
       final latest=(await tx.get(ref)).data();
-      if(latest==null || latest['status']!='pending')throw StateError('الفاتورة لم تعد معلقة');
-      final safe=repricePendingSale(latest,result);
-      tx.update(ref,{...safe,'managerAdjustedBy':FirebaseAuth.instance.currentUser!.uid,
-        'managerAdjustedAt':FieldValue.serverTimestamp()});
+      if(latest==null || latest['status']!='pending'||latest['managerOffline']==true||
+        latest['requestKey']!=originalKey||jsonEncode(latest['items'])!=originalItems)
+        throw StateError('الطلب اتغير أو اتعمد؛ افتحه من جديد');
+      final actor=FirebaseAuth.instance.currentUser!.uid;
+      final profile=(await tx.get(db.collection('users').doc(actor))).data();
+      if(profile?['role']!='owner'||profile?['active']!=true)throw StateError('التعديل متاح للمدير فقط');
+      tx.update(ref,{...patch,'managerAdjustedBy':actor,'managerAdjustedAt':FieldValue.serverTimestamp()});
     });
-    if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تم تعديل الأسعار وحفظ الفاتورة للمراجعة')));
-  }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,invoiceSaveFailureMessage(e),title:'تعديل أسعار الفاتورة');}
+    if(context.mounted)ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content:Text('تم تعديل نفس الفاتورة؛ ما زالت في انتظار الاعتماد')));
+  }catch(e){if(context.mounted)await showInvoiceSaveProblem(context,invoiceSaveFailureMessage(e),title:'تعديل الفاتورة');}
+  finally { for(final row in [...rows,...removed]){row.dispose();} paid?.dispose(); }
 }
 
 Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String,dynamic>> ref,bool owner) async {
@@ -871,9 +926,9 @@ Future<void> reviewPendingSale(BuildContext context,DocumentReference<Map<String
             tx.update(ref,{'status':'rejected','rejectionReason':result,'reviewedBy':FirebaseAuth.instance.currentUser!.uid,'reviewedAt':FieldValue.serverTimestamp()});
           });if(c.mounted)Navigator.pop(c);}catch(e){if(c.mounted){update(()=>busy=false);await showInvoiceSaveProblem(c,invoiceSaveFailureMessage(e));}}
         },child:const Text('رفض مع السبب')),
-        if(owner && pending)OutlinedButton.icon(
-          onPressed:busy?null:()async {await editPendingSalePrices(c,ref);},
-          icon:const Icon(Icons.edit,color:gold),label:const Text('تعديل الأسعار')),
+        if(owner && pending && data['managerOffline']!=true)OutlinedButton.icon(
+           onPressed:busy?null:()async {update(()=>busy=true);try{await editPendingSalePrices(c,ref);}finally{if(c.mounted)update(()=>busy=false);}},
+           icon:const Icon(Icons.edit,color:gold),label:const Text('تعديل الفاتورة')),
         if(owner && pending)FilledButton(onPressed:busy?null:()async {
           update(()=>busy=true);
           try {
